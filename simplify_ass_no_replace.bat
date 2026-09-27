@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-set "SCRIPT=%~dp0process_mkv_subtitles.ps1"
+set "SCRIPT=%~dp0simplify_ass.ps1"
 set "INPUT=%~dp0."
 
 echo Script: "%SCRIPT%"
