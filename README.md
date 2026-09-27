@@ -3,3 +3,7 @@ Intended usecase is for playing videos on tv's or other weaker devices.
 
 Copy all files to the folder with mkv files and run "simplify_ass.bat".
 The changed mkv files are placed in an "output" subfolder.
+
+Requires installed MKVtoolnix.
+
+Use "remove_simplified_subtitles" to remove the simplified subtitles. Only works when existing subtitles were not replaced.
