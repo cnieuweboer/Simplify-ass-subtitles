@@ -334,7 +334,8 @@ def deduplicate_layers(events: list[Event], visible_map: dict[int, str]) -> tupl
     return output, removed
 
 
-def merge_timed_lyrics(events: list[Event], visible_map: dict[int, str]) -> tuple[list[Event], int]:
+def merge_timed_lyrics(events: list[Event], visible_map: dict[int, str],
+                       space_map: dict[tuple, set[float]]) -> tuple[list[Event], int]:
     """Turn positioned lyric fragments sharing time/style into one plain ASS line."""
     comments: dict[tuple[str, str, str], list[str]] = {}
     for e in events:
@@ -342,7 +343,7 @@ def merge_timed_lyrics(events: list[Event], visible_map: dict[int, str]) -> tupl
             _, lyric = simplify_text(e.text)
             comments.setdefault((e.start, e.end, e.style), []).append(lyric)
 
-    groups: dict[tuple[str, str, str, int], list[Event]] = {}
+    groups: dict[tuple[str, str, str, str, int], list[Event]] = {}
     for e in events:
         if e.kind != "Dialogue" or e.effect.lower() != "fx":
             continue
@@ -350,12 +351,12 @@ def merge_timed_lyrics(events: list[Event], visible_map: dict[int, str]) -> tupl
         if pos is None or not visible_map.get(e.source_index):
             continue
         # Separate top/bottom lines, even when they share the same style and time.
-        key = (e.start, e.end, e.style, round(pos[1] / 25))
+        key = (e.start, e.end, e.style, e.name, round(pos[1] / 25))
         groups.setdefault(key, []).append(e)
 
     removed: set[int] = set()
     replacements: dict[int, Event] = {}
-    for (start, end, style, _band), group in groups.items():
+    for (start, end, style, name, band), group in groups.items():
         positions: dict[float, list[Event]] = {}
         for e in group:
             positions.setdefault(round(get_pos(e.text)[0], 1), []).append(e)
@@ -376,8 +377,40 @@ def merge_timed_lyrics(events: list[Event], visible_map: dict[int, str]) -> tupl
         lyric = next((s for s in candidates if norm(s) == norm(joined) or
                       any(norm(s) == norm(visible_map[e.source_index]) for e in group)), None)
         if lyric is None:
-            # Without a trustworthy source line, retain the original pieces.
-            continue
+            # Some openings generate every character as two or three effect
+            # layers and contain no original full-line Comment. Only collapse
+            # an unambiguous row of single characters at distinct x positions.
+            if len(ordered) < 5 or not all(len(part) == 1 for part in ordered):
+                continue
+            blanks = space_map.get((start, end, style, name, band), set())
+            pieces = []
+            xs = sorted(positions)
+            inferred_spaces: set[int] = set()
+            if not blanks and style.startswith("OP_") and len(xs) >= 8:
+                # Some letter-by-letter generators omit the blank glyphs. A
+                # large gap relative to neighboring glyph widths marks a word
+                # boundary. Use this only for opening letter rows.
+                def width(c: str) -> float:
+                    return {
+                        "i": .55, "l": .55, "I": .7, "j": .6,
+                        "t": .8, "f": .8, "r": 1.0,
+                        ".": .3, ",": .3, "'": .3, "!": .3,
+                        "m": 1.3, "w": 1.3, "M": 1.3, "W": 1.3,
+                    }.get(c, 1.0)
+
+                ratios = [
+                    (xs[i] - xs[i-1]) / ((width(ordered[i-1]) + width(ordered[i])) / 2)
+                    for i in range(1, len(xs))
+                ]
+                typical = statistics.median(sorted(ratios)[:max(1, int(len(ratios) * 0.7))])
+                inferred_spaces = {i for i, ratio in enumerate(ratios, 1)
+                                   if ratio > typical * 1.3}
+            for index, x in enumerate(xs):
+                if index and (index in inferred_spaces or
+                              any(xs[index-1] < b < x for b in blanks)):
+                    pieces.append(" ")
+                pieces.append(ordered[index])
+            lyric = "".join(pieces)
         first = min(group, key=lambda e: e.source_index)
         # The style supplies normal alignment/margins. The original positions,
         # per-word colors and 1%-scale animation must not survive on this line.
@@ -392,6 +425,50 @@ def merge_timed_lyrics(events: list[Event], visible_map: dict[int, str]) -> tupl
             output.append(replacements[e.source_index])
         elif e.source_index not in removed:
             output.append(e)
+    return output, len(removed)
+
+
+def collapse_matching_lyric_layers(events: list[Event],
+                                   visible_map: dict[int, str]) -> tuple[list[Event], int]:
+    """Remove a nearby positioned syllable row when a full lyric line matches it."""
+    def norm(s: str) -> str:
+        return "".join(s.split()).casefold()
+
+    lines = [e for e in events if e.kind == "Dialogue" and e.effect == "" and
+             e.style.startswith(("OP_", "ED_")) and
+             len(norm(visible_map.get(e.source_index, ""))) >= 10]
+    groups: dict[tuple, list[Event]] = {}
+    for e in events:
+        if e.kind != "Dialogue" or e.effect.lower() != "fx":
+            continue
+        pos = get_pos(e.text)
+        if pos is not None and visible_map.get(e.source_index):
+            key = (e.start, e.end, e.style, e.name, round(pos[1] / 25))
+            groups.setdefault(key, []).append(e)
+
+    removed: set[int] = set()
+    extended: dict[int, Event] = {}
+    for (start, end, style, name, _band), group in groups.items():
+        positions: dict[float, set[str]] = {}
+        for e in group:
+            positions.setdefault(round(get_pos(e.text)[0], 1), set()).add(visible_map[e.source_index])
+        if len(positions) < 3 or any(len(v) != 1 for v in positions.values()):
+            continue
+        assembled = norm("".join(next(iter(positions[x])) for x in sorted(positions)))
+        for line in lines:
+            if line.style != style or line.name != name or norm(visible_map[line.source_index]) != assembled:
+                continue
+            overlap = min(line.end_s, group[0].end_s) - max(line.start_s, group[0].start_s)
+            if overlap < 0.8 * min(line.duration, group[0].duration):
+                continue
+            removed.update(e.source_index for e in group)
+            earlier = min(line.start_s, group[0].start_s)
+            later = max(line.end_s, group[0].end_s)
+            extended[line.source_index] = replace(line, start=format_time(earlier),
+                end=format_time(later), start_s=earlier, end_s=later)
+            break
+
+    output = [extended.get(e.source_index, e) for e in events if e.source_index not in removed]
     return output, len(removed)
 
 
@@ -471,6 +548,7 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
     parsed_by_line: dict[int, Event] = {}
     simplified_events: list[Event] = []
     visible_map: dict[int, str] = {}
+    space_map: dict[tuple, set[float]] = {}
     dropped_drawings = 0
     original_dialogues = 0
 
@@ -486,6 +564,13 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         new_text, visible = simplify_text(e.text, max_blur=max_blur)
         visible_map[idx] = visible
         if not visible:
+            # Position-only events in per-character FX mark word spaces in some
+            # generated lyrics. Keep their locations for text reconstruction.
+            pos = get_pos(new_text)
+            if (e.effect.lower() == "fx" and pos is not None and
+                    not re.search(r"\\p\d", e.text, re.I)):
+                key = (e.start, e.end, e.style, e.name, round(pos[1] / 25))
+                space_map.setdefault(key, set()).add(round(pos[0], 1))
             # A dialogue event with no remaining text is generally a vector drawing/effect.
             dropped_drawings += 1
             continue
@@ -493,7 +578,9 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
 
     # Work in chronological/source order. Effect-layer dedup is safe regardless of adjacency.
     simplified_events, deduped = deduplicate_layers(simplified_events, visible_map)
-    simplified_events, lyric_merged = merge_timed_lyrics(simplified_events, visible_map)
+    simplified_events, lyric_merged = merge_timed_lyrics(simplified_events, visible_map, space_map)
+    simplified_events, overlap_removed = collapse_matching_lyric_layers(
+        simplified_events, visible_map)
     simplified_events, merged = merge_frame_animation(
         simplified_events, visible_map,
         max_piece_duration=short_duration,
@@ -526,6 +613,7 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         "output": output_dialogues,
         "deduped": deduped,
         "lyric_merged": lyric_merged,
+        "overlap_removed": overlap_removed,
         "merged": merged,
         "dropped": dropped_drawings,
     }
@@ -578,6 +666,7 @@ def main() -> int:
             f"  dialogue events: {stats['original']} -> {stats['output']} "
             f"(duplicate layers removed: {stats['deduped']}, "
             f"lyric fragments merged: {stats['lyric_merged']}, "
+            f"overlapping effects removed: {stats['overlap_removed']}, "
             f"frame pieces merged: {stats['merged']}, drawings/effects dropped: {stats['dropped']})"
         )
 

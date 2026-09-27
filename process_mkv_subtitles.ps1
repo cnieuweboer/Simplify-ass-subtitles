@@ -6,7 +6,8 @@ param(
     [string] $Simplifier,
     [string] $Python = 'python',
     [string] $MkvToolNixFolder,
-    [switch] $Recurse
+    [switch] $Recurse,
+    [switch] $AddSimplifiedSubtitles
 )
 
 $ErrorActionPreference = 'Stop'
@@ -101,10 +102,12 @@ foreach ($file in $files) {
         $ids = ($assTracks | ForEach-Object { $_.id }) -join ','
         $mergeArgs = [System.Collections.Generic.List[string]]::new()
         $mergeArgs.Add('-o'); $mergeArgs.Add($partial)
-        if (@($info.tracks | Where-Object { $_.type -eq 'subtitles' }).Count -eq $assTracks.Count) {
-            $mergeArgs.Add('--no-subtitles')
-        } else {
-            $mergeArgs.Add('--subtitle-tracks'); $mergeArgs.Add('!' + $ids)
+        if (-not $AddSimplifiedSubtitles) {
+            if (@($info.tracks | Where-Object { $_.type -eq 'subtitles' }).Count -eq $assTracks.Count) {
+                $mergeArgs.Add('--no-subtitles')
+            } else {
+                $mergeArgs.Add('--subtitle-tracks'); $mergeArgs.Add('!' + $ids)
+            }
         }
         $mergeArgs.Add($file.FullName)
 
@@ -112,9 +115,17 @@ foreach ($file in $files) {
             $properties = $replacement.Original.properties
             $language = if ($properties.language_ietf) { $properties.language_ietf } else { $properties.language }
             if ($language) { $mergeArgs.Add('--language'); $mergeArgs.Add('0:' + $language) }
-            if ($properties.track_name) { $mergeArgs.Add('--track-name'); $mergeArgs.Add('0:' + $properties.track_name) }
-            if ($null -ne $properties.default_track) { $mergeArgs.Add('--default-track-flag'); $mergeArgs.Add('0:' + (Flag $properties.default_track)) }
-            if ($null -ne $properties.forced_track) { $mergeArgs.Add('--forced-display-flag'); $mergeArgs.Add('0:' + (Flag $properties.forced_track)) }
+            if ($AddSimplifiedSubtitles) {
+                $newName = if ($properties.track_name) { $properties.track_name + ' (Simplified)' } else { 'Simplified' }
+                $mergeArgs.Add('--track-name'); $mergeArgs.Add('0:' + $newName)
+                # Keep the original as the automatically selected track.
+                $mergeArgs.Add('--default-track-flag'); $mergeArgs.Add('0:0')
+                $mergeArgs.Add('--forced-display-flag'); $mergeArgs.Add('0:0')
+            } else {
+                if ($properties.track_name) { $mergeArgs.Add('--track-name'); $mergeArgs.Add('0:' + $properties.track_name) }
+                if ($null -ne $properties.default_track) { $mergeArgs.Add('--default-track-flag'); $mergeArgs.Add('0:' + (Flag $properties.default_track)) }
+                if ($null -ne $properties.forced_track) { $mergeArgs.Add('--forced-display-flag'); $mergeArgs.Add('0:' + (Flag $properties.forced_track)) }
+            }
             if ($null -ne $properties.enabled_track) { $mergeArgs.Add('--track-enabled-flag'); $mergeArgs.Add('0:' + (Flag $properties.enabled_track)) }
             $extraFlags = @{
                 flag_hearing_impaired = '--hearing-impaired-flag'
@@ -137,7 +148,10 @@ foreach ($file in $files) {
             for ($i = 0; $i -lt $replacements.Count; $i++) {
                 if ($replacements[$i].Original.id -eq $track.id) { $index = $i; break }
             }
-            if ($index -ge 0) { $order += "$(($index + 1)):0" }
+            if ($index -ge 0 -and $AddSimplifiedSubtitles) {
+                $order += "0:$($track.id)"
+                $order += "$(($index + 1)):0"
+            } elseif ($index -ge 0) { $order += "$(($index + 1)):0" }
             else { $order += "0:$($track.id)" }
         }
         $mergeArgs.Add('--track-order'); $mergeArgs.Add(($order -join ','))
@@ -146,9 +160,15 @@ foreach ($file in $files) {
         if (-not (Test-Path -LiteralPath $partial -PathType Leaf)) { throw 'Remux did not create an MKV.' }
         $outputInfo = ((& $mkvmerge -J $partial) -join "`n" | ConvertFrom-Json)
         Check-Exit 'output validation'
-        if (@($outputInfo.tracks).Count -ne @($info.tracks).Count) { throw 'Output track count differs from input.' }
+        $expectedTracks = @($info.tracks).Count
+        if ($AddSimplifiedSubtitles) { $expectedTracks += $assTracks.Count }
+        if (@($outputInfo.tracks).Count -ne $expectedTracks) { throw 'Output track count differs from expected count.' }
         Move-Item -LiteralPath $partial -Destination $destination -ErrorAction Stop
-        Write-Host "  Saved: $destination ($($assTracks.Count) ASS/SSA track(s) simplified)"
+        if ($AddSimplifiedSubtitles) {
+            Write-Host "  Saved: $destination ($($assTracks.Count) simplified track(s) added)"
+        } else {
+            Write-Host "  Saved: $destination ($($assTracks.Count) ASS/SSA track(s) simplified)"
+        }
     } catch {
         $failures++
         Write-Warning "Failed: $($file.FullName): $_"
