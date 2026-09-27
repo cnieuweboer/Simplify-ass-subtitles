@@ -290,7 +290,7 @@ STATIC_TAGS = re.compile(
     r"b|i|u|s|p)(?=[^a-zA-Z]|$))", re.I)
 
 
-def visual_override(block: str, max_blur: float) -> str:
+def visual_override(block: str, max_blur: float, duration: float | None = None) -> str:
     """Freeze simple transforms at a visible state, keep static sign styling."""
     transformed: list[str] = []
     at = 0
@@ -339,8 +339,24 @@ def visual_override(block: str, max_blur: float) -> str:
     for name, value in tokens(base):
         chosen[name] = value
     for transform in transformed:
+        # A late color fade must not recolor the entire event to its exit
+        # color. Prefer the endpoint with the longer static hold. Untimed
+        # transitions have no endpoint hold, so preserve the base color.
+        timing = transform.split("\\", 1)[0].strip().rstrip(",")
+        times = [v.strip() for v in timing.split(",")] if timing else []
+        keep_color_target = False
+        if duration is not None and len(times) in (2, 3):
+            try:
+                begin_ms, end_ms = float(times[0]), float(times[1])
+                event_ms = duration * 1000
+                keep_color_target = (0 <= begin_ms <= end_ms
+                                     and max(0, event_ms - end_ms) > min(begin_ms, event_ms))
+            except ValueError:
+                pass
         for name, value in tokens(transform):
             if name in {"pos", "p", "r", "fn"}:
+                continue
+            if name in {"c", "1c", "2c", "3c", "4c"} and not keep_color_target:
                 continue
             if name in {"1a", "2a", "3a", "4a", "alpha"}:
                 # A fade-out's final transparent frame should not hide the sign.
@@ -370,7 +386,8 @@ def visual_override(block: str, max_blur: float) -> str:
     return "".join(chosen.values())
 
 
-def simplify_visual_text(text: str, max_blur: float) -> tuple[str, str, int]:
+def simplify_visual_text(text: str, max_blur: float,
+                         duration: float | None = None) -> tuple[str, str, int]:
     parts = re.split(r"(\{[^}]*\})", text)
     drawing = False
     output, visible = [], []
@@ -380,7 +397,7 @@ def simplify_visual_text(text: str, max_blur: float) -> tuple[str, str, int]:
             p = list(re.finditer(r"\\p(\d+)", part, re.I))
             if p:
                 drawing = int(p[-1].group(1)) > 0
-            simplified = visual_override(part[1:-1], max_blur)
+            simplified = visual_override(part[1:-1], max_blur, duration)
             if simplified:
                 output.append("{" + simplified + "}")
         elif part:
@@ -759,6 +776,80 @@ def merge_frame_animation(events: list[Event], visible_map: dict[int, str],
     return output, merged_away
 
 
+def freeze_vector_sequences(events: list[Event], short_duration: float = 0.16
+                            ) -> tuple[list[Event], int]:
+    """Freeze frame-by-frame drawings, including their longer static hold.
+
+    Match actual paths and static paint, not style names or colors specific
+    to a show. Overlapping copies are ambiguous and remain separate.
+    """
+    changing = re.compile(
+        r"\\(?:alpha|[1-4]a)&H[0-9a-f]{2}&|"
+        r"\\(?:fscx|fscy|frz|frx|fry|fax|fay)-?\d+(?:\.\d+)?", re.I)
+    groups: dict[tuple, list[Event]] = {}
+    for e in events:
+        signature = changing.sub("", POS_RE.sub("", e.text))
+        key = (e.kind, e.layer, e.style, e.name, e.margin_l, e.margin_r,
+               e.margin_v, signature)
+        groups.setdefault(key, []).append(e)
+
+    def transparency(e: Event) -> int:
+        channels = [0, 0, 0, 0]
+        for tag, value in re.findall(r"\\(alpha|[1-4]a)&H([0-9a-f]{2})&", e.text, re.I):
+            if tag.lower() == "alpha":
+                channels = [int(value, 16)] * 4
+            else:
+                channels[int(tag[0]) - 1] = int(value, 16)
+        return sum(channels)
+
+    output: list[Event] = []
+    removed = 0
+
+    def emit(run: list[Event]) -> None:
+        nonlocal removed
+        if (len(run) < 3
+                or sum(e.duration <= short_duration + 1e-6 for e in run) < 2
+                or any(b.start_s < a.end_s - 1e-6 for a, b in zip(run, run[1:]))
+                or len({e.text for e in run}) < 2):
+            output.extend(run)
+            return
+        # Prefer the unfaded frame, then the longest-held position. Keeping
+        # that event's paint intact preserves intentional transparent fills.
+        chosen = min(run, key=lambda e: (transparency(e), -e.duration, e.source_index))
+        output.append(replace(chosen, start=run[0].start, start_s=run[0].start_s,
+                              end=run[-1].end, end_s=run[-1].end_s,
+                              source_index=min(e.source_index for e in run)))
+        removed += len(run) - 1
+
+    for group in groups.values():
+        ordered = sorted(group, key=lambda e: (e.start_s, e.end_s, e.source_index))
+        # Build time-connected components first so simultaneous identical
+        # shapes cannot accidentally be connected to one another's frames.
+        components: list[list[Event]] = []
+        latest_end = -1.0
+        for e in ordered:
+            if not components or e.start_s > latest_end + 0.011:
+                components.append([])
+                latest_end = e.end_s
+            components[-1].append(e)
+            latest_end = max(latest_end, e.end_s)
+        for component in components:
+            if any(b.start_s < a.end_s - 1e-6 for a, b in zip(component, component[1:])):
+                output.extend(component)
+                continue
+            run: list[Event] = []
+            has_hold = False
+            for e in component:
+                is_hold = e.duration > short_duration + 1e-6
+                if is_hold and has_hold:
+                    emit(run)
+                    run, has_hold = [], False
+                run.append(e)
+                has_hold |= is_hold
+            emit(run)
+    return sorted(output, key=lambda e: e.source_index), removed
+
+
 def reduce_vector_layers(events: list[Event]) -> tuple[list[Event], int]:
     """Keep the geometry and up to two static layers per repeated drawing."""
     groups: dict[tuple, list[Event]] = {}
@@ -777,6 +868,65 @@ def reduce_vector_layers(events: list[Event]) -> tuple[list[Event], int]:
             choices = layers[layer]
             result.append(choices[len(choices) // 2])
     return sorted(result, key=lambda e: e.source_index), len(events) - len(result)
+
+
+def remove_covered_vector_glows(events: list[Event]) -> tuple[list[Event], int]:
+    """Drop lower decorative copies of a drawing covered by its upper copy.
+
+    Require the same timing, path and position. Never classify a shape by its
+    color: an independent colored divider or backdrop can carry real content.
+    """
+    groups: dict[tuple, list[Event]] = {}
+    for e in events:
+        key = (e.start, e.end, e.style, e.name, get_pos(e.text),
+               OVERRIDE_RE.sub("", e.text))
+        groups.setdefault(key, []).append(e)
+
+    color_tag = re.compile(r"\\(?:[1234]c|c)&H[0-9a-f]{6}&", re.I)
+
+    def tags(e: Event) -> str:
+        return e.text.split("}", 1)[0]
+
+    def layer(e: Event) -> int:
+        try:
+            return int(e.layer)
+        except ValueError:
+            return 0
+
+    def alpha(block: str, channel: int) -> int:
+        matches = re.findall(rf"\\(?:{channel}a|alpha)&H([0-9a-f]{{2}})&", block, re.I)
+        return int(matches[-1], 16) if matches else 0
+
+    def pose(block: str) -> tuple[str, ...]:
+        # A shared path is not enough if the copies are scaled or rotated
+        # differently; their visible contours may not overlap.
+        return tuple((re.findall(rf"\\{tag}([^\\}}]*)", block, re.I) or [""])[-1]
+                     for tag in ("an", "pos", "fscx", "fscy", "frz", "frx", "fry", "fax", "fay"))
+
+    removed: set[int] = set()
+    for group in groups.values():
+        for lower in group:
+            low = tags(lower)
+            for upper in group:
+                if layer(upper) <= layer(lower):
+                    continue
+                high = tags(upper)
+                if pose(low) != pose(high):
+                    continue
+                # Identically painted contours with only their colors changed
+                # are fully covered by the later copy, including their borders.
+                same_paint = color_tag.sub("", low) == color_tag.sub("", high)
+                # A mostly transparent fill with a border is also a common
+                # glow under an opaque paper fill of the very same geometry.
+                outlined_paper = (len(OVERRIDE_RE.sub("", lower.text)) >= 200
+                                  and alpha(low, 1) >= 240
+                                  and bool(re.search(r"\\(?:x?bord|ybord)[1-9]", low, re.I))
+                                  and alpha(high, 1) <= 128
+                                  and bool(re.search(r"\\(?:[1-4]c|c)&H", high, re.I)))
+                if same_paint or outlined_paper:
+                    removed.add(lower.source_index)
+                    break
+    return [e for e in events if e.source_index not in removed], len(removed)
 
 
 def cap_vector_cues(events: list[Event], limit: int) -> tuple[list[Event], int]:
@@ -871,7 +1021,7 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
             new_text, visible = simplify_text(e.text, max_blur=max_blur)
             drawing_chars = 0
         else:
-            new_text, visible, drawing_chars = simplify_visual_text(e.text, max_blur)
+            new_text, visible, drawing_chars = simplify_visual_text(e.text, max_blur, e.duration)
         visible_map[idx] = visible
         if drawing_chars:
             if drawing_chars <= max_drawing_chars:
@@ -922,11 +1072,13 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         max_piece_duration=short_duration,
         max_gap=short_gap,
     )
-    vector_copies_removed = excess_vectors = 0
+    vector_copies_removed = vector_glows_removed = vector_frames_removed = excess_vectors = 0
     if level == 2:
         simplified_events, remaining_copies = reduce_text_layers(simplified_events, visible_map)
         text_copies_removed += remaining_copies
         vector_events, vector_copies_removed = reduce_vector_layers(vector_events)
+        vector_events, vector_frames_removed = freeze_vector_sequences(vector_events, short_duration)
+        vector_events, vector_glows_removed = remove_covered_vector_glows(vector_events)
         vector_events, excess_vectors = cap_vector_cues(vector_events, max_vectors_per_cue)
         simplified_events = sorted(simplified_events + vector_events, key=lambda e: e.source_index)
 
@@ -963,6 +1115,8 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         "merged": merged,
         "text_copies_removed": text_copies_removed,
         "vector_copies_removed": vector_copies_removed,
+        "vector_glows_removed": vector_glows_removed,
+        "vector_frames_removed": vector_frames_removed,
         "vector_output": len(vector_events),
         "excess_vectors": excess_vectors,
         "dropped": dropped_drawings,
@@ -1029,6 +1183,8 @@ def main() -> int:
             f"frame pieces merged: {stats['merged']}, "
             f"duplicate sign text: {stats['text_copies_removed']}, "
             f"vector copies: {stats['vector_copies_removed']}, "
+            f"covered contours: {stats['vector_glows_removed']}, "
+            f"drawing animation frames: {stats['vector_frames_removed']}, "
             f"vectors retained: {stats['vector_output']}, "
             f"excess vector details removed: {stats['excess_vectors']}, "
             f"drawings/effects dropped: {stats['dropped']})"
