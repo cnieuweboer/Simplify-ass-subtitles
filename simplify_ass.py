@@ -796,6 +796,20 @@ def cap_vector_cues(events: list[Event], limit: int) -> tuple[list[Event], int]:
 
 
 def reduce_text_layers(events: list[Event], visible_map: dict[int, str]) -> tuple[list[Event], int]:
+    def primary_alpha(e: Event) -> int:
+        # ASS primary alpha uses 00 for opaque and FF for invisible. A higher
+        # layer can be only a faint glow above a fully visible text layer.
+        alphas = re.findall(r"\\(?:1a|alpha)&H([0-9A-F]{2})&", e.text, re.I)
+        return int(alphas[-1], 16) if alphas else 0
+
+    def primary_color(e: Event) -> str:
+        colors = re.findall(r"\\(?:1c|c)&H([0-9A-F]{6})&", e.text, re.I)
+        return colors[-1].upper() if colors else "STYLE_PRIMARY"
+
+    def visible_layer(e: Event) -> tuple[int, int, int]:
+        layer = int(e.layer) if e.layer.isdigit() else 0
+        return (-primary_alpha(e), layer, -e.source_index)
+
     groups: dict[tuple, list[Event]] = {}
     for e in events:
         if e.kind != "Dialogue" or is_lyric_style(e.style):
@@ -806,9 +820,16 @@ def reduce_text_layers(events: list[Event], visible_map: dict[int, str]) -> tupl
         groups.setdefault(key, []).append(e)
     output = []
     for group in groups.values():
-        # Layers that say the same thing in the same place are effect copies.
-        output.append(max(group, key=lambda e: (int(e.layer) if e.layer.isdigit() else 0,
-                                               -e.source_index)))
+        if len({primary_color(e) for e in group}) > 1:
+            # Different colors may form a glow and foreground. Prefer the
+            # upper visible color, not an almost transparent topmost copy.
+            visible = [e for e in group if primary_alpha(e) <= 128]
+            chosen = max(visible, key=lambda e: (int(e.layer) if e.layer.isdigit() else 0,
+                                                  e.source_index)) if visible else max(group, key=visible_layer)
+        else:
+            # With the same color, an opaque lower layer carries the text.
+            chosen = max(group, key=visible_layer)
+        output.append(chosen)
     return sorted(output, key=lambda e: e.source_index), len(events) - len(output)
 
 
@@ -881,6 +902,13 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         key = (e.start, e.end, e.style, e.name, round(pos[1] / 25))
         space_map.setdefault(key, set()).add(round(pos[0], 1))
 
+    # For visual signs, choose their visible fill before same-layer dedup can
+    # discard a brighter effect copy merely because it appeared later.
+    text_copies_removed = 0
+    if level == 2:
+        simplified_events, text_copies_removed = reduce_text_layers(
+            simplified_events, visible_map)
+
     # Work in chronological/source order. Effect-layer dedup is safe regardless of adjacency.
     simplified_events, deduped = deduplicate_layers(simplified_events, visible_map)
     simplified_events, lyric_merged = merge_timed_lyrics(
@@ -894,9 +922,10 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         max_piece_duration=short_duration,
         max_gap=short_gap,
     )
-    text_copies_removed = vector_copies_removed = excess_vectors = 0
+    vector_copies_removed = excess_vectors = 0
     if level == 2:
-        simplified_events, text_copies_removed = reduce_text_layers(simplified_events, visible_map)
+        simplified_events, remaining_copies = reduce_text_layers(simplified_events, visible_map)
+        text_copies_removed += remaining_copies
         vector_events, vector_copies_removed = reduce_vector_layers(vector_events)
         vector_events, excess_vectors = cap_vector_cues(vector_events, max_vectors_per_cue)
         simplified_events = sorted(simplified_events + vector_events, key=lambda e: e.source_index)
