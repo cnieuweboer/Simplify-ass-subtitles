@@ -1,5 +1,5 @@
 Scripts to simplify ass/ssa subtitles, embedded in mkv files.
-Intended usecase is for playing videos on tv's or other weaker devices.
+Intended usecase is for playing videos on tv's or other weaker devices, that can struggle with complex subtitles.
 And some additional bat files to set/unset default and forced subtitle tracks in mkv files.
 
 Copy all files to the folder with mkv files and run "simplify_ass.bat".
