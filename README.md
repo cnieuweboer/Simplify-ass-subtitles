@@ -6,8 +6,6 @@ The changed mkv files are placed in an "output" subfolder.
 
 Note that the "Partial: attempts to preserve manageable vector drawings" option is intended for subtitles with actual vector drawings. It makes many assumptions. And I have only have 1 series with background vector drawings in its subtitles. Ymmv.
 
-Use "remove_simplified_subtitles.bat" to remove the simplified subtitles. Only works when existing subtitles were not replaced.
-
-Use "no_forced_subtitles.bat" to unset any forced subtitle track.
+"remove_simplified_subtitles.bat" only works when existing subtitles were not replaced.
 
 Requires installed MKVtoolnix.
