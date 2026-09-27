@@ -6,4 +6,4 @@ The changed mkv files are placed in an "output" subfolder.
 
 Requires installed MKVtoolnix.
 
-Use "remove_simplified_subtitles" to remove the simplified subtitles. Only works when existing subtitles were not replaced.
+Use "remove_simplified_subtitles.bat" to remove the simplified subtitles. Only works when existing subtitles were not replaced.
