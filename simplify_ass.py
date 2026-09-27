@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
-"""Simplify complex ASS/SSA subtitles for limited hardware renderers.
+"""Simplify ASS/SSA subtitles at two levels for limited renderers.
 
-Main goals:
-  * remove expensive ASS animation/effect tags
-  * collapse duplicate effect layers (e.g. dozens of clipped copies of one syllable)
-  * flatten frame-by-frame moving signs into one static event
-  * drop vector-drawing-only events
-  * preserve ordinary dialogue, styles, static positioning, fonts/colors and basic formatting
-
-No third-party packages are required.
+Level 1 favors maximum reduction; level 2 retains static sign styling and
+manageable vector shapes. No third-party packages are required.
 """
 
 from __future__ import annotations
@@ -46,6 +40,10 @@ SAFE_SIMPLE_TAGS = {
 # Parenthesized tags that are safe enough to retain. \fad is deliberately kept;
 # it is cheap compared with transform/clip animation and widely supported.
 SAFE_FUNCTION_TAGS = {"pos", "fad"}
+
+
+def is_lyric_style(style: str) -> bool:
+    return bool(re.match(r"^(?:OP|ED)(?:\d+)?(?:[_ -]|$)", style, re.I))
 
 
 @dataclass
@@ -286,6 +284,115 @@ def simplify_text(text: str, max_blur: float = 0.0) -> tuple[str, str]:
     return simplified, vis
 
 
+STATIC_TAGS = re.compile(
+    r"\\(fn|r|(?:fscx|fscy|xbord|ybord|xshad|yshad|frz|frx|fry|fax|fay|fsp|"
+    r"bord|shad|alpha|blur|fs|an|q|1a|2a|3a|4a|1c|2c|3c|4c|c|"
+    r"b|i|u|s|p)(?=[^a-zA-Z]|$))", re.I)
+
+
+def visual_override(block: str, max_blur: float) -> str:
+    """Freeze simple transforms at a visible state, keep static sign styling."""
+    transformed: list[str] = []
+    at = 0
+    while True:
+        m = re.search(r"\\t\(", block[at:], re.I)
+        if m is None:
+            break
+        start = at + m.start()
+        depth, end = 1, start + 3
+        while end < len(block) and depth:
+            if block[end] == "(":
+                depth += 1
+            elif block[end] == ")":
+                depth -= 1
+            end += 1
+        transformed.append(block[start + 3:end - 1])
+        at = end
+    base = strip_expensive_functions(block)
+    move = MOVE_RE.search(base)
+    if move and not POS_RE.search(base):
+        x1, y1, x2, y2 = map(float, move.groups()[:4])
+        base += f"\\pos({x2:g},{y2:g})"
+    for tag in ("move", "fad", "fade", "clip", "iclip"):
+        base = remove_function_tag(base, tag)
+
+    def tokens(source: str) -> list[tuple[str, str]]:
+        result = []
+        i = 0
+        while i < len(source):
+            if source[i:i + 5].lower() == "\\pos(":
+                j = source.find(")", i + 5)
+                if j != -1:
+                    result.append(("pos", source[i:j + 1])); i = j + 1; continue
+            m = STATIC_TAGS.match(source, i)
+            if m:
+                j = source.find("\\", m.end())
+                if j < 0:
+                    j = len(source)
+                result.append((m.group(1).lower(), source[i:j]))
+                i = j
+            else:
+                i += 1
+        return result
+
+    chosen: dict[str, str] = {}
+    for name, value in tokens(base):
+        chosen[name] = value
+    for transform in transformed:
+        for name, value in tokens(transform):
+            if name in {"pos", "p", "r", "fn"}:
+                continue
+            if name in {"1a", "2a", "3a", "4a", "alpha"}:
+                # A fade-out's final transparent frame should not hide the sign.
+                def opacity_tag(tag: str) -> int:
+                    m = re.search(r"&H([\dA-F]{2})&", tag, re.I)
+                    return int(m.group(1), 16) if m else 255
+                if opacity_tag(value) < opacity_tag(chosen.get(name, "&HFF&")):
+                    chosen[name] = value
+            else:
+                chosen[name] = value
+    for name in list(chosen):
+        value = chosen[name]
+        if name == "blur":
+            try:
+                if max_blur <= 0 or float(value[5:]) <= 0:
+                    del chosen[name]; continue
+                chosen[name] = f"\\blur{min(float(value[5:]), max_blur):g}"
+            except ValueError:
+                del chosen[name]
+        if name in {"bord", "xbord", "ybord", "shad", "xshad", "yshad"}:
+            try:
+                amount = float(value[len(name) + 1:])
+                limit = 4 if "bord" in name else 2
+                chosen[name] = f"\\{name}{max(-limit, min(limit, amount)):g}"
+            except ValueError:
+                del chosen[name]
+    return "".join(chosen.values())
+
+
+def simplify_visual_text(text: str, max_blur: float) -> tuple[str, str, int]:
+    parts = re.split(r"(\{[^}]*\})", text)
+    drawing = False
+    output, visible = [], []
+    drawing_chars = 0
+    for part in parts:
+        if part.startswith("{") and part.endswith("}"):
+            p = list(re.finditer(r"\\p(\d+)", part, re.I))
+            if p:
+                drawing = int(p[-1].group(1)) > 0
+            simplified = visual_override(part[1:-1], max_blur)
+            if simplified:
+                output.append("{" + simplified + "}")
+        elif part:
+            output.append(part)
+            if drawing:
+                drawing_chars += len(part)
+            else:
+                visible.append(part)
+    vis = "".join(visible).replace(r"\N", " ").replace(r"\n", " ").replace(r"\h", " ")
+    return "".join(output), re.sub(r"\s+", " ", vis).strip(), drawing_chars
+
+
 def get_pos(text: str) -> tuple[float, float] | None:
     m = POS_RE.search(text)
     if not m:
@@ -344,7 +451,7 @@ def coalesce_lyric_phases(events: list[Event], visible_map: dict[int, str]) -> t
         pos = get_pos(e.text)
         visible = visible_map.get(e.source_index, "")
         if (e.kind != "Dialogue" or e.effect.lower() != "fx" or
-                not e.style.startswith(("OP_", "ED_")) or pos is None or len(visible) > 4):
+                not is_lyric_style(e.style) or pos is None or len(visible) > 4):
             output.append(e)
             continue
         key = (e.style, e.name, e.layer, e.margin_l, e.margin_r, e.margin_v,
@@ -380,7 +487,7 @@ def coalesce_lyric_phases(events: list[Event], visible_map: dict[int, str]) -> t
 
 
 def merge_timed_lyrics(events: list[Event], visible_map: dict[int, str],
-                       space_map: dict[tuple, set[float]]) -> tuple[list[Event], int]:
+                       space_map: dict[tuple, set[float]], level: int = 1) -> tuple[list[Event], int]:
     """Turn positioned lyric fragments sharing time/style into one plain ASS line."""
     comments: dict[tuple[str, str, str], list[str]] = {}
     for e in events:
@@ -426,8 +533,10 @@ def merge_timed_lyrics(events: list[Event], visible_map: dict[int, str],
             # are repeated at the same x position in several effect layers.
             # For OP_ROM this also includes romanized syllables (yu, bi, wo).
             single_letters = all(len(part) == 1 for part in ordered)
-            repeated_syllables = (style == "OP_ROM" and
-                                  all(1 <= len(part) <= 3 for part in ordered) and
+            repeated_syllables = ((style == "OP_ROM" if level == 1
+                                   else "ROM" in style.upper()) and
+                                  all(1 <= len(part) <= (3 if level == 1 else 6)
+                                      for part in ordered) and
                                   all(len(positions[x]) >= 2 for x in positions))
             if len(ordered) < 5 or not (single_letters or repeated_syllables):
                 continue
@@ -435,7 +544,7 @@ def merge_timed_lyrics(events: list[Event], visible_map: dict[int, str],
             pieces = []
             xs = sorted(positions)
             inferred_spaces: set[int] = set()
-            if not blanks and style.startswith(("OP_", "ED_")) and len(xs) >= 8:
+            if not blanks and is_lyric_style(style) and len(xs) >= 8:
                 # Some letter-by-letter generators omit the blank glyphs. A
                 # large gap relative to neighboring glyph widths marks a word
                 # boundary. Use this only for opening letter rows.
@@ -469,6 +578,9 @@ def merge_timed_lyrics(events: list[Event], visible_map: dict[int, str],
         first = min(group, key=lambda e: e.source_index)
         # The style supplies normal alignment/margins. The original positions,
         # per-word colors and 1%-scale animation must not survive on this line.
+        if level == 2 and "ED1" in style.upper():
+            y = statistics.median(get_pos(e.text)[1] for e in group)
+            lyric = f"{{\\an9\\pos(1856,{y:g})}}" + lyric
         merged = replace(first, layer="0", effect="", text=lyric)
         replacements[first.source_index] = merged
         removed.update(e.source_index for e in group if e.source_index != first.source_index)
@@ -490,7 +602,7 @@ def collapse_matching_lyric_layers(events: list[Event],
         return "".join(s.split()).casefold()
 
     lines = [e for e in events if e.kind == "Dialogue" and e.effect == "" and
-             e.style.startswith(("OP_", "ED_")) and
+             is_lyric_style(e.style) and
              len(norm(visible_map.get(e.source_index, ""))) >= 10]
     groups: dict[tuple, list[Event]] = {}
     for e in events:
@@ -536,7 +648,7 @@ def collapse_full_lyric_copies(events: list[Event],
     grouped: dict[tuple[str, str, str, int | None], list[Event]] = {}
     for e in events:
         visible = visible_map.get(e.source_index, "")
-        if (e.kind == "Dialogue" and e.style.startswith(("OP_", "ED_")) and
+        if (e.kind == "Dialogue" and is_lyric_style(e.style) and
                 len(norm(visible)) >= 12):
             pos = get_pos(e.text)
             band = round(pos[1] / 25) if pos is not None else None
@@ -561,10 +673,17 @@ def collapse_full_lyric_copies(events: list[Event],
             first = min(cluster, key=lambda item: item.source_index)
             earlier = min(item.start_s for item in cluster)
             later = max(item.end_s for item in cluster)
+            text = visible_map[best.source_index]
+            if "ED1" in first.style.upper():
+                positions = [get_pos(item.text) for item in cluster]
+                positions = [pos for pos in positions if pos is not None]
+                if positions:
+                    y = statistics.median(pos[1] for pos in positions)
+                    text = f"{{\\an9\\pos(1856,{y:g})}}" + text
             replacements[first.source_index] = replace(
                 first, layer="0", start=format_time(earlier), end=format_time(later),
                 start_s=earlier, end_s=later, effect="",
-                text=visible_map[best.source_index])
+                text=text)
             visible_map[first.source_index] = visible_map[best.source_index]
             removed.update(item.source_index for item in cluster if item != first)
 
@@ -640,13 +759,70 @@ def merge_frame_animation(events: list[Event], visible_map: dict[int, str],
     return output, merged_away
 
 
+def reduce_vector_layers(events: list[Event]) -> tuple[list[Event], int]:
+    """Keep the geometry and up to two static layers per repeated drawing."""
+    groups: dict[tuple, list[Event]] = {}
+    for e in events:
+        geometry = OVERRIDE_RE.sub("", e.text)
+        pos = get_pos(e.text)
+        key = (e.start, e.end, e.style, e.name, pos, geometry)
+        groups.setdefault(key, []).append(e)
+    result = []
+    for group in groups.values():
+        layers: dict[str, list[Event]] = {}
+        for e in group:
+            layers.setdefault(e.layer, []).append(e)
+        # A pair of different layers may be the outline and fill of a panel.
+        for layer in sorted(layers, key=lambda v: int(v) if v.isdigit() else 0)[-2:]:
+            choices = layers[layer]
+            result.append(choices[len(choices) // 2])
+    return sorted(result, key=lambda e: e.source_index), len(events) - len(result)
+
+
+def cap_vector_cues(events: list[Event], limit: int) -> tuple[list[Event], int]:
+    """Bound unusually dense vector effects after repeated shapes are folded."""
+    groups: dict[tuple, list[Event]] = {}
+    for e in events:
+        groups.setdefault((e.start, e.end, e.style), []).append(e)
+    output = []
+    for group in groups.values():
+        if len(group) <= limit:
+            output.extend(group)
+        else:
+            # Preserve the largest contours first, which usually carry the
+            # outline of a sign; skip minor decorative flecks and particles.
+            output.extend(sorted(group, key=lambda e: len(e.text), reverse=True)[:limit])
+    return sorted(output, key=lambda e: e.source_index), len(events) - len(output)
+
+
+def reduce_text_layers(events: list[Event], visible_map: dict[int, str]) -> tuple[list[Event], int]:
+    groups: dict[tuple, list[Event]] = {}
+    for e in events:
+        if e.kind != "Dialogue" or is_lyric_style(e.style):
+            groups.setdefault((e.source_index,), []).append(e)
+            continue
+        key = (e.start, e.end, e.style, e.name, get_pos(e.text),
+               visible_map.get(e.source_index, ""))
+        groups.setdefault(key, []).append(e)
+    output = []
+    for group in groups.values():
+        # Layers that say the same thing in the same place are effect copies.
+        output.append(max(group, key=lambda e: (int(e.layer) if e.layer.isdigit() else 0,
+                                               -e.source_index)))
+    return sorted(output, key=lambda e: e.source_index), len(events) - len(output)
+
+
 def simplify_ass(path: Path, output: Path, max_blur: float,
-                 short_duration: float, short_gap: float) -> dict[str, int]:
+                 short_duration: float, short_gap: float,
+                 max_drawing_chars: int = 8000,
+                 max_vectors_per_cue: int = 32,
+                 level: int = 1) -> dict[str, int]:
     raw = path.read_text(encoding="utf-8-sig", errors="replace")
     lines = raw.splitlines()
 
     parsed_by_line: dict[int, Event] = {}
     simplified_events: list[Event] = []
+    vector_events: list[Event] = []
     visible_map: dict[int, str] = {}
     space_map: dict[tuple, set[float]] = {}
     dropped_drawings = 0
@@ -670,8 +846,18 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
                 re.search(r"\\clip\(\s*(?:\d+\s*,\s*)?m\s", e.text, re.I)):
             dropped_drawings += 1
             continue
-        new_text, visible = simplify_text(e.text, max_blur=max_blur)
+        if level == 1:
+            new_text, visible = simplify_text(e.text, max_blur=max_blur)
+            drawing_chars = 0
+        else:
+            new_text, visible, drawing_chars = simplify_visual_text(e.text, max_blur)
         visible_map[idx] = visible
+        if drawing_chars:
+            if drawing_chars <= max_drawing_chars:
+                vector_events.append(replace(e, text=new_text, effect=""))
+            else:
+                dropped_drawings += 1
+            continue
         if not visible:
             # Position-only events in per-character FX mark word spaces in some
             # generated lyrics. Keep their locations for text reconstruction.
@@ -697,7 +883,8 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
 
     # Work in chronological/source order. Effect-layer dedup is safe regardless of adjacency.
     simplified_events, deduped = deduplicate_layers(simplified_events, visible_map)
-    simplified_events, lyric_merged = merge_timed_lyrics(simplified_events, visible_map, space_map)
+    simplified_events, lyric_merged = merge_timed_lyrics(
+        simplified_events, visible_map, space_map, level)
     simplified_events, overlap_removed = collapse_matching_lyric_layers(
         simplified_events, visible_map)
     simplified_events, full_copies_removed = collapse_full_lyric_copies(
@@ -707,6 +894,12 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         max_piece_duration=short_duration,
         max_gap=short_gap,
     )
+    text_copies_removed = vector_copies_removed = excess_vectors = 0
+    if level == 2:
+        simplified_events, text_copies_removed = reduce_text_layers(simplified_events, visible_map)
+        vector_events, vector_copies_removed = reduce_vector_layers(vector_events)
+        vector_events, excess_vectors = cap_vector_cues(vector_events, max_vectors_per_cue)
+        simplified_events = sorted(simplified_events + vector_events, key=lambda e: e.source_index)
 
     # Rebuild [Events] while preserving all non-dialogue/event metadata lines.
     # We replace Dialogue/Comment lines at their original region with the processed sequence.
@@ -739,6 +932,10 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         "overlap_removed": overlap_removed,
         "full_copies_removed": full_copies_removed,
         "merged": merged,
+        "text_copies_removed": text_copies_removed,
+        "vector_copies_removed": vector_copies_removed,
+        "vector_output": len(vector_events),
+        "excess_vectors": excess_vectors,
         "dropped": dropped_drawings,
     }
 
@@ -762,17 +959,23 @@ def iter_inputs(targets: Iterable[str], recursive: bool) -> list[Path]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Simplify complex ASS/SSA subtitles for hardware/TV renderers."
+        description="Simplify ASS/SSA subtitles at level 1 (aggressive) or 2 (retain static visuals)."
     )
     ap.add_argument("inputs", nargs="+", help="ASS/SSA file(s) or folder(s)")
     ap.add_argument("-r", "--recursive", action="store_true", help="scan folders recursively")
-    ap.add_argument("--suffix", default=".simple", help="output suffix before extension (default: .simple)")
+    ap.add_argument("--level", type=int, choices=(1, 2), default=1,
+                    help="1: maximum reduction (default); 2: preserve static visual elements")
+    ap.add_argument("--suffix", default=".simple", help="output suffix before extension (default: .simple; compatible with the MKV wrapper)")
     ap.add_argument("--max-blur", type=float, default=0.0,
                     help="retain/clamp blur up to this amount; default 0 removes blur")
     ap.add_argument("--short-duration", type=float, default=0.16,
                     help="max duration of a frame-animation piece in seconds (default 0.16)")
     ap.add_argument("--short-gap", type=float, default=0.08,
                     help="max gap between frame-animation pieces in seconds (default 0.08)")
+    ap.add_argument("--max-drawing-chars", type=int, default=8000,
+                    help="maximum vector path length to retain (default 8000)")
+    ap.add_argument("--max-vectors-per-cue", type=int, default=32,
+                    help="maximum distinct vector paths in one timed cue (default 32)")
     args = ap.parse_args()
 
     inputs = iter_inputs(args.inputs, args.recursive)
@@ -782,10 +985,11 @@ def main() -> int:
     total_in = total_out = 0
     for src in inputs:
         dst = src.with_name(src.stem + args.suffix + src.suffix)
-        stats = simplify_ass(src, dst, args.max_blur, args.short_duration, args.short_gap)
+        stats = simplify_ass(src, dst, args.max_blur, args.short_duration, args.short_gap,
+                             args.max_drawing_chars, args.max_vectors_per_cue, args.level)
         total_in += stats["original"]
         total_out += stats["output"]
-        print(f"{src.name} -> {dst.name}")
+        print(f"{src.name} -> {dst.name} (level {args.level})")
         print(
             f"  dialogue events: {stats['original']} -> {stats['output']} "
             f"(duplicate layers removed: {stats['deduped']}, "
@@ -793,7 +997,12 @@ def main() -> int:
             f"glyph phases merged: {stats['phase_merged']}, "
             f"overlapping effects removed: {stats['overlap_removed']}, "
             f"full lyric copies removed: {stats['full_copies_removed']}, "
-            f"frame pieces merged: {stats['merged']}, drawings/effects dropped: {stats['dropped']})"
+            f"frame pieces merged: {stats['merged']}, "
+            f"duplicate sign text: {stats['text_copies_removed']}, "
+            f"vector copies: {stats['vector_copies_removed']}, "
+            f"vectors retained: {stats['vector_output']}, "
+            f"excess vector details removed: {stats['excess_vectors']}, "
+            f"drawings/effects dropped: {stats['dropped']})"
         )
 
     if len(inputs) > 1:

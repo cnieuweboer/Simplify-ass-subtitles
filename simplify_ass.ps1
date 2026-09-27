@@ -1,9 +1,11 @@
 # Requires Windows PowerShell 5.1+ or PowerShell 7, Python 3 and MKVToolNix.
 # Put simplify_ass_lyrics_v2.py beside this script, or supply -Simplifier.
+# Use -SimplificationLevel 2 to retain static sign text and vector drawings.
 param(
     [string] $InputFolder,
     [string] $OutputFolder,
     [string] $Simplifier,
+    [ValidateSet(1, 2)] [int] $SimplificationLevel = 1,
     [string] $Python = 'python',
     [string] $MkvToolNixFolder,
     [switch] $Recurse,
@@ -92,7 +94,11 @@ foreach ($file in $files) {
             Check-Exit "extract track $($track.id)"
             if (-not (Test-Path -LiteralPath $extracted -PathType Leaf)) { throw "Track $($track.id) was not extracted." }
 
-            & $pythonPath $simplifierPath $extracted
+            if ($PSBoundParameters.ContainsKey('SimplificationLevel')) {
+                & $pythonPath $simplifierPath --level $SimplificationLevel $extracted
+            } else {
+                & $pythonPath $simplifierPath $extracted
+            }
             Check-Exit "simplify track $($track.id)"
             $simple = Join-Path $work ("track-$($track.id).simple" + $ext)
             if (-not (Test-Path -LiteralPath $simple -PathType Leaf)) { throw "Missing simplified track: $simple" }
