@@ -23,8 +23,8 @@ if errorlevel 2 (set "ADD=-AddSimplifiedSubtitles") else (set "ADD=")
 
 echo.
 echo Which simplification level?
-echo   1. Aggressive: simplify effects and remove vector drawings
-echo   2. Visual: keep static text formatting and manageable vector drawings
+echo   1. Full: simplify effects and remove vector drawings
+echo   2. Partial: attempts to preserve manageable vector drawings
 choice /C 12 /N /M "Press 1 or 2: "
 if errorlevel 3 goto :cancelled
 if not errorlevel 1 goto :cancelled
