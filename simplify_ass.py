@@ -18,11 +18,12 @@ from __future__ import annotations
 import argparse
 import re
 import statistics
+import unicodedata
 from dataclasses import dataclass, replace, field
 from pathlib import Path
 from typing import Iterable
 
-__version__ = "2026.09.28.18"
+__version__ = "2026.09.28.20"
 
 OVERRIDE_RE = re.compile(r"\{([^}]*)\}")
 NUM = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)"
@@ -1376,7 +1377,7 @@ def remove_masked_glyph_effects(events: list[Event],
 
 def flatten_aggressive_text_sequences(events: list[Event],
                                       visible_map: dict[int,str],
-                                      styles: dict) -> tuple[list[Event],int]:
+                                      styles: dict, animated_sources: set[int] | None = None) -> tuple[list[Event],int]:
     """Freeze connected full-text styling phases as one static caption.
 
     For unmasked text choose the visible style at the temporal midpoint;
@@ -1417,7 +1418,11 @@ def flatten_aggressive_text_sequences(events: list[Event],
             clipped=any("clip" in e.state or "iclip" in e.state for e in component)
             if not clipped and (len({e.name for e in component}) != 1 or
                     len({get_pos(e.text) for e in component}) != 1 or
-                    len({state_key(e) for e in component}) < 2):
+                    (len({state_key(e) for e in component}) < 2 and
+                     not (all(e.source_index in (animated_sources or set()) for e in component) and
+                          len({e.text for e in component}) == 1 and
+                          len({e.layer for e in component}) == 1 and
+                          all(a.end == b.start for a,b in zip(component,component[1:]))))):
                 output.extend(component);continue
             visible_candidates=[e for e in component if e.state.get("1a",255)<255]
             if not visible_candidates:
@@ -1675,11 +1680,65 @@ class FontSpacing:
                   xs[-1]+(1-anchor)*widths[-1]*factor)/2
         return text, center, sx, sy, ((alignment-1)//3)*3+2
 
+    def fit_fullwidth_run(self, ordered: list[Event], glyphs: list[str]):
+        """Fit one unbroken row against its exact font's glyph advances."""
+        if not self.available or len(ordered) < 3:
+            return None
+        state = ordered[0].state
+        family = str(state.get("fn", "")).strip()
+        key = (family.casefold(), bool(state.get("b",0)), bool(state.get("i",0)))
+        face = self.faces.get(key)
+        if face is None:
+            self.missing.add(family)
+            return None
+        path, index, cmap = face
+        if any(ord(g) not in cmap for g in glyphs):
+            return None
+        if any(any(e.state.get(k) != state.get(k)
+                   for k in ("fn","fs","fscx","fscy","an","b","i","fsp"))
+               for e in ordered):
+            return None
+        fs, sx = state.get("fs",0), state.get("fscx",100)
+        if fs <= 0 or sx <= 0:
+            return None
+        try:
+            if (path,index) not in self.loaded:
+                self.loaded[path,index] = self.ImageFont.truetype(path,1024,index=index)
+            font = self.loaded[path,index]
+            text = "".join(glyphs)
+            scale = fs*sx/100/1024
+            widths = [font.getlength(g)*scale for g in glyphs]
+            advances = [font.getlength(text[:i])*scale for i in range(len(glyphs)+1)]
+        except (OSError,ValueError):
+            return None
+        # Adjacent glyph positions are their own alignment anchors, not
+        # necessarily their centres. Preserve the original glyph width.
+        alignment = int(state.get("an",5))
+        if alignment not in range(1,10):
+            return None
+        anchor = ((alignment-1)%3)/2
+        model = [advance+anchor*width for advance,width in zip(advances,widths)]
+        xs = [get_pos(e.text)[0] for e in ordered]
+        model_delta = [b-a for a,b in zip(model,model[1:])]
+        actual_delta = [b-a for a,b in zip(xs,xs[1:])]
+        denominator = sum(v*v for v in model_delta)
+        if denominator == 0:
+            return None
+        factor = sum(a*b for a,b in zip(model_delta,actual_delta))/denominator
+        if not .85 <= factor <= 1.15:
+            return None
+        origin = statistics.mean(x-factor*advance for x,advance in zip(xs,model))
+        if max(abs(x-(origin+factor*advance))
+               for x,advance in zip(xs,model)) > max(1.25,.06*statistics.median(actual_delta)):
+            return None
+        return (origin+anchor*factor*advances[-1], sx*factor)
+
 
 def merge_staggered_text_rows(events: list[Event], visible_map: dict[int, str],
                               masked_rows: set[tuple] | None = None,
                               space_map: dict[tuple, set[float]] | None = None,
-                              font_spacing: FontSpacing | None = None) -> tuple[list[Event], int, dict[int, list[tuple[str,float]]]]:
+                              font_spacing: FontSpacing | None = None,
+                              animated_sources: set[int] | None = None) -> tuple[list[Event], int, dict[int, list[tuple[str,float]]]]:
     """Freeze a typewriter-like row whose short fragments share one lifetime.
 
     A coherent left-to-right or right-to-left sequence of starts and ends is
@@ -1735,18 +1794,23 @@ def merge_staggered_text_rows(events: list[Event], visible_map: dict[int, str],
 
         def flush() -> None:
             nonlocal removed, run
-            if len(run) < 4:
+            if len(run) < 2 or (len(run) < 4 and not all(
+                    e.source_index in (animated_sources or set()) for e in run)):
                 passthrough.extend(run)
                 return
             xs = [get_pos(e.text)[0] for e in run]
             if len({round(x / run[0].unit) for x in xs}) != len(run):
                 passthrough.extend(run)
                 return
-            direction = 1 if xs[-1] > xs[0] else -1
-            if any(direction * (b-a) <= 0 for a,b in zip(xs,xs[1:])):
+            ordered = sorted(run, key=lambda e: get_pos(e.text)[0])
+            # ASS timestamps are quantized. Equal-time neighbours may occur in
+            # any source order; validate temporal progression in spatial order.
+            if not any(all(direction * (b.start_s-a.start_s) >= -0.011 and
+                               direction * (b.end_s-a.end_s) >= -0.011
+                               for a,b in zip(ordered,ordered[1:]))
+                       for direction in (1,-1)):
                 passthrough.extend(run)
                 return
-            ordered = sorted(run, key=lambda e: get_pos(e.text)[0])
             start, end = min(e.start_s for e in run), max(e.end_s for e in run)
             fragments = [visible_map[e.source_index] for e in ordered]
             norm = lambda text: "".join(text.split())
@@ -1865,7 +1929,8 @@ def merge_staggered_text_rows(events: list[Event], visible_map: dict[int, str],
 
 
 def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,str],
-                                    anchors: dict[int,list[tuple[str,float]]]) -> tuple[list[Event],int]:
+                                    anchors: dict[int,list[tuple[str,float]]],
+                                    animated_sources: set[int] | None = None) -> tuple[list[Event],int]:
     """Remove short, positioned highlights that exactly repeat a static row span.
 
     Use the original fragment coordinates retained while assembling the row.
@@ -1882,7 +1947,23 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
         if (e.kind != "Dialogue" or e.source_index in anchors or pos is None or
                 not visible or len(visible)>8 or e.state.get("p",0)):
             continue
-        for base in rows.get(e.style,[]):
+        candidates = list(rows.get(e.style,[]))
+        if e.source_index in (animated_sources or set()):
+            # Highlight copies may use a different style. Require matching
+            # font geometry, exact fragment position/text and nested lifetime.
+            for style, peers in rows.items():
+                if style == e.style:
+                    continue
+                for base in peers:
+                    if (e.name == base.name and e.duration <= .5*base.duration
+                            and e.start_s >= base.start_s and e.end_s <= base.end_s
+                            and all(e.state.get(tag) == base.state.get(tag)
+                                    for tag in ("fn","fs","an","b","i","frz"))
+                            and abs(pos[1]-get_pos(base.text)[1]) <= e.unit
+                            and any(text == visible and abs(pos[0]-x) <= e.unit
+                                    for text,x in anchors[base.source_index])):
+                        candidates.append(base)
+        for base in candidates:
             if (e.duration > .8*base.duration and e.layer == base.layer or
                     e.start_s < base.start_s-.15 or e.end_s > base.end_s+.15 or
                     abs(pos[1]-get_pos(base.text)[1]) > .15*text_height(base)):
@@ -1911,6 +1992,93 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
             if e.source_index in removed:
                 break
     return [e for e in events if e.source_index not in removed],len(removed)
+
+
+def merge_static_fullwidth_runs(events: list[Event],
+                                visible_map: dict[int,str],
+                                font_spacing: FontSpacing | None = None) -> tuple[list[Event],int]:
+    """Join uniformly spaced, simultaneous fullwidth glyphs within mixed rows.
+
+    Only single fullwidth letters with identical styling and timing qualify.
+    Exact font advances verify placement before replacing individual glyphs.
+    If the font is unavailable, preserve the individual positions.
+    """
+    groups: dict[tuple,list[Event]] = {}
+    for e in events:
+        glyph = visible_map.get(e.source_index, "")
+        pos = get_pos(e.text)
+        if (e.kind != "Dialogue" or pos is None or len(glyph) != 1 or
+                unicodedata.category(glyph) != "Lo" or
+                unicodedata.east_asian_width(glyph) not in ("W", "F") or
+                e.text.count("{") != 1 or e.text.count("}") != 1 or
+                not e.text.endswith("}"+glyph) or
+                e.state.get("p",0) or inline_layout_key(e) or
+                abs(e.state.get("fsp",0)) > .001 or
+                any(abs(e.state.get(tag,0)) > .001
+                    for tag in ("frz","frx","fry","fax","fay"))):
+            continue
+        # The tag block must be identical apart from its position. This also
+        # keeps color, outline, alpha, font and scale changes separate.
+        tags = POS_RE.sub("", e.text.rsplit("}",1)[0])
+        key = (e.start,e.end,e.style,e.name,e.layer,e.effect,e.row,
+               e.margin_l,e.margin_r,e.margin_v,tags,
+               round(pos[1]/e.unit))
+        groups.setdefault(key,[]).append(e)
+
+    replacements: dict[int,Event] = {}
+    removed: set[int] = set()
+
+    def join(run: list[Event]) -> None:
+        if len(run) < 3:
+            return
+        xs = [get_pos(e.text)[0] for e in run]
+        gaps = [b-a for a,b in zip(xs,xs[1:])]
+        pitch = statistics.median(gaps)
+        if pitch <= 0 or max(abs(g-pitch) for g in gaps) > max(1.5,.15*pitch):
+            return
+        first = run[0]
+        state = first.state
+        if font_spacing is None:
+            return
+        glyphs = [visible_map[e.source_index] for e in run]
+        fit = font_spacing.fit_fullwidth_run(run,glyphs)
+        if fit is None:
+            return
+        x, scale = fit
+        y = statistics.median(get_pos(e.text)[1] for e in run)
+        text = "".join(glyphs)
+        # Reuse the original static tags, so outline, alpha, font weight and
+        # other non-layout styling survive unchanged.
+        tags = first.text.split("}",1)[0][1:]
+        tags = POS_RE.sub(lambda _: f"\\pos({x:g},{y:g})", tags)
+        scale_tag = re.compile(r"\\fscx"+NUM, re.I)
+        if scale_tag.search(tags):
+            tags = scale_tag.sub(lambda _: f"\\fscx{scale:g}", tags)
+        else:
+            tags += f"\\fscx{scale:g}"
+        replacements[first.source_index] = replace(first,
+                                                   text="{"+tags+"}"+text)
+        visible_map[first.source_index] = text
+        removed.update(e.source_index for e in run[1:])
+        font_spacing.merged += 1
+
+    for group in groups.values():
+        ordered = sorted(group,key=lambda e:get_pos(e.text)[0])
+        run = [ordered[0]]
+        for e in ordered[1:]:
+            prev = run[-1]
+            state = prev.state
+            nominal = state.get("fs",0)*state.get("fscx",100)/100
+            x_gap = get_pos(e.text)[0]-get_pos(prev.text)[0]
+            if (nominal > 0 and .6*nominal <= x_gap <= 1.4*nominal and
+                    abs(get_pos(e.text)[1]-get_pos(prev.text)[1]) <= e.unit):
+                run.append(e)
+            else:
+                join(run)
+                run = [e]
+        join(run)
+    return ([replacements.get(e.source_index,e) for e in events
+             if e.source_index not in removed],len(removed))
 
 
 def static_object_key(e: Event, styles: dict) -> tuple | None:
@@ -2027,6 +2195,8 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
                 e.unit = unit
                 e.state = effective_state(e.text,styles.get(e.style,DEFAULT_STATE),styles)
                 parsed_by_line[idx] = e
+    animated_sources = {idx for idx,e in parsed_by_line.items()
+                        if re.search(r"\\(?:t\s*\(|[kK](?:f|o)?\d|fad(?:e)?\s*\(|move\s*\()", e.text)}
     simplified_events: list[Event] = []
     vector_events: list[Event] = []
     visible_map: dict[int, str] = {}
@@ -2125,16 +2295,23 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         max_gap=short_gap,
     )
     aggressive_sequences = 0
-    staggered_rows = overlaid_letters = covered_fragments = 0
+    staggered_rows = overlaid_letters = covered_fragments = fullwidth_merged = 0
     if level == 1:
         simplified_events, aggressive_sequences = flatten_aggressive_text_sequences(
-            simplified_events, visible_map, styles)
+            simplified_events, visible_map, styles, animated_sources)
         simplified_events, overlaid_letters = remove_letters_over_full_lines(
             simplified_events, visible_map)
         simplified_events, staggered_rows, row_anchors = merge_staggered_text_rows(
-            simplified_events, visible_map, masked_rows, space_map, font_spacing)
+            simplified_events, visible_map, masked_rows, space_map, font_spacing,
+            animated_sources)
         simplified_events, covered_fragments = remove_covered_fragment_effects(
-            simplified_events, visible_map, row_anchors)
+            simplified_events, visible_map, row_anchors, animated_sources)
+        # Earlier passes may have frozen a different point of an animation;
+        # fit the row against its new static tags, not the source phase state.
+        for e in simplified_events:
+            e.state = effective_state(e.text, styles.get(e.style,DEFAULT_STATE), styles)
+        simplified_events, fullwidth_merged = merge_static_fullwidth_runs(
+            simplified_events, visible_map, font_spacing)
     covered_vectors = 0
     vector_copies_removed = vector_glows_removed = vector_frames_removed = excess_vectors = 0
     if level == 2:
@@ -2159,7 +2336,7 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         return {key: 0 for key in ("original", "output", "deduped", "lyric_merged",
                 "merged", "dropped", "overlap_removed", "full_copies_removed", "phase_merged",
                 "text_copies_removed", "vector_copies_removed", "vector_glows_removed",
-                "vector_frames_removed", "vector_output", "excess_vectors", "static_merged", "covered_vectors", "tiles_joined", "aggressive_copies", "aggressive_sequences", "staggered_rows", "overlaid_letters", "covered_fragments", "masked_decorations")}
+                "vector_frames_removed", "vector_output", "excess_vectors", "static_merged", "covered_vectors", "tiles_joined", "aggressive_copies", "aggressive_sequences", "staggered_rows", "overlaid_letters", "covered_fragments", "fullwidth_merged", "masked_decorations")}
 
     first_event_line = event_line_indices[0]
     last_event_line = event_line_indices[-1]
@@ -2187,6 +2364,7 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         "masked_decorations": masked_decorations,
         "aggressive_sequences": aggressive_sequences,
         "staggered_rows": staggered_rows,
+        "fullwidth_merged": fullwidth_merged,
         "overlaid_letters": overlaid_letters,
         "covered_fragments": covered_fragments,
         "phase_merged": phase_merged,
