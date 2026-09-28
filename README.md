@@ -18,10 +18,6 @@ The scripts process the MKV files in that folder automatically.
 
 The simplification scripts can reduce or remove complex ASS/SSA formatting while preserving normal subtitle text and simpler styling where possible.
 
-### Partial vector drawing support
-
-The option:
-
 **Partial: attempts to preserve manageable vector drawings**
 
 is intended for subtitles that contain actual ASS vector drawings, such as translated signs, UI elements, or background graphics.
