@@ -458,6 +458,47 @@ def deduplicate_layers(events: list[Event], visible_map: dict[int, str]) -> tupl
     return output, removed
 
 
+def reduce_static_sign_copies(events: list[Event], visible_map: dict[int, str],
+                              originals: dict[int, Event]) -> tuple[list[Event], int]:
+    """In aggressive mode, fold slightly offset effect copies into their fill."""
+    groups: dict[tuple, list[Event]] = {}
+    for e in events:
+        if e.kind != "Dialogue" or is_lyric_style(e.style) or get_pos(e.text) is None:
+            continue
+        visible = visible_map.get(e.source_index, "")
+        if visible:
+            groups.setdefault((e.style, e.name, e.margin_l, e.margin_r,
+                               e.margin_v, visible), []).append(e)
+
+    def alpha(e: Event) -> int:
+        raw = originals[e.source_index].text
+        base = strip_expensive_functions(raw)
+        values = re.findall(r"\\(?:1a|alpha)&H([0-9a-f]{2})&", base, re.I)
+        return int(values[-1], 16) if values else 0
+
+    def rank(e: Event) -> tuple:
+        return (alpha(e), -int(e.layer) if e.layer.lstrip("-").isdigit() else 0,
+                -e.duration, e.source_index)
+
+    removed: set[int] = set()
+    for group in groups.values():
+        ranks = {e.source_index: rank(e) for e in group}
+        for e in group:
+            x, y = get_pos(e.text)
+            for other in group:
+                if other is e or ranks[other.source_index] >= ranks[e.source_index]:
+                    continue
+                ox, oy = get_pos(other.text)
+                # Only remove a copy covered for its entire lifetime by an
+                # almost coincident copy of the same complete text.
+                if (other.start_s <= e.start_s + 0.001
+                        and other.end_s >= e.end_s - 0.001
+                        and abs(ox - x) <= 3 and abs(oy - y) <= 3):
+                    removed.add(e.source_index)
+                    break
+    return [e for e in events if e.source_index not in removed], len(removed)
+
+
 def coalesce_lyric_phases(events: list[Event], visible_map: dict[int, str]) -> tuple[list[Event], int]:
     """Join touching phases of one positioned glyph, keeping lyric rows separate."""
     groups: dict[tuple, list[Event]] = {}
@@ -983,6 +1024,98 @@ def reduce_text_layers(events: list[Event], visible_map: dict[int, str]) -> tupl
     return sorted(output, key=lambda e: e.source_index), len(events) - len(output)
 
 
+def texture_carrier_indices(events: list[Event], lines: list[str], level: int = 1) -> set[int]:
+    """Infer decorative carrier text from its role, without a font blacklist.
+
+    Require hidden fill/outline, a vector mask, and nearby readable text in
+    another font. Aggressive mode also discards long, low-opacity multiline
+    text textures when they share a cue with vector art.
+    """
+    styles: dict[str, dict[str, str]] = {}
+    fields: list[str] = []
+    section = ""
+    for line in lines:
+        if line.startswith("["):
+            section = line.lower()
+        elif section == "[v4+ styles]" and line.startswith("Format:"):
+            fields = [v.strip().lower() for v in line.split(":", 1)[1].split(",")]
+        elif section == "[v4+ styles]" and line.startswith("Style:") and fields:
+            data = dict(zip(fields, (v.strip() for v in line.split(":", 1)[1].split(","))))
+            styles[data.get("name", "")] = data
+
+    def describe(e: Event):
+        if e.kind != "Dialogue" or re.search(r"\\(?:p[1-9]|r(?=\\|}|[A-Za-z]))", e.text):
+            return None
+        text = re.sub(r"\s+", " ", OVERRIDE_RE.sub("", e.text)).strip()
+        pos = get_pos(e.text)
+        if not text or pos is None:
+            return None
+        base = strip_expensive_functions(e.text)
+        style = styles.get(e.style, {})
+        fonts = re.findall(r"\\fn([^\\}]+)", base, re.I)
+        font = (fonts[-1].strip() if fonts else style.get("fontname", "")).casefold()
+        def alpha(channel: int, key: str) -> int:
+            value = style.get(key, "&H00FFFFFF").removeprefix("&H").rstrip("&")
+            initial = int(value[:2], 16) if re.fullmatch(r"[0-9a-fA-F]{8}", value) else 0
+            tags = re.findall(rf"\\(?:alpha|{channel}a)&H([0-9a-f]{{2}})&", base, re.I)
+            return int(tags[-1], 16) if tags else initial
+        primary = alpha(1, "primarycolour")
+        outline = alpha(3, "outlinecolour")
+        # An animated reveal is actual lettering, not a hidden carrier.
+        reveal = any(int(v, 16) < 240 for v in re.findall(
+            r"\\(?:alpha|1a|3a)&H([0-9a-f]{2})&", e.text, re.I))
+        hidden = primary >= 240 and outline >= 240 and not reveal
+        masked = bool(re.search(r"\\clip\(\s*(?:\d+\s*,\s*)?m\s", e.text, re.I))
+        return text, pos, font, primary, hidden, masked
+
+    descriptions = {e.source_index: d for e in events if (d := describe(e)) is not None}
+    groups: dict[tuple, list[Event]] = {}
+    for e in events:
+        if e.source_index in descriptions:
+            groups.setdefault((e.start, e.end, e.style, e.name), []).append(e)
+    candidates: list[tuple[Event, tuple]] = []
+    learned: set[tuple[str, str]] = set()
+    for group in groups.values():
+        for e in group:
+            d = descriptions[e.source_index]
+            text, (x, y), font, _, hidden, masked = d
+            if not hidden or not font:
+                continue
+            companions = [descriptions[o.source_index] for o in group if o is not e]
+            if not any(p[0] != text and p[2] and p[2] != font and p[3] <= 128
+                       and abs(p[1][0] - x) <= 6 and abs(p[1][1] - y) <= 6
+                       for p in companions):
+                continue
+            candidates.append((e, d))
+            if masked:
+                learned.add((font, text))
+    result = {e.source_index for e, d in candidates if d[5] or (d[2], d[0]) in learned}
+    if level == 1:
+        cue_vectors: dict[tuple, int] = {}
+        for e in events:
+            if e.kind == "Dialogue" and re.search(r"\\p[1-9]", e.text, re.I):
+                key = (e.start, e.end, e.style, e.name)
+                cue_vectors[key] = cue_vectors.get(key, 0) + 1
+        for e in events:
+            d = descriptions.get(e.source_index)
+            if d is None or e.source_index in result or d[5]:
+                continue
+            key = (e.start, e.end, e.style, e.name)
+            if cue_vectors.get(key, 0) < 2 or not d[2]:
+                continue
+            base = strip_expensive_functions(e.text)
+            alphas = re.findall(r"\\1a&H([0-9a-f]{2})&", base, re.I)
+            if not alphas or int(alphas[-1], 16) < 208:
+                continue
+            raw = OVERRIDE_RE.sub("", e.text)
+            parts = re.split(r"\\[Nn]", raw)
+            long_runs = sum(1 for part in parts if
+                            re.fullmatch(r"[A-Za-z]{14,}", part.strip()))
+            if len(parts) >= 3 and long_runs >= 2:
+                result.add(e.source_index)
+    return result
+
+
 def simplify_ass(path: Path, output: Path, max_blur: float,
                  short_duration: float, short_gap: float,
                  max_drawing_chars: int = 8000,
@@ -991,7 +1124,9 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
     raw = path.read_text(encoding="utf-8-sig", errors="replace")
     lines = raw.splitlines()
 
-    parsed_by_line: dict[int, Event] = {}
+    parsed_by_line = {idx: e for idx, line in enumerate(lines)
+                      if (e := parse_dialogue(line, idx)) is not None}
+    texture_carriers = texture_carrier_indices(list(parsed_by_line.values()), lines, level)
     simplified_events: list[Event] = []
     vector_events: list[Event] = []
     visible_map: dict[int, str] = {}
@@ -1001,7 +1136,7 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
     blank_events: list[Event] = []
 
     for idx, line in enumerate(lines):
-        e = parse_dialogue(line, idx)
+        e = parsed_by_line.get(idx)
         if e is None:
             continue
         parsed_by_line[idx] = e
@@ -1009,12 +1144,7 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
             simplified_events.append(e)
             continue
         original_dialogues += 1
-        # The Grain font is used as a moving texture inside letter-shaped
-        # vector clips. Removing its clip would expose the texture's carrier
-        # string as random text, so discard that decorative layer first.
-        if (e.effect.lower() == "fx" and
-                re.search(r"\\fnGrain(?=\\|})", e.text, re.I) and
-                re.search(r"\\clip\(\s*(?:\d+\s*,\s*)?m\s", e.text, re.I)):
+        if idx in texture_carriers:
             dropped_drawings += 1
             continue
         if level == 1:
@@ -1042,6 +1172,11 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
             dropped_drawings += 1
             continue
         simplified_events.append(replace(e, text=new_text))
+
+    sign_copies_removed = 0
+    if level == 1:
+        simplified_events, sign_copies_removed = reduce_static_sign_copies(
+            simplified_events, visible_map, parsed_by_line)
 
     # Reconstruct each glyph's complete lifetime before trying to assemble rows.
     simplified_events, phase_merged = coalesce_lyric_phases(
@@ -1108,7 +1243,7 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         "original": original_dialogues,
         "phase_merged": phase_merged,
         "output": output_dialogues,
-        "deduped": deduped,
+        "deduped": deduped + sign_copies_removed,
         "lyric_merged": lyric_merged,
         "overlap_removed": overlap_removed,
         "full_copies_removed": full_copies_removed,
