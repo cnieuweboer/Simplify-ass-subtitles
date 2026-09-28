@@ -8,4 +8,9 @@ Note that the "Partial: attempts to preserve manageable vector drawings" option 
 
 "remove_simplified_subtitles.bat" only works when existing subtitles were not replaced.
 
-Requires installed MKVtoolnix.
+Requires:
+MKVtoolnix
+Python
+Pillow
+fonttools
+use "python -m pip install Pillow fonttools" to install pillow and fonttools
