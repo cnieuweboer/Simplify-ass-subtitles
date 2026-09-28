@@ -22,7 +22,7 @@ The **Partial** option is intended for subtitles that contain actual ASS vector 
 
 This mode makes several assumptions about how those drawings are constructed. It has only been tested against a limited number of subtitles, so results may vary considerably between releases or fansub groups.
 
-If you do not need vector drawings, the normal simplification options are safer.
+If you do not need vector drawings, the **Full** simplification options are safer.
 
 ## Removing Simplified Subtitles
 
