@@ -18,9 +18,7 @@ The scripts process the MKV files in that folder automatically.
 
 The simplification scripts can reduce or remove complex ASS/SSA formatting while preserving normal subtitle text and simpler styling where possible.
 
-**Partial: attempts to preserve manageable vector drawings**
-
-is intended for subtitles that contain actual ASS vector drawings, such as translated signs, UI elements, or background graphics.
+The `partional` option is intended for subtitles that contain actual ASS vector drawings, such as translated signs, UI elements, or background graphics.
 
 This mode makes several assumptions about how those drawings are constructed. It has only been tested against a limited number of subtitles, so results may vary considerably between releases or fansub groups.
 
