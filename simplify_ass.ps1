@@ -1,5 +1,6 @@
-# Requires Windows PowerShell 5.1+ or PowerShell 7, Python 3 and MKVToolNix.
-# Put simplify_ass_lyrics_v2.py beside this script, or supply -Simplifier.
+﻿# Requires Windows PowerShell 5.1+ or PowerShell 7, Python 3 and MKVToolNix.
+# Put the current simplify_ass.py beside this script, or supply -Simplifier.
+# Level 1 uses embedded fonts; install once: python -m pip install Pillow fonttools
 # Use -SimplificationLevel 2 to retain static sign text and vector drawings.
 param(
     [string] $InputFolder,
@@ -52,6 +53,12 @@ $mkvextract = Resolve-Executable 'mkvextract'
 $pythonCmd = Get-Command $Python -ErrorAction SilentlyContinue
 if (-not $pythonCmd) { throw "Cannot find Python command: $Python" }
 $pythonPath = $pythonCmd.Source
+if ($SimplificationLevel -eq 1) {
+    & $pythonPath -c "import PIL.ImageFont; import fontTools.ttLib"
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Font spacing needs Pillow and fonttools in this Python installation. Run: python -m pip install Pillow fonttools'
+    }
+}
 New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
 
 $files = @(Get-ChildItem -LiteralPath $inputRoot -Filter '*.mkv' -File -Recurse:$Recurse |
@@ -86,7 +93,46 @@ foreach ($file in $files) {
             continue
         }
 
+        # Extract fonts once per MKV using the already-resolved MKVToolNix
+        # executable. This also works when MKVToolNix is not in Python's PATH.
+        $fontsFolder = Join-Path $work 'fonts'
+        $fontTargets = @()
+        if ($SimplificationLevel -eq 1) {
+            New-Item -ItemType Directory -Path $fontsFolder | Out-Null
+            foreach ($attachment in @($info.attachments)) {
+                if ($null -eq $attachment) { continue }
+                $suffix = [IO.Path]::GetExtension([string]$attachment.file_name).ToLowerInvariant()
+                $mime = ([string]$attachment.content_type).ToLowerInvariant()
+                if ($suffix -notin @('.ttf', '.otf', '.ttc', '.otc')) {
+                    if ($mime -notin @('application/x-truetype-font', 'application/vnd.ms-opentype',
+                        'application/x-font-ttf', 'application/x-font-opentype',
+                        'font/ttf', 'font/otf', 'font/collection', 'application/font-sfnt')) { continue }
+                    $suffix = if ($mime -eq 'font/collection') { '.ttc' } else { '.ttf' }
+                }
+                # Numeric filenames avoid unsafe paths from attachment names.
+                $attachmentId = [int]$attachment.id
+                $fontPath = Join-Path $fontsFolder ("font-$attachmentId" + $suffix)
+                $fontTargets += [pscustomobject]@{ Id = $attachmentId; File = $fontPath }
+            }
+            if ($fontTargets.Count) {
+                $fontArgs = @($file.FullName, 'attachments')
+                $fontArgs += @($fontTargets | ForEach-Object { "$($_.Id):$($_.File)" })
+                & $mkvextract @fontArgs
+                Check-Exit 'extract embedded fonts'
+                foreach ($target in $fontTargets) {
+                    if (-not (Test-Path -LiteralPath $target.File -PathType Leaf)) {
+                        throw "Font attachment $($target.Id) was not extracted."
+                    }
+                }
+                Write-Host "  Extracted $($fontTargets.Count) font attachment(s)."
+            } else {
+                Write-Host '  No attached fonts; Python will check installed fonts.'
+            }
+        }
+
         $replacements = @()
+        $pythonArgs = @($simplifierPath, '--level', [string]$SimplificationLevel)
+        if ($SimplificationLevel -eq 1) { $pythonArgs += @('--fonts-dir', $fontsFolder) }
         foreach ($track in $assTracks) {
             $ext = if ($track.properties.codec_id -eq 'S_TEXT/SSA') { '.ssa' } else { '.ass' }
             $extracted = Join-Path $work ("track-$($track.id)" + $ext)
@@ -94,15 +140,18 @@ foreach ($file in $files) {
             Check-Exit "extract track $($track.id)"
             if (-not (Test-Path -LiteralPath $extracted -PathType Leaf)) { throw "Track $($track.id) was not extracted." }
 
-            if ($PSBoundParameters.ContainsKey('SimplificationLevel')) {
-                & $pythonPath $simplifierPath --level $SimplificationLevel $extracted
-            } else {
-                & $pythonPath $simplifierPath $extracted
-            }
-            Check-Exit "simplify track $($track.id)"
+            $pythonArgs += $extracted
             $simple = Join-Path $work ("track-$($track.id).simple" + $ext)
-            if (-not (Test-Path -LiteralPath $simple -PathType Leaf)) { throw "Missing simplified track: $simple" }
             $replacements += [pscustomobject]@{ Original = $track; File = $simple }
+        }
+
+        # One Python process reuses the font index across every subtitle track.
+        & $pythonPath @pythonArgs
+        Check-Exit 'simplify subtitle tracks'
+        foreach ($replacement in $replacements) {
+            if (-not (Test-Path -LiteralPath $replacement.File -PathType Leaf)) {
+                throw "Missing simplified track: $($replacement.File)"
+            }
         }
 
         $ids = ($assTracks | ForEach-Object { $_.id }) -join ','
