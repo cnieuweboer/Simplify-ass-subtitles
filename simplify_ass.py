@@ -16,7 +16,7 @@ from dataclasses import dataclass, replace, field
 from pathlib import Path
 from typing import Iterable
 
-__version__ = "2026.09.28.3"
+__version__ = "2026.09.28.9"
 
 OVERRIDE_RE = re.compile(r"\{([^}]*)\}")
 NUM = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)"
@@ -989,6 +989,125 @@ def remove_covered_vector_glows(events: list[Event]) -> tuple[list[Event], int]:
     return [e for e in events if e.source_index not in removed],len(removed)
 
 
+def coverage_geometry(e: Event, scaled_borders: bool = True):
+    """Conservative bounds for a single top-left, unrotated drawing.
+
+    Curves may be covered (their control points bound them); covering shapes
+    must be straight-sided. Unsupported drawing syntax is never guessed.
+    """
+    state = e.state
+    if not e.layer.lstrip("-").isdigit():
+        return None
+    if (state.get("an", 2) != 7 or state.get("p", 0) < 1
+            or state.get("borderstyle", 1) != 1
+            or any(state.get(k, 0) != 0 for k in
+                   ("frz", "frx", "fry", "fax", "fay", "pbo", "blur", "be", "fsp"))):
+        return None
+    pos = get_pos(e.text)
+    match = re.fullmatch(r"(?:\{[^}]*\})*([^{}]+)", e.text)
+    if pos is None or match is None:
+        return None
+    raw = match.group(1).strip()
+    tokens = re.findall(NUMBER + r"|[A-Za-z]", raw)
+    if re.sub(NUMBER + r"|[A-Za-z]|\s+", "", raw):
+        return None
+    if not tokens or tokens[0].lower() != "m":
+        return None
+    points, curved, i = [], False, 0
+    while i < len(tokens):
+        command = tokens[i].lower()
+        i += 1
+        if command not in {"m", "l", "b"} or (command == "m" and points):
+            return None  # Multiple contours, holes and splines stay untouched.
+        coords = []
+        while i < len(tokens) and re.fullmatch(NUMBER, tokens[i]):
+            coords.append(float(tokens[i])); i += 1
+        if ((command == "m" and len(coords) != 2)
+                or (command == "l" and (len(coords) < 2 or len(coords) % 2))
+                or (command == "b" and (len(coords) < 6 or len(coords) % 6))):
+            return None
+        points.extend(zip(coords[::2], coords[1::2]))
+        curved |= command == "b"
+    if len(points) < 3:
+        return None
+    scale = 2 ** (state["p"] - 1)
+    sx, sy = state.get("fscx", 100) / (100 * scale), state.get("fscy", 100) / (100 * scale)
+    if sx <= 0 or sy <= 0:
+        return None
+    points = [(pos[0] + x*sx, pos[1] + y*sy) for x,y in points]
+    bx = abs(state.get("xbord", state.get("bord", 0)))
+    by = abs(state.get("ybord", state.get("bord", 0)))
+    dx = state.get("xshad", state.get("shad", 0))
+    dy = state.get("yshad", state.get("shad", 0))
+    if not scaled_borders and any((bx, by, dx, dy)):
+        return None
+    # Include the entire stroke and shadow even when their alpha is hidden.
+    # Extra clearance keeps anti-aliased edges outside the coverage boundary.
+    pad = max(2.0, 2*e.unit)
+    xs, ys = zip(*points)
+    bounds = (min(xs)-bx+min(0,dx)-pad, min(ys)-by+min(0,dy)-pad,
+              max(xs)+bx+max(0,dx)+pad, max(ys)+by+max(0,dy)+pad)
+    opaque = (state.get("1a", 0) == 0 and not curved
+              and "clip" not in state and "iclip" not in state)
+    return points, bounds, opaque
+
+
+def polygon_covers_box(points, box) -> bool:
+    """Require the whole box inside the fill, with no contour crossing it."""
+    x0,y0,x1,y1 = box
+    edges = list(zip(points, points[1:] + points[:1]))
+    # Segment/rectangle intersection (including boundaries).
+    for (ax,ay),(bx,by) in edges:
+        lo, hi = 0.0, 1.0
+        for origin, delta, low, high in ((ax,bx-ax,x0,x1),(ay,by-ay,y0,y1)):
+            if delta == 0:
+                if origin < low or origin > high:
+                    lo,hi = 1.0,0.0
+                    break
+            else:
+                t0,t1 = sorted(((low-origin)/delta,(high-origin)/delta))
+                lo,hi = max(lo,t0),min(hi,t1)
+        if lo <= hi:
+            return False
+    # With no boundary in the box, its interior has uniform fill. Require
+    # both winding and odd/even rules to consider the test point filled.
+    x,y = (x0+x1)/2,(y0+y1)/2
+    crossings = winding = 0
+    for (ax,ay),(bx,by) in edges:
+        if (ay <= y < by) or (by <= y < ay):
+            hit = ax + (y-ay)*(bx-ax)/(by-ay)
+            if hit > x:
+                crossings += 1
+                winding += 1 if by > ay else -1
+    return bool(crossings % 2 and winding)
+
+
+def remove_fully_covered_vectors(events: list[Event], scaled_borders: bool = True):
+    geometry = {e.source_index: g for e in events
+                if (g := coverage_geometry(e, scaled_borders)) is not None}
+    covers = [e for e in events if e.source_index in geometry and geometry[e.source_index][2]]
+    removed = set()
+    for lower in events:
+        info = geometry.get(lower.source_index)
+        if info is None:
+            continue
+        order = (int(lower.layer), lower.source_index)
+        box = info[1]
+        for upper in covers:
+            if ((int(upper.layer), upper.source_index) <= order
+                    or upper.start_s > lower.start_s or upper.end_s < lower.end_s):
+                continue
+            polygon = geometry[upper.source_index][0]
+            xs,ys = zip(*polygon)
+            if not (min(xs) < box[0] and min(ys) < box[1]
+                    and max(xs) > box[2] and max(ys) > box[3]):
+                continue
+            if polygon_covers_box(polygon, box):
+                removed.add(lower.source_index)
+                break
+    return [e for e in events if e.source_index not in removed], len(removed)
+
+
 def drawing_extent(e: Event) -> float:
     # Control-point bounds are a conservative estimate for Bezier curves.
     # This is used only for an explicitly requested vector count budget.
@@ -1012,37 +1131,353 @@ def cap_vector_cues(events: list[Event], limit: int) -> tuple[list[Event], int]:
     return sorted(result,key=lambda e:e.source_index),len(events)-len(result)
 
 
-def reduce_text_layers(events: list[Event], visible_map: dict[int, str]) -> tuple[list[Event], int]:
-    def primary_alpha(e: Event) -> int:
-        return e.state.get("1a",0)
+def rectangle_clip(e: Event):
+    value = e.state.get("clip", "")
+    if "iclip" in e.state or not re.fullmatch(r"\(\s*" + NUMBER + r"(?:\s*,\s*" + NUMBER + r"){3}\s*\)", value):
+        return None
+    coords = tuple(map(float, re.findall(NUMBER, value)))
+    return coords if coords[0] < coords[2] and coords[1] < coords[3] else None
 
-    def primary_color(e: Event) -> str:
-        return e.state.get("1c","FFFFFF")
 
-    def visible_layer(e: Event) -> tuple[int, int, int]:
-        layer = int(e.layer) if e.layer.isdigit() else 0
-        return (-primary_alpha(e), layer, -e.source_index)
+def join_text_clip_tiles(events: list[Event]) -> tuple[list[Event], int]:
+    """Join adjacent rectangular clips with identical text and paint.
 
-    groups: dict[tuple, list[Event]] = {}
+    Rectangles must exactly tile a larger rectangle. No gaps, overlaps,
+    color approximation or transparency changes are allowed.
+    """
+    groups, output, layers = {}, [], {}
     for e in events:
-        if e.kind != "Dialogue" or inline_layout_key(e):
-            groups.setdefault((e.source_index,), []).append(e)
+        if e.kind == "Dialogue":
+            layers.setdefault(e.layer, []).append(e)
+        rect = rectangle_clip(e)
+        if (e.kind != "Dialogue" or rect is None or inline_layout_key(e)
+                or e.state.get("p", 0) or get_pos(e.text) is None):
+            output.append(e)
             continue
-        key = (e.start, e.end, e.style, e.name, get_pos(e.text),
-               visible_map.get(e.source_index, ""), text_layout_key(e), placement_key(e))
-        groups.setdefault(key, []).append(e)
-    output = []
+        key = (e.start,e.end,e.layer,e.name,e.margin_l,e.margin_r,e.margin_v,
+               OVERRIDE_RE.sub("",e.text),state_key(e,{"clip"}))
+        groups.setdefault(key, []).append((e,rect))
+    removed = 0
     for group in groups.values():
-        opaque = [e for e in group if primary_alpha(e) == 0]
-        if not opaque or any(0 < primary_alpha(e) < 255 for e in group):
-            # Translucent paints combine; choosing one changes their result.
-            output.extend(group)
+        ids = {e.source_index for e,r in group}
+        low,high = min(ids),max(ids)
+        first = group[0][0]
+        if any(low < peer.source_index < high and peer.source_index not in ids
+               and min(peer.end_s,first.end_s)>max(peer.start_s,first.start_s)
+               for peer in layers[first.layer]):
+            output.extend(e for e,r in group)
             continue
-        chosen = max(opaque, key=lambda e: (
-            int(e.layer) if e.layer.lstrip("-").isdigit() else 0, e.source_index))
-        output.append(chosen)
-    return sorted(output, key=lambda e: e.source_index), len(events) - len(output)
+        changed = True
+        while changed:
+            changed = False
+            for axis in (0,1):
+                other = 1-axis
+                group.sort(key=lambda pair:(pair[1][other],pair[1][other+2],pair[1][axis]))
+                joined = []
+                for event,rect in group:
+                    if joined:
+                        previous,pr = joined[-1]
+                        if pr[other]==rect[other] and pr[other+2]==rect[other+2] and pr[axis+2]==rect[axis]:
+                            union = list(pr); union[axis+2] = rect[axis+2]; union=tuple(union)
+                            value = "("+",".join(f"{v:g}" for v in union)+")"
+                            text = re.sub(r"\\clip\([^)]*\)",lambda _: "\\clip"+value,previous.text)
+                            state = previous.state.copy(); state["clip"]=value
+                            joined[-1]=(replace(previous,text=text,state=state,
+                                source_index=min(previous.source_index,event.source_index)),union)
+                            removed += 1; changed = True
+                            continue
+                    joined.append((event,rect))
+                group = joined
+        output.extend(e for e,r in group)
+    return sorted(output,key=lambda e:e.source_index),removed
 
+
+def reduce_text_layers(events: list[Event], visible_map: dict[int, str],
+                       blockers: list[Event] | None = None) -> tuple[list[Event], int]:
+    """Flatten identical opaque text into its foreground and one outline.
+
+    Layout, clipping and literal line breaks must match. Translucent paints,
+    mixed spans and differing outline colors remain separate.
+    """
+    groups = {}
+    for e in events:
+        if (e.kind != "Dialogue" or inline_layout_key(e) or e.state.get("p",0)
+                or get_pos(e.text) is None or not e.layer.lstrip("-").isdigit()):
+            groups.setdefault((e.source_index,),[]).append(e)
+            continue
+        key=(e.start,e.end,e.name,get_pos(e.text),OVERRIDE_RE.sub("",e.text),
+             text_layout_key(e),placement_key(e))
+        groups.setdefault(key,[]).append(e)
+    output=[]
+    for group in groups.values():
+        if len(group)<2:
+            output.extend(group); continue
+        # A single output cannot preserve independently positioned shadows
+        # or the accumulation of translucent paints.
+        if any(any(e.state.get(k,0) for k in ("shad","xshad","yshad","blur","be"))
+               or e.state.get("1a",0) not in (0,255) for e in group):
+            output.extend(group); continue
+        fills=[e for e in group if e.state.get("1a",0)==0]
+        if not fills:
+            output.extend(group); continue
+        foreground=max(fills,key=lambda e:(int(e.layer),e.source_index))
+        ids={e.source_index for e in group}
+        low=min((int(e.layer),e.source_index) for e in group)
+        high=max((int(e.layer),e.source_index) for e in group)
+        if any(peer.kind=="Dialogue" and peer.source_index not in ids
+               and peer.layer.lstrip("-").isdigit()
+               and low < (int(peer.layer),peer.source_index) < high
+               and min(peer.end_s,foreground.end_s)>max(peer.start_s,foreground.start_s)
+               for peer in events + (blockers or [])):
+            output.extend(group); continue
+        contours=[]
+        for e in group:
+            bx=e.state.get("xbord",e.state.get("bord",0))
+            by=e.state.get("ybord",e.state.get("bord",0))
+            if max(bx,by)>0 and e.state.get("3a",0)<255:
+                contours.append((e,bx,by))
+        if (any(e.state.get("3a",0)!=0 for e,x,y in contours)
+                or len({e.state.get("3c","000000") for e,x,y in contours})>1):
+            output.extend(group); continue
+        bx=max((x for e,x,y in contours),default=0)
+        by=max((y for e,x,y in contours),default=0)
+        # Crossed anisotropic outlines do not equal one larger outline.
+        if contours and not any(x==bx and y==by for e,x,y in contours):
+            output.extend(group); continue
+        if contours:
+            color=contours[0][0].state.get("3c","000000")
+            tags=f"\\xbord{bx:g}\\ybord{by:g}\\3c&H{color}&\\3a&H00&"
+            text=foreground.text
+            if text.startswith("{"):
+                end=text.index("}"); text=text[:end]+tags+text[end:]
+            else:
+                text="{"+tags+"}"+text
+            state=foreground.state.copy()
+            state.update(xbord=bx,ybord=by,**{"3c":color,"3a":0})
+            foreground=replace(foreground,text=text,state=state)
+        output.append(foreground)
+    return sorted(output,key=lambda e:e.source_index),len(events)-len(output)
+
+
+
+def flatten_aggressive_text_copies(events: list[Event],
+                                   visible_map: dict[int,str]) -> tuple[list[Event], int]:
+    """Replace stacked static copies of the same positioned text with one.
+
+    This is for level 1: color gradients, clipped stripes, shadows and
+    alternate paint layers are intentionally replaced by a readable caption.
+    No font, style name, color, language or strip-count assumption is used.
+    """
+    groups = {}
+    kept = []
+    for e in events:
+        visible = visible_map.get(e.source_index, "")
+        pos = get_pos(e.text)
+        if (e.kind != "Dialogue" or not visible or pos is None or
+                e.state.get("p", 0) > 0 or inline_layout_key(e)):
+            kept.append(e)
+            continue
+        key = (e.start, e.end, e.style, e.name, e.margin_l, e.margin_r,
+               e.margin_v, pos, visible)
+        groups.setdefault(key, []).append(e)
+    removed = 0
+    for key, group in groups.items():
+        if (len(group) < 2 or not any(e.state.get("1a", 255) == 0 for e in group)
+                or not any("clip" in e.state or "iclip" in e.state for e in group)):
+            kept.extend(group)
+            continue
+        # A complete, unclipped text copy is the best source for the font and
+        # size. The output paint is uniform and opaque by design in level 1.
+        candidates = [e for e in group if e.state.get("1a",255) == 0]
+        chosen = max(candidates,key=lambda e:(
+            "clip" not in e.state and "iclip" not in e.state,
+            int(e.layer) if e.layer.lstrip("-").isdigit() else 0,
+            e.source_index))
+        state = chosen.state
+        pos = key[-2]
+        tags = [r"\an"+str(int(state.get("an",2))),
+                f"\\pos({pos[0]:g},{pos[1]:g})",
+                r"\fn"+str(state.get("fn","Arial")),
+                f"\\fs{state.get('fs',20):g}",
+                f"\\fscx{state.get('fscx',100):g}",
+                f"\\fscy{state.get('fscy',100):g}",
+                r"\1c&HFFFFFF&\3c&H000000&\1a&H00&\3a&H00&\bord2\shad0"]
+        authored_text = OVERRIDE_RE.sub("", chosen.text)
+        text = "{"+"".join(tags)+"}"+authored_text
+        kept.append(replace(chosen, text=text, layer="0", effect="",
+                            source_index=min(e.source_index for e in group)))
+        removed += len(group)-1
+    return sorted(kept,key=lambda e:e.source_index), removed
+
+
+def flatten_aggressive_text_sequences(events: list[Event],
+                                      visible_map: dict[int,str],
+                                      styles: dict) -> tuple[list[Event],int]:
+    """Freeze connected full-text styling phases as one static caption.
+
+    For unmasked text choose the visible style at the temporal midpoint;
+    for clipped effects retain a plain readable caption. Gaps split runs.
+    """
+    buckets, output = {}, []
+    for e in events:
+        visible=visible_map.get(e.source_index,"")
+        if e.kind!="Dialogue" or not visible or get_pos(e.text) is None or e.state.get("p",0):
+            output.append(e)
+            continue
+        buckets.setdefault((e.style,visible),[]).append(e)
+    removed=0
+    for (style,visible),bucket in buckets.items():
+        components=[]
+        for e in sorted(bucket,key=lambda x:(x.start_s,x.end_s,x.source_index)):
+            pos=get_pos(e.text)
+            found=None
+            for component in reversed(components):
+                previous=component[-1]
+                if e.start_s>max(x.end_s for x in component)+1e-6:
+                    continue
+                anchor=get_pos(previous.text)
+                allowance=.18*min(text_height(e),text_height(previous))
+                if (abs(pos[0]-anchor[0])<=allowance and
+                    abs(pos[1]-anchor[1])<=allowance and
+                    e.margin_l==previous.margin_l and
+                    e.margin_r==previous.margin_r and
+                    e.margin_v==previous.margin_v):
+                    found=component;break
+            if found is None:
+                components.append([e])
+            else:
+                found.append(e)
+        for component in components:
+            if len(component)<2:
+                output.extend(component);continue
+            clipped=any("clip" in e.state or "iclip" in e.state for e in component)
+            if not clipped and (len({e.name for e in component}) != 1 or
+                    len({get_pos(e.text) for e in component}) != 1 or
+                    len({state_key(e) for e in component}) < 2):
+                output.extend(component);continue
+            visible_candidates=[e for e in component if e.state.get("1a",255)<255]
+            if not visible_candidates:
+                output.extend(component);continue
+            start=min(e.start_s for e in component)
+            end=max(e.end_s for e in component)
+            if not clipped:
+                midpoint=(start+end)/2
+                chosen=max(visible_candidates,key=lambda e:(
+                    e.start_s <= midpoint < e.end_s,
+                    -max(e.start_s-midpoint,midpoint-e.end_s,0),
+                    -e.state.get("1a",255),
+                    int(e.layer) if e.layer.lstrip("-").isdigit() else 0))
+                output.append(replace(chosen,start=format_time(start),end=format_time(end),
+                                      start_s=start,end_s=end,
+                                      source_index=min(e.source_index for e in component)))
+                removed+=len(component)-1
+                continue
+            chosen=max(visible_candidates,key=lambda e:(
+                e.state.get("1a",255)==0,
+                "clip" not in e.state and "iclip" not in e.state,
+                e.duration,int(e.layer) if e.layer.lstrip("-").isdigit() else 0))
+            x,y=get_pos(chosen.text)
+            state=chosen.state
+            # Freeze clipped decorative paint while retaining the text's
+            # font, alignment, scale and authored line breaks.
+            authored=OVERRIDE_RE.sub("",chosen.text)
+            tags=(f"\\an{int(state.get('an',2))}\\pos({x:g},{y:g})"
+                  +r"\fn"+str(state.get("fn","Arial"))
+                  +f"\\fs{state.get('fs',20):g}\\fscx{state.get('fscx',100):g}"
+                  +f"\\fscy{state.get('fscy',100):g}"
+                  +r"\1c&HFFFFFF&\3c&H000000&\1a&H00&\3a&H00&\bord2\shad0")
+            text="{"+tags+"}"+authored
+            output.append(replace(chosen,start=format_time(start),end=format_time(end),
+                                  start_s=start,end_s=end,text=text,layer="0",effect="",
+                                  source_index=min(e.source_index for e in component)))
+            removed+=len(component)-1
+    return sorted(output,key=lambda e:e.source_index),removed
+
+
+def static_object_key(e: Event, styles: dict) -> tuple | None:
+    """Describe every static text/drawing span, including inherited styling."""
+    if e.kind != "Dialogue" or e.effect or e.duration <= 0:
+        return None
+    # Unpositioned subtitles participate in renderer collision placement.
+    # Extending one could change that placement even with identical text.
+    if get_pos(e.text) is None:
+        return None
+    default = styles.get(e.style, DEFAULT_STATE)
+    state = default.copy()
+    runs = []
+    for part in re.split(r"(\{[^}]*\})", e.text):
+        if part.startswith("{") and part.endswith("}"):
+            for name, value in tokenize_override(part[1:-1]):
+                if name in {"t", "move", "fad", "fade", "k", "kf", "ko", "kt"}:
+                    return None
+                apply_tag(state, name, value, styles, default)
+        elif part:
+            normalized = state.copy()
+            for clip in ("clip", "iclip"):
+                if clip in normalized:
+                    normalized[clip] = geometry_key(normalized[clip])
+            signature = tuple(sorted(normalized.items()))
+            drawing = state.get("p", 0) > 0
+            payload = geometry_key(part) if drawing else part
+            if runs and runs[-1][0] == signature and runs[-1][1] == drawing:
+                runs[-1] = (signature, drawing, runs[-1][2] + payload)
+            else:
+                runs.append((signature, drawing, payload))
+    return (e.layer, e.style, e.name, e.margin_l, e.margin_r, e.margin_v,
+            tuple(runs)) if runs else None
+
+
+def merge_static_timed_copies(events: list[Event], styles: dict) -> tuple[list[Event], int]:
+    """Join touching identical positioned objects; never bridge a visible gap.
+
+    Preserve overlapping copies and same-layer compositing order. There is
+    no glyph-count, font-name, duration, color or show-specific threshold.
+    """
+    groups, layers = {}, {}
+    untouched = []
+    for e in events:
+        if e.kind == "Dialogue":
+            layers.setdefault(e.layer, []).append(e)
+        key = static_object_key(e, styles)
+        if key is None:
+            untouched.append(e)
+        else:
+            groups.setdefault(key, []).append(e)
+    output, removed = list(untouched), 0
+    for group in groups.values():
+        ordered = sorted(group, key=lambda e: (e.start_s, e.end_s, e.source_index))
+        # Mark all overlapping copies: their compositing multiplicity matters.
+        overlapping = set()
+        active = []
+        for e in ordered:
+            active = [other for other in active if other.end_s > e.start_s]
+            if active:
+                overlapping.add(e.source_index)
+                overlapping.update(other.source_index for other in active)
+            active.append(e)
+        current = ordered[0]
+        members = {current.source_index}
+        for e in ordered[1:]:
+            touching = current.end == e.start
+            can_join = touching and e.source_index not in overlapping and not (members & overlapping)
+            if can_join:
+                low, high = min(*members, e.source_index), max(*members, e.source_index)
+                # A peer between source records could switch from being above
+                # to below the object after records are combined.
+                can_join = not any(low < peer.source_index < high
+                    and peer.source_index not in members
+                    and min(peer.end_s, e.end_s) > max(peer.start_s, current.start_s)
+                    for peer in layers[e.layer])
+            if can_join:
+                members.add(e.source_index)
+                current = replace(current, end=e.end, end_s=e.end_s,
+                                  source_index=min(members))
+                removed += 1
+            else:
+                output.append(current)
+                current, members = e, {e.source_index}
+        output.append(current)
+    return sorted(output, key=lambda e: e.source_index), removed
 
 
 def simplify_ass(path: Path, output: Path, max_blur: float,
@@ -1054,6 +1489,7 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
     lines = raw.splitlines()
 
     styles = parse_styles(lines)
+    scaled_borders = any(line.strip().lower() == "scaledborderandshadow: yes" for line in lines)
     resolution_y = next((float(line.split(":",1)[1]) for line in lines
                          if line.strip().lower().startswith("playresy:")), 288.0)
     unit = resolution_y / 1080.0
@@ -1119,6 +1555,11 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         pos = get_pos(e.text)
         space_map.setdefault((e.start,e.end,e.style,e.name,e.row),set()).add(pos[0])
 
+    aggressive_copies = 0
+    if level == 1:
+        simplified_events, aggressive_copies = flatten_aggressive_text_copies(
+            simplified_events, visible_map)
+
     sign_copies_removed = 0
     if level == 1:
         simplified_events, sign_copies_removed = reduce_static_sign_copies(
@@ -1133,12 +1574,16 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         key = (e.start, e.end, e.style, e.name, e.row)
         space_map.setdefault(key, set()).add(round(pos[0] / e.unit, 1) * e.unit)
 
+    tiles_joined = 0
+    if level == 2:
+        simplified_events, tiles_joined = join_text_clip_tiles(simplified_events)
+
     # For visual signs, choose their visible fill before same-layer dedup can
     # discard a brighter effect copy merely because it appeared later.
     text_copies_removed = 0
     if level == 2:
         simplified_events, text_copies_removed = reduce_text_layers(
-            simplified_events, visible_map)
+            simplified_events, visible_map, vector_events)
 
     # Work in chronological/source order. Effect-layer dedup is safe regardless of adjacency.
     simplified_events, deduped = deduplicate_layers(simplified_events, visible_map)
@@ -1157,15 +1602,25 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         max_piece_duration=short_duration,
         max_gap=short_gap,
     )
+    aggressive_sequences = 0
+    if level == 1:
+        simplified_events, aggressive_sequences = flatten_aggressive_text_sequences(
+            simplified_events, visible_map, styles)
+    covered_vectors = 0
     vector_copies_removed = vector_glows_removed = vector_frames_removed = excess_vectors = 0
     if level == 2:
-        simplified_events, remaining_copies = reduce_text_layers(simplified_events, visible_map)
+        simplified_events, remaining_copies = reduce_text_layers(simplified_events, visible_map, vector_events)
         text_copies_removed += remaining_copies
         vector_events, vector_copies_removed = reduce_vector_layers(vector_events)
         vector_events, vector_frames_removed = freeze_vector_sequences(vector_events, short_duration)
         vector_events, vector_glows_removed = remove_covered_vector_glows(vector_events)
+        vector_events, covered_vectors = remove_fully_covered_vectors(vector_events, scaled_borders)
         vector_events, excess_vectors = cap_vector_cues(vector_events, max_vectors_per_cue)
         simplified_events = sorted(simplified_events + vector_events, key=lambda e: e.source_index)
+
+    static_merged = 0
+    if level == 2:
+        simplified_events, static_merged = merge_static_timed_copies(simplified_events, styles)
 
     # Rebuild [Events] while preserving all non-dialogue/event metadata lines.
     # We replace Dialogue/Comment lines at their original region with the processed sequence.
@@ -1175,7 +1630,7 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         return {key: 0 for key in ("original", "output", "deduped", "lyric_merged",
                 "merged", "dropped", "overlap_removed", "full_copies_removed", "phase_merged",
                 "text_copies_removed", "vector_copies_removed", "vector_glows_removed",
-                "vector_frames_removed", "vector_output", "excess_vectors")}
+                "vector_frames_removed", "vector_output", "excess_vectors", "static_merged", "covered_vectors", "tiles_joined", "aggressive_copies", "aggressive_sequences")}
 
     first_event_line = event_line_indices[0]
     last_event_line = event_line_indices[-1]
@@ -1192,9 +1647,15 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
     output.write_text("\n".join(final_lines) + ("\n" if raw.endswith(("\n", "\r")) else ""),
                       encoding="utf-8-sig")
 
+    vector_source_indices = {v.source_index for v in vector_events}
     output_dialogues = sum(1 for e in simplified_events if e.kind == "Dialogue")
     return {
         "original": original_dialogues,
+        "static_merged": static_merged,
+        "covered_vectors": covered_vectors,
+        "tiles_joined": tiles_joined,
+        "aggressive_copies": aggressive_copies,
+        "aggressive_sequences": aggressive_sequences,
         "phase_merged": phase_merged,
         "output": output_dialogues,
         "deduped": deduped + sign_copies_removed,
@@ -1206,7 +1667,8 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         "vector_copies_removed": vector_copies_removed,
         "vector_glows_removed": vector_glows_removed,
         "vector_frames_removed": vector_frames_removed,
-        "vector_output": len(vector_events),
+        "vector_output": sum(e.source_index in vector_source_indices
+                             for e in simplified_events),
         "excess_vectors": excess_vectors,
         "dropped": dropped_drawings,
     }
@@ -1271,9 +1733,14 @@ def main() -> int:
             f"overlapping effects removed: {stats['overlap_removed']}, "
             f"full lyric copies removed: {stats['full_copies_removed']}, "
             f"frame pieces merged: {stats['merged']}, "
+            f"identical timed copies merged: {stats['static_merged']}, "
             f"duplicate sign text: {stats['text_copies_removed']}, "
+            f"identical text strips joined: {stats['tiles_joined']}, "
+            f"aggressive text copies flattened: {stats['aggressive_copies']}, "
+            f"text effect sequences frozen: {stats['aggressive_sequences']}, "
             f"vector copies: {stats['vector_copies_removed']}, "
             f"covered contours: {stats['vector_glows_removed']}, "
+            f"fully covered drawings: {stats['covered_vectors']}, "
             f"drawing animation frames: {stats['vector_frames_removed']}, "
             f"vectors retained: {stats['vector_output']}, "
             f"excess vector details removed: {stats['excess_vectors']}, "
