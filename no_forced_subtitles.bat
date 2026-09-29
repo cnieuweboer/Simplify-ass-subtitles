@@ -28,11 +28,12 @@ for %%F in (*.mkv) do (
         "  $info = ($output -join [Environment]::NewLine) | ConvertFrom-Json -ErrorAction Stop;" ^
         "  $subs = @($info.tracks | Where-Object { $_.type -eq 'subtitles' });" ^
         "  $editArgs = @($file);" ^
-        "  for ($i = 0; $i -lt $subs.Count; $i++) {" ^
-        "    if ($subs[$i].properties.forced_track -eq $true) {" ^
-        "      Write-Host ('  Clearing forced flag: subtitle #' + ($i + 1));" ^
+        "  foreach ($sub in $subs) {" ^
+        "    if ($sub.properties.forced_track -eq $true) {" ^
+        "      if ($null -eq $sub.properties.number) { throw ('Missing track number for subtitle ID ' + $sub.id) };" ^
+        "      Write-Host ('  Clearing forced flag: track number ' + $sub.properties.number + ' - ' + $sub.properties.track_name);" ^
         "      $editArgs += '--edit';" ^
-        "      $editArgs += ('track:s' + ($i + 1));" ^
+        "      $editArgs += ('track:@' + $sub.properties.number);" ^
         "      $editArgs += '--set';" ^
         "      $editArgs += 'flag-forced=0';" ^
         "    }" ^
@@ -40,6 +41,12 @@ for %%F in (*.mkv) do (
         "  if ($editArgs.Count -eq 1) { Write-Host '  No forced subtitles found.'; exit 0 };" ^
         "  & mkvpropedit @editArgs;" ^
         "  if ($LASTEXITCODE -ne 0) { exit 1 };" ^
+        "  $output = & mkvmerge -J $file;" ^
+        "  if ($LASTEXITCODE -ne 0) { throw 'Could not verify the edited file' };" ^
+        "  $after = ($output -join [Environment]::NewLine) | ConvertFrom-Json -ErrorAction Stop;" ^
+        "  $remaining = @($after.tracks | Where-Object { $_.type -eq 'subtitles' -and $_.properties.forced_track -eq $true });" ^
+        "  if ($remaining.Count -gt 0) { throw ($remaining.Count.ToString() + ' forced subtitle flag(s) remain') };" ^
+        "  Write-Host '  Verified: no forced subtitle flags remain.';" ^
         "} catch { Write-Host ('  ERROR: ' + $_.Exception.Message); exit 1 }"
 
     if errorlevel 1 set /a FAILED+=1
