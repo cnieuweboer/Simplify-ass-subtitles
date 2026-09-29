@@ -16,6 +16,7 @@ Ambiguous fragments keep their positions; drawing budgets are opt-in.
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 import statistics
 import unicodedata
@@ -23,7 +24,21 @@ from dataclasses import dataclass, replace, field
 from pathlib import Path
 from typing import Iterable
 
-__version__ = "2026.09.28.22"
+__version__ = "2026.09.29.2"
+
+
+class _FontTimestampFilter(logging.Filter):
+    """Hide harmless fontTools 'head' date warnings from embedded fonts."""
+
+    def filter(self, record):
+        return not (record.levelno == logging.WARNING and
+                    record.msg in {
+                        "'%s' timestamp seems very low; regarding as unix timestamp",
+                        "'%s' timestamp out of range; ignoring top bytes",
+                    })
+
+
+logging.getLogger("fontTools.ttLib.tables._h_e_a_d").addFilter(_FontTimestampFilter())
 
 OVERRIDE_RE = re.compile(r"\{([^}]*)\}")
 NUM = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)"
@@ -2488,6 +2503,8 @@ def main() -> int:
                     help="read font attachments from this MKV using MKVToolNix; source stays untouched")
     ap.add_argument("--no-font-spacing", action="store_true",
                     help="disable measured spacing; preserve uncertain fragment positions")
+    ap.add_argument("--stats-json", type=Path, metavar="FILE",
+                    help="also write per-input event counts as JSON for batch reports")
     args = ap.parse_args()
 
     inputs = iter_inputs(args.inputs, args.recursive)
@@ -2508,12 +2525,15 @@ def main() -> int:
             if not metric.available:
                 print("Font spacing unavailable. Enable with: python -m pip install Pillow fonttools")
         total_in = total_out = 0
+        records = []
         for src in inputs:
             dst = src.with_name(src.stem + args.suffix + src.suffix)
             stats = simplify_ass(src, dst, args.max_blur, args.short_duration, args.short_gap,
                                  args.max_drawing_chars, args.max_vectors_per_cue, args.level, metric)
             total_in += stats["original"]
             total_out += stats["output"]
+            records.append({"input": str(src.resolve()),
+                            "output": str(dst.resolve()), "stats": stats})
             print(f"{src.name} -> {dst.name} (level {args.level})")
             print(
                 f"  dialogue events: {stats['original']} -> {stats['output']} "
@@ -2543,6 +2563,12 @@ def main() -> int:
                 print("Exact fonts unavailable (kept positions): " + ", ".join(sorted(metric.missing)))
         if len(inputs) > 1:
             print(f"Total dialogue events: {total_in} -> {total_out}")
+        if args.stats_json:
+            import json
+            args.stats_json.write_text(json.dumps({"level": args.level,
+                                                   "tracks": records},
+                                                  ensure_ascii=False, indent=2),
+                                       encoding="utf-8")
         return 0
     finally:
         if font_temp is not None:
