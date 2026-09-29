@@ -23,7 +23,7 @@ from dataclasses import dataclass, replace, field
 from pathlib import Path
 from typing import Iterable
 
-__version__ = "2026.09.28.20"
+__version__ = "2026.09.28.22"
 
 OVERRIDE_RE = re.compile(r"\{([^}]*)\}")
 NUM = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)"
@@ -1590,6 +1590,18 @@ class FontSpacing:
                         for face in faces:
                             face.close()
 
+    def matching_face(self, family: str, bold: bool, italic: bool):
+        """Prefer the requested face; allow synthetic bold of the same family.
+
+        Renderers can embolden a regular face when no bold face is embedded.
+        Its advances are only a candidate: the row must still pass the font
+        measurement and position checks. Never substitute another family.
+        """
+        face = self.faces.get((family.casefold(),bold,italic))
+        if face is None and bold:
+            face = self.faces.get((family.casefold(),False,italic))
+        return face
+
     def recover(self, ordered, fragments):
         if not self.available or len(ordered) < 4:
             return None
@@ -1606,7 +1618,7 @@ class FontSpacing:
             return None
         family = str(first.get('fn','')).strip()
         key = (family.casefold(), bool(first.get('b',0)), bool(first.get('i',0)))
-        face = self.faces.get(key)
+        face = self.matching_face(family, key[1], key[2])
         if face is None:
             self.missing.add(family)
             return None
@@ -1682,17 +1694,17 @@ class FontSpacing:
 
     def fit_fullwidth_run(self, ordered: list[Event], glyphs: list[str]):
         """Fit one unbroken row against its exact font's glyph advances."""
-        if not self.available or len(ordered) < 3:
+        if not self.available or len(ordered) < 2 or sum(map(len,glyphs)) < 3:
             return None
         state = ordered[0].state
         family = str(state.get("fn", "")).strip()
         key = (family.casefold(), bool(state.get("b",0)), bool(state.get("i",0)))
-        face = self.faces.get(key)
+        face = self.matching_face(family, key[1], key[2])
         if face is None:
             self.missing.add(family)
             return None
         path, index, cmap = face
-        if any(ord(g) not in cmap for g in glyphs):
+        if any(ord(g) not in cmap for fragment in glyphs for g in fragment):
             return None
         if any(any(e.state.get(k) != state.get(k)
                    for k in ("fn","fs","fscx","fscy","an","b","i","fsp"))
@@ -1708,7 +1720,10 @@ class FontSpacing:
             text = "".join(glyphs)
             scale = fs*sx/100/1024
             widths = [font.getlength(g)*scale for g in glyphs]
-            advances = [font.getlength(text[:i])*scale for i in range(len(glyphs)+1)]
+            offsets = [0]
+            for fragment in glyphs:
+                offsets.append(offsets[-1]+len(fragment))
+            advances = [font.getlength(text[:i])*scale for i in offsets]
         except (OSError,ValueError):
             return None
         # Adjacent glyph positions are their own alignment anchors, not
@@ -1997,9 +2012,9 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
 def merge_static_fullwidth_runs(events: list[Event],
                                 visible_map: dict[int,str],
                                 font_spacing: FontSpacing | None = None) -> tuple[list[Event],int]:
-    """Join uniformly spaced, simultaneous fullwidth glyphs within mixed rows.
+    """Join simultaneous East Asian glyphs using their measured font advances.
 
-    Only single fullwidth letters with identical styling and timing qualify.
+    Only fullwidth letter fragments with identical styling and timing qualify.
     Exact font advances verify placement before replacing individual glyphs.
     If the font is unavailable, preserve the individual positions.
     """
@@ -2007,9 +2022,9 @@ def merge_static_fullwidth_runs(events: list[Event],
     for e in events:
         glyph = visible_map.get(e.source_index, "")
         pos = get_pos(e.text)
-        if (e.kind != "Dialogue" or pos is None or len(glyph) != 1 or
-                unicodedata.category(glyph) != "Lo" or
-                unicodedata.east_asian_width(glyph) not in ("W", "F") or
+        if (e.kind != "Dialogue" or pos is None or not glyph or
+                any(unicodedata.category(c) != "Lo" or
+                    unicodedata.east_asian_width(c) not in ("W", "F") for c in glyph) or
                 e.text.count("{") != 1 or e.text.count("}") != 1 or
                 not e.text.endswith("}"+glyph) or
                 e.state.get("p",0) or inline_layout_key(e) or
@@ -2029,28 +2044,33 @@ def merge_static_fullwidth_runs(events: list[Event],
     removed: set[int] = set()
 
     def join(run: list[Event]) -> None:
-        if len(run) < 3:
-            return
-        xs = [get_pos(e.text)[0] for e in run]
-        gaps = [b-a for a,b in zip(xs,xs[1:])]
-        pitch = statistics.median(gaps)
-        if pitch <= 0 or max(abs(g-pitch) for g in gaps) > max(1.5,.15*pitch):
+        if len(run) < 2 or sum(len(visible_map[e.source_index]) for e in run) < 3:
             return
         first = run[0]
-        state = first.state
         if font_spacing is None:
             return
+        # East Asian fonts can use proportional advances. Validate against
+        # the actual glyph widths; requiring uniform gaps rejects valid rows.
         glyphs = [visible_map[e.source_index] for e in run]
         fit = font_spacing.fit_fullwidth_run(run,glyphs)
-        if fit is None:
-            return
-        x, scale = fit
-        y = statistics.median(get_pos(e.text)[1] for e in run)
         text = "".join(glyphs)
+        alignment = None
+        if fit is None:
+            # Some Japanese captions contain authored phrase spaces. Use the
+            # same measured-space inference as other scripts, never erase gaps.
+            spaced = font_spacing.recover(run,glyphs)
+            if spaced is None:
+                return
+            text, x, scale, _, alignment = spaced
+        else:
+            x, scale = fit
+        y = statistics.median(get_pos(e.text)[1] for e in run)
         # Reuse the original static tags, so outline, alpha, font weight and
         # other non-layout styling survive unchanged.
         tags = first.text.split("}",1)[0][1:]
         tags = POS_RE.sub(lambda _: f"\\pos({x:g},{y:g})", tags)
+        if alignment is not None:
+            tags += f"\\an{alignment}"
         scale_tag = re.compile(r"\\fscx"+NUM, re.I)
         if scale_tag.search(tags):
             tags = scale_tag.sub(lambda _: f"\\fscx{scale:g}", tags)
@@ -2070,7 +2090,8 @@ def merge_static_fullwidth_runs(events: list[Event],
             state = prev.state
             nominal = state.get("fs",0)*state.get("fscx",100)/100
             x_gap = get_pos(e.text)[0]-get_pos(prev.text)[0]
-            if (nominal > 0 and .6*nominal <= x_gap <= 1.4*nominal and
+            max_fragment = max(len(visible_map[prev.source_index]),len(visible_map[e.source_index]))
+            if (nominal > 0 and 0 < x_gap <= 1.4*nominal*max_fragment and
                     abs(get_pos(e.text)[1]-get_pos(prev.text)[1]) <= e.unit):
                 run.append(e)
             else:
