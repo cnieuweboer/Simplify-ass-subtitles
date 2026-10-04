@@ -4,8 +4,9 @@
 Level 1 favors maximum reduction, retaining simple opaque caption backdrops;
 level 2 retains static sign styling and
 static vector shapes. Basic simplification requires only the standard library.
-Optional font-based word spacing uses Pillow and fonttools:
-    python -m pip install Pillow fonttools
+Optional font-based word spacing uses Pillow and fonttools. If RAQM is absent
+(for example on Windows), uharfbuzz supplies the same shaping measurements:
+    python -m pip install Pillow fonttools uharfbuzz
     python simplify_ass.py input.ass --level 1 --font-mkv episode.mkv
 Or supply extracted fonts with --fonts-dir FOLDER. Exact installed fonts and
 fonts/ beside the script or input are also searched. No font substitution or
@@ -25,7 +26,7 @@ from dataclasses import dataclass, replace as dataclass_replace, field
 from pathlib import Path
 from typing import Iterable
 
-__version__ = "2026.10.04.1"
+__version__ = "2026.10.04.7"
 
 
 class _FontTimestampFilter(logging.Filter):
@@ -331,10 +332,40 @@ def render_tag(name: str, value) -> str:
     return "\\" + name + (f"{value:g}" if isinstance(value, (float, int)) else str(value))
 
 
-def aggressive_caption(state: dict, text: str, **layout) -> str:
-    """One explicit paint policy for reconstructed aggressive-mode captions."""
+def aggressive_caption(state: dict, text: str,
+                       outline_states: Iterable[dict] | None = None, **layout) -> str:
+    """Rebuild readable text, retaining an unambiguous visible outline color.
+
+    Opaque, unclipped glyph contours are evidence; shadows, translucent glows
+    and box backgrounds are not. Conflicting or low-contrast contours fall
+    back to black. The fill remains white, so contrast needs no video pixels.
+    """
+    colors = set()
+    for source in ([state] if outline_states is None else outline_states):
+        # Resolve defaults too: callers normally supply effective ASS state.
+        source = {**DEFAULT_STATE, **source}
+        if (source.get("borderstyle",1) != 1 or source.get("3a",0) != 0 or
+                max(source.get("xbord",source.get("bord",0)),
+                    source.get("ybord",source.get("bord",0))) <= 0 or
+                "clip" in source or "iclip" in source or
+                any(source.get(k,DEFAULT_STATE.get(k)) !=
+                    state.get(k,DEFAULT_STATE.get(k))
+                    for k in ("fn","fs","b","i","frz","frx","fry","fax","fay"))):
+            continue
+        color = str(source.get("3c","000000")).upper()
+        if re.fullmatch(r"[0-9A-F]{6}",color):
+            colors.add(color)
+    outline = "000000"
+    if len(colors) == 1:
+        candidate = next(iter(colors))
+        # ASS colors are BGR; convert sRGB channels to linear luminance.
+        rgb = [int(candidate[i:i+2],16)/255 for i in (4,2,0)]
+        linear = [v/12.92 if v <= .04045 else ((v+.055)/1.055)**2.4 for v in rgb]
+        luminance = sum(v*w for v,w in zip(linear,(.2126,.7152,.0722)))
+        if 1.05/(luminance+.05) >= 3:
+            outline = candidate
     state = {**DEFAULT_STATE, **state, **layout,
-             "1c":"FFFFFF", "3c":"000000", "1a":0, "3a":0,
+             "1c":"FFFFFF", "3c":outline, "1a":0, "3a":0,
              "bord":2, "shad":0, "blur":0, "be":0}
     keys = ("an","pos","org","fn","fs","fscx","fscy","fsp","b","i",
             "u","s","frz","frx","fry","fax","fay",
@@ -731,7 +762,15 @@ def coalesce_lyric_phases(events: list[Event], visible_map: dict[int, str]) -> t
         for e in group[1:]:
             pos = get_pos(e.text)
             boundary = (e.style, e.name, e.layer, e.row, round(e.start_s, 2))
-            if (e.start_s <= current.end_s + 0.011 and
+            # A small fade overlap between consecutive rows is not another
+            # phase of the same glyph. Compare the surrounding row at the old
+            # end and new start, including overlaps rather than just touching.
+            ending = ends.get((e.style,e.name,e.layer,e.row,round(current.end_s,2)),set())
+            beginning = starts.get(boundary,set())
+            changed_row = (e.start_s > current.start_s and e.end_s > current.end_s and
+                           len(ending) > 1 and len(beginning) > 1 and ending != beginning and
+                           current.end_s-e.start_s <= .2*min(current.duration,e.duration))
+            if (e.start_s <= current.end_s + 0.011 and not changed_row and
                     not (abs(e.start_s - current.end_s) <= 0.011 and boundary in boundaries)):
                 end = max(current.end_s, e.end_s)
                 current = replace_event(current, end=format_time(end), end_s=end,
@@ -824,7 +863,8 @@ def collapse_full_lyric_copies(events: list[Event],
             first = min(cluster, key=lambda item: item.source_index)
             earlier = min(item.start_s for item in cluster)
             later = max(item.end_s for item in cluster)
-            text = aggressive_caption(best.state, visible_map[best.source_index])
+            text = aggressive_caption(best.state, visible_map[best.source_index],
+                                      outline_states=[e.state for e in cluster])
             replacements[first.source_index] = replace_event(
                 first, layer="0", start=format_time(earlier), end=format_time(later),
                 start_s=earlier, end_s=later, effect="",
@@ -1243,7 +1283,8 @@ def reduce_text_layers(events: list[Event], visible_map: dict[int, str],
 
 
 def flatten_aggressive_text_copies(events: list[Event],
-                                   visible_map: dict[int,str]) -> tuple[list[Event], int]:
+                                   visible_map: dict[int,str],
+                                   animated_sources: set[int] | None = None) -> tuple[list[Event], int]:
     """Replace stacked static copies of the same positioned text with one.
 
     This is for level 1: color gradients, clipped stripes, shadows and
@@ -1264,18 +1305,30 @@ def flatten_aggressive_text_copies(events: list[Event],
         groups.setdefault(key, []).append(e)
     removed = 0
     for key, group in groups.items():
-        if (len(group) < 2 or not any(e.state.get("1a", 255) == 0 for e in group)
-                or not any("clip" in e.state or "iclip" in e.state for e in group)):
+        clipped = any("clip" in e.state or "iclip" in e.state for e in group)
+        # Some effects paint the letters entirely with the shadow channel.
+        # A stack of animated, coincident shadow copies is still one text
+        # object; normalize it before dedup discards the channel evidence.
+        shadow_text = (not clipped and len({text_layout_key(e) for e in group}) == 1 and
+                       all(e.source_index in (animated_sources or set()) and
+                           e.state.get("1a",0) >= 254 and e.state.get("3a",0) >= 254
+                           for e in group) and
+                       any(e.state.get("4a",0) < 254 and
+                           any(abs(e.state.get(k,0)) > 0 for k in ("shad","xshad","yshad"))
+                           for e in group))
+        if (len(group) < 2 or not (shadow_text or
+                clipped and any(e.state.get("1a", 255) == 0 for e in group))):
             kept.extend(group)
             continue
         # A complete, unclipped text copy is the best source for the font and
         # size. The output paint is uniform and opaque by design in level 1.
-        candidates = [e for e in group if e.state.get("1a",255) == 0]
+        candidates = [e for e in group if e.state.get("1a",255) == 0] if not shadow_text else group
         chosen = max(candidates,key=lambda e:(
             "clip" not in e.state and "iclip" not in e.state,
             int(e.layer) if e.layer.lstrip("-").isdigit() else 0,
             e.source_index))
-        text = aggressive_caption(chosen.state, OVERRIDE_RE.sub("", chosen.text))
+        text = aggressive_caption(chosen.state, OVERRIDE_RE.sub("", chosen.text),
+                                  outline_states=[e.state for e in group])
         kept.append(replace_event(chosen, text=text, layer="0", effect="",
                             source_index=min(e.source_index for e in group)))
         removed += len(group)-1
@@ -1284,7 +1337,8 @@ def flatten_aggressive_text_copies(events: list[Event],
 
 def remove_masked_glyph_effects(events: list[Event],
                                 visible_map: dict[int,str],
-                                metric: FontSpacing | None = None) -> tuple[list[Event],int]:
+                                metric: FontSpacing | None = None,
+                                animated_sources: set[int] | None = None) -> tuple[list[Event],int]:
     """Remove matching text copies or masks proven to trace an underlying glyph.
 
     Outline matching uses the exact font, contour topology and every control
@@ -1300,6 +1354,16 @@ def remove_masked_glyph_effects(events: list[Event],
             x,y = get_pos(e.text)
             bases.setdefault((e.style,int(x//(20*e.unit)),int(y//(20*e.unit))),[]).append(e)
     removed, replacements, outlines, fonts = set(), {}, {}, {}
+    texture_peers = {}
+    for peer in events:
+        if (peer.source_index in (animated_sources or set()) and
+                peer.kind == "Dialogue" and get_pos(peer.text) is not None and
+                not inline_layout_key(peer) and "clip" not in peer.state and
+                "iclip" not in peer.state):
+            key = (peer.style,peer.name,peer.start,peer.end,
+                   visible_map.get(peer.source_index),peer.state.get("fn"),
+                   get_pos(peer.text))
+            texture_peers.setdefault(key,[]).append(peer)
     for e in events:
         pos = get_pos(e.text)
         if (e.kind != "Dialogue" or pos is None or inline_layout_key(e) or
@@ -1337,7 +1401,7 @@ def remove_masked_glyph_effects(events: list[Event],
         offsets = [0]
         for op in commands:
             offsets.append(offsets[-1]+{"m":1,"l":1,"b":3,"z":0}[op])
-        covered, matched = set(), {}
+        covered, matched, loose = set(), {}, set()
         # Spatial indexing changes only the search cost, not match tolerances.
         nearby = [base
                   for x in range(int((min(xs)-radius)//cell),int((max(xs)+radius)//cell)+1)
@@ -1428,21 +1492,41 @@ def remove_masked_glyph_effects(events: list[Event],
                 dx = bp[0]-ax*outline[3]*fs*state.get("fscx",100)/100*factor
                 dy = [bp[1]+(asc-ay*(asc+desc))*fs*state.get("fscy",100)/100*factor
                       for asc,desc in outline[4]]
-                # Allow coordinate rounding and synthetic bold's small advance
-                # change, but do not relocate a matching shape from elsewhere.
+                # Word masks can use shaped advances while the source glyphs
+                # use individually rounded positions. Keep exact contour tests;
+                # a wider anchor allowance needs a complete multi-glyph match.
                 tolerance = max(1.5*base.unit,.04*text_height(base))
+                anchor_error = max(abs(px-factor*mx-dx),
+                    min(abs(py-factor*my-y) for y in dy))
                 if (not .5 <= factor <= 1.5 or error > max(.03,.001*text_height(base)) or
-                        abs(px-factor*mx-dx)>tolerance or
-                        min(abs(py-factor*my-y) for y in dy)>tolerance):
+                        anchor_error > max(tolerance,.12*text_height(base))):
                     continue
+                if anchor_error > tolerance:
+                    loose.add(base.source_index)
                 covered.update(range(start,stop))
                 matched[base.source_index] = replace_event(base,
                     text=aggressive_caption(state,glyph))
-        if len(covered) == len(commands):
+        if len(covered) == len(commands) and (not loose or
+                len({get_pos(base.text) for base in matched.values()}) >= 3):
             removed.add(e.source_index)
             # The mask can be the principal visible fill over a transparent
             # glyph. Keep the proven text readable when removing that fill.
             replacements.update(matched)
+            # A texture may have both a glyph-shaped mask and an unmasked
+            # animated copy. Only remove that companion when the proven mask
+            # traces a different font, and timing, actor, glyph and anchor agree.
+            # Do not extend this evidence to other phases or nearby objects.
+            if (matched and e.source_index in (animated_sources or set()) and
+                    all(base.state.get("fn") != e.state.get("fn")
+                        for base in matched.values())):
+                key = (e.style,e.name,e.start,e.end,
+                       visible_map.get(e.source_index),e.state.get("fn"),pos)
+                for peer in texture_peers.get(key,[]):
+                    if (all(peer.state.get(k,DEFAULT_STATE.get(k)) ==
+                            e.state.get(k,DEFAULT_STATE.get(k))
+                            for k in ("an","fsp","b","i","u","s","1a",
+                                      "bord","shad","frx","fry","fax","fay"))):
+                        removed.add(peer.source_index)
     for font,_ in fonts.values():
         font.close()
     return [replacements.get(e.source_index,e) for e in events
@@ -1472,7 +1556,17 @@ def flatten_aggressive_text_sequences(events: list[Event],
             found=None
             for component in reversed(components):
                 previous=component[-1]
-                if e.start_s>max(x.end_s for x in component)+1e-6:
+                span_start = min(x.start_s for x in component)
+                span_end = max(x.end_s for x in component)
+                if e.start_s > span_end+1e-6:
+                    continue
+                # Brief fade overlaps between consecutive captions must not
+                # link their repeated letters into one long styling sequence.
+                # Nested highlight phases remain eligible; genuinely touching
+                # phases still share the exact centisecond boundary.
+                overlap = min(e.end_s,span_end)-max(e.start_s,span_start)
+                if (e.start_s > span_start and e.end_s > span_end and
+                        1e-6 < overlap < .8*min(e.duration,span_end-span_start)):
                     continue
                 anchor=get_pos(previous.text)
                 allowance=.18*min(text_height(e),text_height(previous))
@@ -1519,7 +1613,8 @@ def flatten_aggressive_text_sequences(events: list[Event],
                 e.state.get("1a",255)==0,
                 "clip" not in e.state and "iclip" not in e.state,
                 e.duration,int(e.layer) if e.layer.lstrip("-").isdigit() else 0))
-            text = aggressive_caption(chosen.state, OVERRIDE_RE.sub("", chosen.text))
+            text = aggressive_caption(chosen.state, OVERRIDE_RE.sub("", chosen.text),
+                                      outline_states=[e.state for e in component])
             output.append(replace_event(chosen,start=format_time(start),end=format_time(end),
                                   start_s=start,end_s=end,text=text,layer="0",effect="",
                                   source_index=min(e.source_index for e in component)))
@@ -1597,6 +1692,13 @@ class FontSpacing:
         except ImportError:
             return
         self.ImageFont = ImageFont
+        self.harfbuzz = None
+        self.shaping_fonts = {}
+        try:
+            import uharfbuzz
+            self.harfbuzz = uharfbuzz
+        except ImportError:
+            pass  # RAQM installations do not require an additional backend.
         self.available = True
         import os
         roots = list(directories) + [Path(__file__).resolve().parent / "fonts"]
@@ -1659,6 +1761,46 @@ class FontSpacing:
             face = self.faces.get((family.casefold(),False,italic))
         return face
 
+    def measure(self, face, text: str, kerning: bool = False) -> float:
+        """Return exact-face shaped advances at 1024 px using RAQM or HarfBuzz.
+
+        Direct HarfBuzz avoids RAQM's separate FriBiDi DLL on Windows. The
+        caller still validates direction, glyph coverage and the complete row;
+        this method never substitutes fonts or estimates spaces geometrically.
+        """
+        if not text:
+            return 0.0
+        path,index,_ = face
+        key = (path,index)
+        if key not in self.loaded:
+            self.loaded[key] = self.ImageFont.truetype(path,1024,index=index)
+        font = self.loaded[key]
+        if font.layout_engine == self.ImageFont.Layout.RAQM:
+            return font.getlength(text,features=["kern" if kerning else "-kern"])
+        hb = self.harfbuzz
+        if hb is None:
+            raise ValueError("Font measurement needs RAQM or uharfbuzz")
+        if key not in self.shaping_fonts:
+            hb_face = hb.Face(Path(path).read_bytes(),index)
+            if not hb_face.upem:
+                raise ValueError("Invalid font face")
+            hb_font = hb.Font(hb_face)
+            hb.ot_font_set_funcs(hb_font)
+            # 26.6 pixel units retain subpixel precision like FreeType/Pillow.
+            hb_font.scale = (1024*64,1024*64)
+            self.shaping_fonts[key] = hb_font
+        buffer = hb.Buffer()
+        buffer.add_str(text)
+        buffer.guess_segment_properties()
+        if buffer.direction != "ltr":
+            raise ValueError("This row reconstruction requires horizontal LTR text")
+        hb.shape(self.shaping_fonts[key],buffer,{"kern":bool(kerning)})
+        if any(info.codepoint == 0 for info in buffer.glyph_infos):
+            raise ValueError("Shaping produced a missing glyph")
+        if any(position.y_advance for position in buffer.glyph_positions):
+            raise ValueError("Vertical glyph advances are unsupported")
+        return sum(position.x_advance for position in buffer.glyph_positions)/64
+
     def recover(self, ordered, fragments):
         if not self.available or len(ordered) < 4:
             return None
@@ -1683,12 +1825,7 @@ class FontSpacing:
         if any(ord(c) not in cmap for c in ''.join(fragments)+' '):
             return None
         try:
-            if (path,index) not in self.loaded:
-                self.loaded[path,index] = self.ImageFont.truetype(path,1024,index=index)
-            font = self.loaded[path,index]
-            if font.layout_engine != self.ImageFont.Layout.RAQM:
-                return None  # Feature control is required for reliable advances.
-            features = ["kern" if first.get("kerning",False) else "-kern"]
+            kerning = bool(first.get("kerning",False))
             sx = statistics.median(e.state.get('fscx',100) for e in ordered)
             sy = statistics.median(e.state.get('fscy',100) for e in ordered)
             if sx <= 0 or sy <= 0:
@@ -1698,9 +1835,9 @@ class FontSpacing:
             # Nonzero authored tracking has differing renderer conventions.
             if abs(spacing) > .001:
                 return None
-            widths = [font.getlength(t,features=features)*scale for t in fragments]
-            space = font.getlength(' ',features=features)*scale
-        except (OSError, ValueError):
+            widths = [self.measure(face,t,kerning)*scale for t in fragments]
+            space = self.measure(face,' ',kerning)*scale
+        except (OSError, ValueError, RuntimeError):
             return None
         if space <= 0:
             return None
@@ -1746,7 +1883,10 @@ class FontSpacing:
         # A merged font may kern across the old fragment seams. Reject a large
         # difference between the assembled advance and the measured row span.
         span = factor*(sum(widths)+sum(bits)*space)
-        if abs(font.getlength(text,features=features)*scale*factor-span) > max(1,.2*factor*space):
+        try:
+            if abs(self.measure(face,text,kerning)*scale*factor-span) > max(1,.2*factor*space):
+                return None
+        except (OSError,ValueError,RuntimeError):
             return None
         center = (xs[0]-anchor*widths[0]*factor +
                   xs[-1]+(1-anchor)*widths[-1]*factor)/2
@@ -1774,20 +1914,15 @@ class FontSpacing:
         if fs <= 0 or sx <= 0:
             return None
         try:
-            if (path,index) not in self.loaded:
-                self.loaded[path,index] = self.ImageFont.truetype(path,1024,index=index)
-            font = self.loaded[path,index]
-            if font.layout_engine != self.ImageFont.Layout.RAQM:
-                return None
-            features = ["kern" if state.get("kerning",False) else "-kern"]
+            kerning = bool(state.get("kerning",False))
             text = "".join(glyphs)
             scale = fs*sx/100/1024
-            widths = [font.getlength(g,features=features)*scale for g in glyphs]
+            widths = [self.measure(face,g,kerning)*scale for g in glyphs]
             offsets = [0]
             for fragment in glyphs:
                 offsets.append(offsets[-1]+len(fragment))
-            advances = [font.getlength(text[:i],features=features)*scale for i in offsets]
-        except (OSError,ValueError):
+            advances = [self.measure(face,text[:i],kerning)*scale for i in offsets]
+        except (OSError,ValueError,RuntimeError):
             return None
         # Adjacent glyph positions are their own alignment anchors, not
         # necessarily their centres. Preserve the original glyph width.
@@ -1822,6 +1957,7 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
     Extending timings requires animation evidence for every fragment, monotonic
     starts and ends, and a common visible interval. Spaces come from authored
     text, explicit blank positions, or measured advances in the exact font.
+    If spacing is unproven, preserve the original fragment positions and timing.
     """
     quantum = .011  # ASS times have centisecond precision.
     removed: set[int] = set()
@@ -1935,8 +2071,9 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
         if animated:
             # Aggressive animated rows have one explicit readable paint policy.
             # Static rows retain their paint; no majority-color guess is made.
-            body = aggressive_caption(chosen.state,text,an=alignment,pos=(x,y),
-                                      fscx=sx,fscy=sy)
+            body = aggressive_caption(chosen.state,text,
+                                      outline_states=[e.state for e in ordered],
+                                      an=alignment,pos=(x,y),fscx=sx,fscy=sy)
         else:
             # Candidate grouping guarantees identical static state. Reusing
             # its tags also preserves underline, outline axes and other tags.
@@ -1994,13 +2131,53 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
                                     animated_sources: set[int] | None = None) -> tuple[list[Event],int]:
     """Remove short, positioned highlights that exactly repeat a static row span.
 
-    Use the original fragment coordinates retained while assembling the row.
-    A matching substring elsewhere on the screen is not sufficient evidence.
+    Use fragment coordinates even when uncertain spacing prevents assembly.
+    Unassembled glyphs can prove a decorative copy repeats a row span without
+    inventing spaces or changing the glyphs' own positions and timing.
     """
+    anchors = dict(anchors)
     rows: dict[tuple, list[Event]] = {}
     for e in events:
         if e.source_index in anchors:
             rows.setdefault(e.style,[]).append(e)
+    # Font measurements are needed to re-typeset a row, but not to recognize
+    # shadow-only syllables drawn over its existing opaque character events.
+    # These virtual rows are evidence only; they are never emitted as text.
+    fragments: dict[tuple,list[Event]] = {}
+    for e in events:
+        if (e.kind == "Dialogue" and e.source_index not in anchors and
+                (e.lyric or e.source_index in (animated_sources or set())) and
+                visible_map.get(e.source_index) and get_pos(e.text) is not None and
+                not e.state.get("p",0) and not inline_layout_key(e) and
+                "clip" not in e.state and "iclip" not in e.state and
+                e.state.get("1a",0) == 0):
+            key = (e.style,e.name,e.row,e.start,e.end,text_layout_key(e))
+            fragments.setdefault(key,[]).append(e)
+    virtual: set[int] = set()
+    for group in fragments.values():
+        # Split sparse positions: a distant glyph with a longer lifetime must
+        # not prevent a local adjacent span from supplying copy evidence.
+        runs = []
+        for e in sorted(group,key=lambda e:get_pos(e.text)[0]):
+            if not runs or (get_pos(e.text)[0]-get_pos(runs[-1][-1].text)[0] >
+                            2*min(text_height(e),text_height(runs[-1][-1]))):
+                runs.append([])
+            runs[-1].append(e)
+        for ordered in runs:
+            if len(ordered) < 2:
+                continue
+            xs = [get_pos(e.text)[0] for e in ordered]
+            ys = [get_pos(e.text)[1] for e in ordered]
+            height = min(text_height(e) for e in ordered)
+            if (any(b-a <= ordered[0].unit for a,b in zip(xs,xs[1:])) or
+                    max(ys)-min(ys) > .15*height):
+                continue
+            idx = -len(virtual)-1
+            base = replace_event(ordered[0],source_index=idx,
+                                 text=set_pos(ordered[0].text,((xs[0]+xs[-1])/2,statistics.median(ys))))
+            anchors[idx] = [(visible_map[e.source_index],x) for e,x in zip(ordered,xs)]
+            rows.setdefault(base.style,[]).append(base)
+            virtual.add(idx)
     removed: set[int] = set()
     for e in events:
         pos = get_pos(e.text)
@@ -2025,6 +2202,15 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
                                     for text,x in anchors[base.source_index])):
                         candidates.append(base)
         for base in candidates:
+            if base.source_index in virtual:
+                # Only decorative shadow copies qualify through virtual rows.
+                # Preserve visible fills, independently placed text, and any
+                # different font geometry even when their letters match.
+                if (e.state.get("1a",0) < 254 or e.state.get("3a",0) < 254 or
+                        any(e.state.get(k,DEFAULT_STATE.get(k)) !=
+                            base.state.get(k,DEFAULT_STATE.get(k))
+                            for k in ("fn","fs","an","b","i","frz","frx","fry","fax","fay"))):
+                    continue
             if (e.duration > .8*base.duration and e.layer == base.layer or
                     e.start_s < base.start_s-.15 or e.end_s > base.end_s+.15 or
                     abs(pos[1]-get_pos(base.text)[1]) > .15*text_height(base)):
@@ -2234,9 +2420,9 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
     aggressive_copies = masked_decorations = 0
     if level == 1:
         simplified_events, masked_decorations = remove_masked_glyph_effects(
-            simplified_events, visible_map, font_spacing)
+            simplified_events, visible_map, font_spacing, animated_sources)
         simplified_events, aggressive_copies = flatten_aggressive_text_copies(
-            simplified_events, visible_map)
+            simplified_events, visible_map, animated_sources)
 
     sign_copies_removed = 0
     if level == 1:
@@ -2278,7 +2464,7 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         max_gap=short_gap,
     )
     aggressive_sequences = 0
-    # Legacy JSON counters remain zero for compatibility with older reports.
+    # Counter names remain compatible with older batch reports.
     staggered_rows = fullwidth_merged = progressive_rows = 0
     overlaid_letters = covered_fragments = 0
     if level == 1:
@@ -2502,6 +2688,11 @@ def main() -> int:
             metric = FontSpacing(folders)
             if not metric.available:
                 print("Font spacing unavailable. Enable with: python -m pip install Pillow fonttools")
+            else:
+                from PIL import features
+                if not features.check_feature("raqm") and metric.harfbuzz is None:
+                    print("RAQM unavailable: install the portable measurement backend with: "
+                          "python -m pip install uharfbuzz (unmerged rows keep original timing)")
         total_in = total_out = 0
         records = []
         for src in inputs:
@@ -2527,6 +2718,7 @@ def main() -> int:
                 f"identical text strips joined: {stats['tiles_joined']}, "
                 f"aggressive text copies flattened: {stats['aggressive_copies']}, "
                 f"text effect sequences frozen: {stats['aggressive_sequences']}, "
+                f"covered fragment effects removed: {stats['covered_fragments']}, "
                 f"vector copies: {stats['vector_copies_removed']}, "
                 f"covered contours: {stats['vector_glows_removed']}, "
                 f"fully covered drawings: {stats['covered_vectors']}, "
