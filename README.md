@@ -38,11 +38,12 @@ If you chose to replace the original subtitles during simplification, those orig
 - Python
 - Pillow
 - fontTools
+- uharfbuzz
 
 Install the required Python packages with:
 
 ```text
-python -m pip install Pillow fonttools
+python -m pip install Pillow fonttools uharfbuzz
 ```
 
 MKVToolNix and Python must also be installed and accessible from the command line.
