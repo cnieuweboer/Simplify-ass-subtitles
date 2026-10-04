@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Simplify ASS/SSA subtitles at two levels for limited renderers.
 
-Level 1 favors maximum reduction; level 2 retains static sign styling and
+Level 1 favors maximum reduction, retaining simple opaque caption backdrops;
+level 2 retains static sign styling and
 static vector shapes. Basic simplification requires only the standard library.
 Optional font-based word spacing uses Pillow and fonttools:
     python -m pip install Pillow fonttools
@@ -20,11 +21,11 @@ import logging
 import re
 import statistics
 import unicodedata
-from dataclasses import dataclass, replace, field
+from dataclasses import dataclass, replace as dataclass_replace, field
 from pathlib import Path
 from typing import Iterable
 
-__version__ = "2026.09.29.2"
+__version__ = "2026.10.04.1"
 
 
 class _FontTimestampFilter(logging.Filter):
@@ -76,6 +77,8 @@ class Event:
     end_s: float
     source_index: int
     state: dict = field(default_factory=dict, compare=False)
+    defaults: dict = field(default_factory=dict, compare=False, repr=False)
+    styles: dict = field(default_factory=dict, compare=False, repr=False)
     lyric: bool = False
     row: int = 0
     unit: float = 1.0
@@ -226,10 +229,13 @@ STYLE_TAGS = dict(fontname="fn", fontsize="fs", bold="b", italic="i",
 
 def parse_styles(lines: list[str]) -> dict[str, dict]:
     result, fields, section = {}, [], ""
+    kerning = False
     for line in lines:
         line = line.strip()
         if line.startswith("["):
             section = line.casefold()
+        elif section == "[script info]" and line.lower().startswith("kerning:"):
+            kerning = line.split(":",1)[1].strip().casefold() in {"yes","1","-1","true"}
         elif section in {"[v4+ styles]", "[v4 styles]"}:
             if line.lower().startswith("format:"):
                 fields = [x.strip().casefold() for x in line.split(":", 1)[1].split(",")]
@@ -255,6 +261,8 @@ def parse_styles(lines: list[str]) -> dict[str, dict]:
                     except ValueError:
                         pass
                 result[values.get("name", "Default")] = state
+    for state in result.values():
+        state["kerning"] = kerning
     return result
 
 
@@ -303,6 +311,16 @@ def effective_state(text: str, default: dict | None = None, styles: dict | None 
     return state
 
 
+def replace_event(event: Event, **changes) -> Event:
+    """Keep rendered overrides and their cached effective state synchronized."""
+    if "text" in changes or "style" in changes:
+        style = changes.get("style", event.style)
+        default = event.styles.get(style, event.defaults or DEFAULT_STATE)
+        changes["state"] = effective_state(changes.get("text", event.text),
+                                           default, event.styles)
+    return dataclass_replace(event, **changes)
+
+
 def render_tag(name: str, value) -> str:
     if name in {"1c", "2c", "3c", "4c"}:
         return f"\\{name}&H{value}&"
@@ -311,6 +329,17 @@ def render_tag(name: str, value) -> str:
     if isinstance(value, tuple):
         return "\\" + name + "(" + ",".join(f"{x:g}" for x in value) + ")"
     return "\\" + name + (f"{value:g}" if isinstance(value, (float, int)) else str(value))
+
+
+def aggressive_caption(state: dict, text: str, **layout) -> str:
+    """One explicit paint policy for reconstructed aggressive-mode captions."""
+    state = {**DEFAULT_STATE, **state, **layout,
+             "1c":"FFFFFF", "3c":"000000", "1a":0, "3a":0,
+             "bord":2, "shad":0, "blur":0, "be":0}
+    keys = ("an","pos","org","fn","fs","fscx","fscy","fsp","b","i",
+            "u","s","frz","frx","fry","fax","fay",
+            "1c","3c","1a","3a","bord","shad","blur","be")
+    return "{"+"".join(render_tag(k,state[k]) for k in keys if k in state)+"}"+text
 
 
 def safe_override(block: str, max_blur: float = 0.0) -> str:
@@ -423,10 +452,25 @@ def freeze_block(block: str, duration: float, initial: dict, default: dict,
         visible = (abs(state.get("fscx",100)) > .01 and abs(state.get("fscy",100)) > .01
                    and min(state.get("1a",0),state.get("3a",0),state.get("4a",0)) < 254)
         stable = not any(a < at < b for a,b,_,_ in transforms)
+        # Color/blur animation must not make a settled glyph less desirable
+        # than a rotated entrance or exit. Compare resolved geometry, so even
+        # no-op transforms count as stationary. Paint is still sampled intact.
+        geometry = ("pos", "org", "fs", "fscx", "fscy", "fsp", "frz",
+                    "frx", "fry", "fax", "fay", "clip", "iclip")
+        settled = True
+        for a,b,_,changes in transforms:
+            if a < at < b:
+                target = state.copy()
+                for name,value in changes:
+                    if name in geometry or name in {"fr","r"}:
+                        apply_tag(target,name,value,styles,default)
+                if any(target.get(k) != state.get(k) for k in geometry):
+                    settled = False
+                    break
         # Entrance/exit fades often use transparent primary text while an
         # unused shadow channel remains opaque. Prefer the visible fill too.
         strength = 255 - state.get("1a",0)
-        candidates.append(((visible, stable, strength > 16, end-start, strength),state))
+        candidates.append(((visible, settled, stable, strength > 16, end-start, strength),state))
     state = max(candidates,key=lambda item:item[0])[1] if candidates else base
     for name in ("blur","be"):
         if name in state:
@@ -620,8 +664,7 @@ def deduplicate_layers(events: list[Event], visible_map: dict[int, str]) -> tupl
     return output, removed
 
 
-def reduce_static_sign_copies(events: list[Event], visible_map: dict[int, str],
-                              originals: dict[int, Event]) -> tuple[list[Event], int]:
+def reduce_static_sign_copies(events: list[Event], visible_map: dict[int, str]) -> tuple[list[Event], int]:
     """In aggressive mode, fold slightly offset effect copies into their fill."""
     groups: dict[tuple, list[Event]] = {}
     for e in events:
@@ -691,7 +734,7 @@ def coalesce_lyric_phases(events: list[Event], visible_map: dict[int, str]) -> t
             if (e.start_s <= current.end_s + 0.011 and
                     not (abs(e.start_s - current.end_s) <= 0.011 and boundary in boundaries)):
                 end = max(current.end_s, e.end_s)
-                current = replace(current, end=format_time(end), end_s=end,
+                current = replace_event(current, end=format_time(end), end_s=end,
                                   source_index=min(current.source_index, e.source_index))
                 removed += 1
             else:
@@ -699,103 +742,6 @@ def coalesce_lyric_phases(events: list[Event], visible_map: dict[int, str]) -> t
                 current = e
         output.append(current)
     return sorted(output, key=lambda e: e.source_index), removed
-
-
-def merge_timed_lyrics(events: list[Event], visible_map: dict[int, str],
-                       space_map: dict[tuple, set[float]], level: int = 1) -> tuple[list[Event], int]:
-    """Turn positioned lyric fragments sharing time/style into one plain ASS line."""
-    if level == 2:
-        return events, 0
-    comments: dict[str, list[tuple[Event, str]]] = {}
-    for e in events:
-        if e.kind == "Comment":
-            _, lyric = simplify_text(e.text)
-            comments.setdefault(e.style, []).append((e, lyric))
-
-    groups: dict[tuple[str, str, str, str, int], list[Event]] = {}
-    for e in events:
-        if e.kind != "Dialogue" or not e.lyric:
-            continue
-        pos = get_pos(e.text)
-        if pos is None or not visible_map.get(e.source_index):
-            continue
-        # Separate top/bottom lines, even when they share the same style and time.
-        key = (e.start, e.end, e.style, e.name, e.row)
-        groups.setdefault(key, []).append(e)
-
-    removed: set[int] = set()
-    replacements: dict[int, Event] = {}
-    for (start, end, style, name, band), group in groups.items():
-        positions: dict[float, list[Event]] = {}
-        for e in group:
-            positions.setdefault(x_key(e), []).append(e)
-        if len(positions) < 2:
-            continue
-        # Only merge actual fragments with one text per horizontal position.
-        ordered = []
-        for x in sorted(positions):
-            variants = {visible_map[e.source_index] for e in positions[x]}
-            if len(variants) != 1:
-                break
-            ordered.append(next(iter(variants)))
-        if len(ordered) != len(positions):
-            continue
-        joined = "".join(ordered)
-        norm = lambda s: "".join(s.split()).casefold()
-        # Karaoke comments often retain the author's word spacing but start
-        # a few frames later than their generated, positioned effect events.
-        # Require the same wording and nearly the same display interval so a
-        # nearby repeat of the lyric cannot supply the wrong caption.
-        first_start, first_end = group[0].start_s, group[0].end_s
-        candidates = ((comment, words) for comment, words in comments.get(style, [])
-                      if norm(words) == norm(joined)
-                      and abs(comment.start_s-first_start) <= .25
-                      and abs(comment.end_s-first_end) <= .25
-                      and min(comment.end_s,first_end)-max(comment.start_s,first_start)
-                      >= .8*min(comment.duration,group[0].duration))
-        lyric = next((words for _, words in sorted(candidates, key=lambda item:
-                     abs(item[0].start_s-first_start)+abs(item[0].end_s-first_end))), None)
-        if lyric is None:
-            # Some openings have no full-line Comment. Their short fragments
-            # are repeated at the same x position in several effect layers.
-            # Syllable effects may contain several letters per position.
-            blanks = space_map.get((start, end, style, name, band), set())
-            pieces = []
-            xs = sorted(positions)
-            if not blanks:
-                # Without authored spaces or a matching full line, word
-                # boundaries cannot reliably be recovered from proportional
-                # glyph advances. Keep one static glyph at each position.
-                for x in xs:
-                    choices = positions[x]
-                    chosen = min(choices, key=lambda e:(e.state.get("1a",0),
-                                 -int(e.layer) if e.layer.lstrip("-").isdigit() else 0))
-                    replacements[chosen.source_index] = replace(chosen, effect="")
-                    removed.update(e.source_index for e in choices if e is not chosen)
-                continue
-            for index, x in enumerate(xs):
-                if index and any(xs[index-1] < b < x for b in blanks):
-                    pieces.append(" ")
-                pieces.append(ordered[index])
-            lyric = "".join(pieces)
-        first = min(group, key=lambda e: e.source_index)
-        # The style supplies normal alignment/margins. The original positions,
-        # per-word colors and 1%-scale animation must not survive on this line.
-        xs = [get_pos(e.text)[0] for e in group]
-        y = statistics.median(get_pos(e.text)[1] for e in group)
-        lyric = f"{{\\an5\\pos({(min(xs)+max(xs))/2:g},{y:g})}}" + lyric
-        merged = replace(first, layer="0", effect="", text=lyric)
-        replacements[first.source_index] = merged
-        removed.update(e.source_index for e in group if e.source_index != first.source_index)
-        visible_map[first.source_index] = OVERRIDE_RE.sub("", lyric)
-
-    output = []
-    for e in events:
-        if e.source_index in replacements:
-            output.append(replacements[e.source_index])
-        elif e.source_index not in removed:
-            output.append(e)
-    return output, len(removed)
 
 
 def collapse_matching_lyric_layers(events: list[Event],
@@ -836,7 +782,7 @@ def collapse_matching_lyric_layers(events: list[Event],
             removed.update(e.source_index for e in group)
             earlier = min(line.start_s, group[0].start_s)
             later = max(line.end_s, group[0].end_s)
-            extended[line.source_index] = replace(line, start=format_time(earlier),
+            extended[line.source_index] = replace_event(line, start=format_time(earlier),
                 end=format_time(later), start_s=earlier, end_s=later)
             break
 
@@ -878,11 +824,8 @@ def collapse_full_lyric_copies(events: list[Event],
             first = min(cluster, key=lambda item: item.source_index)
             earlier = min(item.start_s for item in cluster)
             later = max(item.end_s for item in cluster)
-            text = visible_map[best.source_index]
-            pos = get_pos(best.text)
-            if pos is not None:
-                text = f"{{\\an5\\pos({pos[0]:g},{pos[1]:g})}}" + text
-            replacements[first.source_index] = replace(
+            text = aggressive_caption(best.state, visible_map[best.source_index])
+            replacements[first.source_index] = replace_event(
                 first, layer="0", start=format_time(earlier), end=format_time(later),
                 start_s=earlier, end_s=later, effect="",
                 text=text)
@@ -945,7 +888,7 @@ def freeze_vector_sequences(events: list[Event], short_duration: float = 0.16,
         # Prefer the unfaded frame, then the longest-held position. Keeping
         # that event's paint intact preserves intentional transparent fills.
         chosen = min(run, key=lambda e: (transparency(e), -e.duration, e.source_index))
-        output.append(replace(chosen, start=run[0].start, start_s=run[0].start_s,
+        output.append(replace_event(chosen, start=run[0].start, start_s=run[0].start_s,
                               end=run[-1].end, end_s=run[-1].end_s,
                               source_index=min(e.source_index for e in run)))
         removed += len(run) - 1
@@ -1221,7 +1164,7 @@ def join_text_clip_tiles(events: list[Event]) -> tuple[list[Event], int]:
                             value = "("+",".join(f"{v:g}" for v in union)+")"
                             text = re.sub(r"\\clip\([^)]*\)",lambda _: "\\clip"+value,previous.text)
                             state = previous.state.copy(); state["clip"]=value
-                            joined[-1]=(replace(previous,text=text,state=state,
+                            joined[-1]=(replace_event(previous,text=text,state=state,
                                 source_index=min(previous.source_index,event.source_index)),union)
                             removed += 1; changed = True
                             continue
@@ -1293,7 +1236,7 @@ def reduce_text_layers(events: list[Event], visible_map: dict[int, str],
                 text="{"+tags+"}"+text
             state=foreground.state.copy()
             state.update(xbord=bx,ybord=by,**{"3c":color,"3a":0})
-            foreground=replace(foreground,text=text,state=state)
+            foreground=replace_event(foreground,text=text,state=state)
         output.append(foreground)
     return sorted(output,key=lambda e:e.source_index),len(events)-len(output)
 
@@ -1332,62 +1275,178 @@ def flatten_aggressive_text_copies(events: list[Event],
             "clip" not in e.state and "iclip" not in e.state,
             int(e.layer) if e.layer.lstrip("-").isdigit() else 0,
             e.source_index))
-        state = chosen.state
-        pos = key[-2]
-        tags = [r"\an"+str(int(state.get("an",2))),
-                f"\\pos({pos[0]:g},{pos[1]:g})",
-                r"\fn"+str(state.get("fn","Arial")),
-                f"\\fs{state.get('fs',20):g}",
-                f"\\fscx{state.get('fscx',100):g}",
-                f"\\fscy{state.get('fscy',100):g}",
-                r"\1c&HFFFFFF&\3c&H000000&\1a&H00&\3a&H00&\bord2\shad0"]
-        authored_text = OVERRIDE_RE.sub("", chosen.text)
-        text = "{"+"".join(tags)+"}"+authored_text
-        kept.append(replace(chosen, text=text, layer="0", effect="",
+        text = aggressive_caption(chosen.state, OVERRIDE_RE.sub("", chosen.text))
+        kept.append(replace_event(chosen, text=text, layer="0", effect="",
                             source_index=min(e.source_index for e in group)))
         removed += len(group)-1
     return sorted(kept,key=lambda e:e.source_index), removed
 
 
 def remove_masked_glyph_effects(events: list[Event],
-                                visible_map: dict[int,str]) -> tuple[list[Event],int,set[tuple]]:
-    """Discard vector-masked single glyphs painted over an unmasked caption.
+                                visible_map: dict[int,str],
+                                metric: FontSpacing | None = None) -> tuple[list[Event],int]:
+    """Remove matching text copies or masks proven to trace an underlying glyph.
 
-    The unmasked event must occupy the same position for most of the masked
-    event's lifetime. A masked glyph without such a base stays untouched.
+    Outline matching uses the exact font, contour topology and every control
+    point. Unavailable fonts, inverse masks and unsupported paths stay intact.
+    This is an aggressive-mode substitution, not an assertion of occlusion.
     """
-    buckets: dict[tuple,list[Event]] = {}
+    bases: dict[tuple,list[Event]] = {}
     for e in events:
-        pos=get_pos(e.text)
-        if (e.kind=="Dialogue" and pos is not None and
-                visible_map.get(e.source_index) and
-                not e.state.get("clip") and not e.state.get("iclip")):
-            key=(e.style,e.name,round(pos[0]/12),round(pos[1]/12))
-            buckets.setdefault(key,[]).append(e)
-    removed=set()
-    affected=set()
+        if (e.kind == "Dialogue" and get_pos(e.text) is not None and
+                visible_map.get(e.source_index) and not inline_layout_key(e) and
+                "clip" not in e.state and "iclip" not in e.state and
+                e.state.get("1a",0) < 255):
+            x,y = get_pos(e.text)
+            bases.setdefault((e.style,int(x//(20*e.unit)),int(y//(20*e.unit))),[]).append(e)
+    removed, replacements, outlines, fonts = set(), {}, {}, {}
     for e in events:
-        pos=get_pos(e.text)
-        if (e.kind!="Dialogue" or pos is None or
-                len(visible_map.get(e.source_index,""))>2 or
-                not any(str(e.state.get(k,"")).lstrip("( ").lower().startswith(("m ","n "))
-                        for k in ("clip","iclip"))):
+        pos = get_pos(e.text)
+        if (e.kind != "Dialogue" or pos is None or inline_layout_key(e) or
+                "iclip" in e.state or "clip" not in e.state):
             continue
-        x,y=round(pos[0]/12),round(pos[1]/12)
-        for bx in range(x-1,x+2):
-            for by in range(y-1,y+2):
-                for base in buckets.get((e.style,e.name,bx,by),()):
-                    bp=get_pos(base.text)
-                    if (abs(pos[0]-bp[0])<=.12*min(text_height(e),text_height(base)) and
-                            abs(pos[1]-bp[1])<=.12*min(text_height(e),text_height(base)) and
-                            min(e.end_s,base.end_s)-max(e.start_s,base.start_s)
-                            >= .7*e.duration):
-                        removed.add(e.source_index)
-                        affected.add((e.style,e.name,e.row))
-                        break
-                if e.source_index in removed:break
-            if e.source_index in removed:break
-    return [e for e in events if e.source_index not in removed],len(removed),affected
+        # Parse only closed move/line/cubic contours, including scaled clips.
+        mask = re.fullmatch(r"\(\s*(?:(\d+)\s*,\s*)?(m\s+.*?)\s*\)",
+                            str(e.state["clip"]), re.I)
+        if mask is None:
+            continue
+        commands, points = [], []
+        parts = re.findall(r"([mlb])\s+([^mlb]+)",mask[2],re.I)
+        valid = bool(parts) and not re.sub(r"[mlb\s]|"+NUMBER,"",mask[2],flags=re.I)
+        scale_number = int(mask[1] or 1)
+        if not 1 <= scale_number <= 16:
+            continue
+        clip_scale = 2 ** (scale_number-1)
+        for command, coords in parts:
+            command = command.lower()
+            nums = list(map(float,re.findall(NUMBER,coords)))
+            size = 6 if command == "b" else 2
+            if not nums or len(nums)%size or (command == "m" and len(nums)!=2):
+                valid = False; break
+            if command == "m" and commands:
+                commands.append("z")
+            commands.extend([command]*(len(nums)//size))
+            points.extend((x/clip_scale,y/clip_scale) for x,y in zip(nums[::2],nums[1::2]))
+        commands.append("z")
+        if not valid or not points:
+            continue
+        # Clips use screen coordinates independently of the texture's position.
+        # Search at the mask itself; actors may label phases of the same glyph.
+        xs,ys = zip(*points)
+        radius, cell = text_height(e), 20*e.unit
+        offsets = [0]
+        for op in commands:
+            offsets.append(offsets[-1]+{"m":1,"l":1,"b":3,"z":0}[op])
+        covered, matched = set(), {}
+        # Spatial indexing changes only the search cost, not match tolerances.
+        nearby = [base
+                  for x in range(int((min(xs)-radius)//cell),int((max(xs)+radius)//cell)+1)
+                  for y in range(int((min(ys)-radius)//cell),int((max(ys)+radius)//cell)+1)
+                  for base in bases.get((e.style,x,y),[])]
+        nearby.extend(base
+                      for x in range(int((pos[0]-radius)//cell),int((pos[0]+radius)//cell)+1)
+                      for y in range(int((pos[1]-radius)//cell),int((pos[1]+radius)//cell)+1)
+                      for base in bases.get((e.style,x,y),[]))
+        for base in sorted({b.source_index:b for b in nearby}.values(),
+                           key=lambda b:int(b.layer) if b.layer.lstrip("-").isdigit() else 0,
+                           reverse=True):
+            bp = get_pos(base.text)
+            tolerance = .12*min(text_height(e),text_height(base))
+            if (placement_key(e)[0] != placement_key(base)[0] or
+                    base.start_s > e.start_s+.001 or base.end_s < e.end_s-.001):
+                continue
+            if (e.name == base.name and abs(pos[0]-bp[0]) <= tolerance and
+                    abs(pos[1]-bp[1]) <= tolerance and
+                    visible_map.get(e.source_index) == visible_map[base.source_index] and
+                    text_layout_key(e) == text_layout_key(base)):
+                removed.add(e.source_index)
+                break
+            glyph = visible_map[base.source_index]
+            state = base.state
+            if (not valid or metric is None or not metric.available or len(glyph)!=1 or
+                    any(abs(state.get(k,0))>.001 for k in ("frz","frx","fry","fax","fay"))):
+                continue
+            face = metric.matching_face(str(state.get("fn","")),bool(state.get("b",0)),bool(state.get("i",0)))
+            if face is None or ord(glyph) not in face[2]:
+                continue
+            key = (*face[:2],glyph)
+            if key not in outlines:
+                outlines[key] = None
+                try:
+                    from fontTools.ttLib import TTFont
+                    from fontTools.pens.recordingPen import DecomposingRecordingPen, RecordingPen
+                    from fontTools.pens.qu2cuPen import Qu2CuPen
+                    if face[:2] not in fonts:
+                        font = TTFont(face[0],fontNumber=face[1])
+                        fonts[face[:2]] = (font,font.getGlyphSet())
+                    font,glyphs = fonts[face[:2]]
+                    pen = DecomposingRecordingPen(glyphs)
+                    glyphs[font.getBestCmap()[ord(glyph)]].draw(pen)
+                    cubic = RecordingPen()
+                    pen.replay(Qu2CuPen(cubic,max_err=.01,all_cubic=True))
+                    ops, vertices = [], []
+                    for op, coords in cubic.value:
+                        ops.append({"moveTo":"m","lineTo":"l","curveTo":"b","closePath":"z"}[op])
+                        vertices.extend((x,-y) for x,y in coords)
+                    os2,hhea = font['OS/2'],font['hhea']
+                    outlines[key] = (ops,vertices,font['head'].unitsPerEm,
+                        font['hmtx'].metrics[font.getBestCmap()[ord(glyph)]][0],
+                        ((os2.usWinAscent,os2.usWinDescent),
+                         (hhea.ascent,-hhea.descent),
+                         (os2.sTypoAscender,-os2.sTypoDescender)))
+                except Exception:
+                    pass  # Corrupt/unsupported fonts cannot authorize deletion.
+            outline = outlines[key]
+            if outline is None or not outline[1] or int(state.get("an",5)) not in range(1,10):
+                continue
+            starts = [i for i in range(len(commands)-len(outline[0])+1)
+                      if commands[i:i+len(outline[0])] == outline[0] and
+                      not any(j in covered for j in range(i,i+len(outline[0])))]
+            if not starts:
+                continue
+            # Fit just translation and one uniform font-size multiplier; never
+            # warp unrelated contours into a match. ASS/em conventions vary.
+            fs = state.get("fs",0)/outline[2]
+            model = [(x*fs*state.get("fscx",100)/100,y*fs*state.get("fscy",100)/100)
+                     for x,y in outline[1]]
+            mx,my = (statistics.mean(v) for v in zip(*model))
+            denom = sum((x-mx)**2+(y-my)**2 for x,y in model)
+            if denom <= 0:
+                continue
+            for start in starts:
+                stop = start+len(outline[0])
+                segment = points[offsets[start]:offsets[stop]]
+                if len(segment) != len(model):
+                    continue
+                px,py = (statistics.mean(v) for v in zip(*segment))
+                factor = sum((x-mx)*(a-px)+(y-my)*(b-py)
+                             for (x,y),(a,b) in zip(model,segment))/denom
+                error = max(abs(v) for (x,y),(a,b) in zip(model,segment)
+                            for v in (a-px-factor*(x-mx),b-py-factor*(y-my)))
+                an = int(state.get("an",5))
+                ax,ay = ((an-1)%3)/2, 1-((an-1)//3)/2
+                dx = bp[0]-ax*outline[3]*fs*state.get("fscx",100)/100*factor
+                dy = [bp[1]+(asc-ay*(asc+desc))*fs*state.get("fscy",100)/100*factor
+                      for asc,desc in outline[4]]
+                # Allow coordinate rounding and synthetic bold's small advance
+                # change, but do not relocate a matching shape from elsewhere.
+                tolerance = max(1.5*base.unit,.04*text_height(base))
+                if (not .5 <= factor <= 1.5 or error > max(.03,.001*text_height(base)) or
+                        abs(px-factor*mx-dx)>tolerance or
+                        min(abs(py-factor*my-y) for y in dy)>tolerance):
+                    continue
+                covered.update(range(start,stop))
+                matched[base.source_index] = replace_event(base,
+                    text=aggressive_caption(state,glyph))
+        if len(covered) == len(commands):
+            removed.add(e.source_index)
+            # The mask can be the principal visible fill over a transparent
+            # glyph. Keep the proven text readable when removing that fill.
+            replacements.update(matched)
+    for font,_ in fonts.values():
+        font.close()
+    return [replacements.get(e.source_index,e) for e in events
+            if e.source_index not in removed],len(removed)
 
 
 def flatten_aggressive_text_sequences(events: list[Event],
@@ -1451,7 +1510,7 @@ def flatten_aggressive_text_sequences(events: list[Event],
                     -max(e.start_s-midpoint,midpoint-e.end_s,0),
                     -e.state.get("1a",255),
                     int(e.layer) if e.layer.lstrip("-").isdigit() else 0))
-                output.append(replace(chosen,start=format_time(start),end=format_time(end),
+                output.append(replace_event(chosen,start=format_time(start),end=format_time(end),
                                       start_s=start,end_s=end,
                                       source_index=min(e.source_index for e in component)))
                 removed+=len(component)-1
@@ -1460,18 +1519,8 @@ def flatten_aggressive_text_sequences(events: list[Event],
                 e.state.get("1a",255)==0,
                 "clip" not in e.state and "iclip" not in e.state,
                 e.duration,int(e.layer) if e.layer.lstrip("-").isdigit() else 0))
-            x,y=get_pos(chosen.text)
-            state=chosen.state
-            # Freeze clipped decorative paint while retaining the text's
-            # font, alignment, scale and authored line breaks.
-            authored=OVERRIDE_RE.sub("",chosen.text)
-            tags=(f"\\an{int(state.get('an',2))}\\pos({x:g},{y:g})"
-                  +r"\fn"+str(state.get("fn","Arial"))
-                  +f"\\fs{state.get('fs',20):g}\\fscx{state.get('fscx',100):g}"
-                  +f"\\fscy{state.get('fscy',100):g}"
-                  +r"\1c&HFFFFFF&\3c&H000000&\1a&H00&\3a&H00&\bord2\shad0")
-            text="{"+tags+"}"+authored
-            output.append(replace(chosen,start=format_time(start),end=format_time(end),
+            text = aggressive_caption(chosen.state, OVERRIDE_RE.sub("", chosen.text))
+            output.append(replace_event(chosen,start=format_time(start),end=format_time(end),
                                   start_s=start,end_s=end,text=text,layer="0",effect="",
                                   source_index=min(e.source_index for e in component)))
             removed+=len(component)-1
@@ -1522,15 +1571,8 @@ def remove_letters_over_full_lines(events: list[Event],
             # The author's complete, spaced text is the canonical caption.
             # Level 1 gives it one opaque fill and contour instead of retaining
             # translucent backing paint plus dozens of animated letters.
-            state = full.state
-            x,y = get_pos(full.text)
-            tags = (f"\\an{int(state.get('an',5))}\\pos({x:g},{y:g})"
-                    + r"\fn"+str(state.get("fn","Arial"))
-                    + f"\\fs{state.get('fs',20):g}"
-                    + f"\\fscx{state.get('fscx',100):g}\\fscy{state.get('fscy',100):g}"
-                    + r"\1c&HFFFFFF&\3c&H000000&\1a&H00&\3a&H00&\bord2\shad0")
-            replacements[full.source_index] = replace(
-                full, text="{"+tags+"}"+visible_map[full.source_index],
+            replacements[full.source_index] = replace_event(
+                full, text=aggressive_caption(full.state,visible_map[full.source_index]),
                 layer="0", effect="")
             removed.update(e.source_index for e in fx)
     return [replacements.get(e.source_index,e) for e in events
@@ -1644,6 +1686,9 @@ class FontSpacing:
             if (path,index) not in self.loaded:
                 self.loaded[path,index] = self.ImageFont.truetype(path,1024,index=index)
             font = self.loaded[path,index]
+            if font.layout_engine != self.ImageFont.Layout.RAQM:
+                return None  # Feature control is required for reliable advances.
+            features = ["kern" if first.get("kerning",False) else "-kern"]
             sx = statistics.median(e.state.get('fscx',100) for e in ordered)
             sy = statistics.median(e.state.get('fscy',100) for e in ordered)
             if sx <= 0 or sy <= 0:
@@ -1653,8 +1698,8 @@ class FontSpacing:
             # Nonzero authored tracking has differing renderer conventions.
             if abs(spacing) > .001:
                 return None
-            widths = [font.getlength(t)*scale for t in fragments]
-            space = font.getlength(' ')*scale
+            widths = [font.getlength(t,features=features)*scale for t in fragments]
+            space = font.getlength(' ',features=features)*scale
         except (OSError, ValueError):
             return None
         if space <= 0:
@@ -1701,7 +1746,7 @@ class FontSpacing:
         # A merged font may kern across the old fragment seams. Reject a large
         # difference between the assembled advance and the measured row span.
         span = factor*(sum(widths)+sum(bits)*space)
-        if abs(font.getlength(text)*scale*factor-span) > max(1,.2*factor*space):
+        if abs(font.getlength(text,features=features)*scale*factor-span) > max(1,.2*factor*space):
             return None
         center = (xs[0]-anchor*widths[0]*factor +
                   xs[-1]+(1-anchor)*widths[-1]*factor)/2
@@ -1732,13 +1777,16 @@ class FontSpacing:
             if (path,index) not in self.loaded:
                 self.loaded[path,index] = self.ImageFont.truetype(path,1024,index=index)
             font = self.loaded[path,index]
+            if font.layout_engine != self.ImageFont.Layout.RAQM:
+                return None
+            features = ["kern" if state.get("kerning",False) else "-kern"]
             text = "".join(glyphs)
             scale = fs*sx/100/1024
-            widths = [font.getlength(g)*scale for g in glyphs]
+            widths = [font.getlength(g,features=features)*scale for g in glyphs]
             offsets = [0]
             for fragment in glyphs:
                 offsets.append(offsets[-1]+len(fragment))
-            advances = [font.getlength(text[:i])*scale for i in offsets]
+            advances = [font.getlength(text[:i],features=features)*scale for i in offsets]
         except (OSError,ValueError):
             return None
         # Adjacent glyph positions are their own alignment anchors, not
@@ -1764,198 +1812,181 @@ class FontSpacing:
         return (origin+anchor*factor*advances[-1], sx*factor)
 
 
-def merge_staggered_text_rows(events: list[Event], visible_map: dict[int, str],
-                              masked_rows: set[tuple] | None = None,
-                              space_map: dict[tuple, set[float]] | None = None,
-                              font_spacing: FontSpacing | None = None,
-                              animated_sources: set[int] | None = None) -> tuple[list[Event], int, dict[int, list[tuple[str,float]]]]:
-    """Freeze a typewriter-like row whose short fragments share one lifetime.
+def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
+                          space_map: dict[tuple,set[float]],
+                          font_spacing: FontSpacing | None,
+                          animated_sources: set[int]) -> tuple[list[Event],int,int,dict]:
+    """Reconstruct static and animated rows with shared evidence and rendering.
 
-    A coherent left-to-right or right-to-left sequence of starts and ends is
-    evidence of a single generated caption. Separate baselines and overlapping
-    phrases remain independent. This is deliberately limited to aggressive mode.
+    Static fragments must share their complete timing and effective styling.
+    Extending timings requires animation evidence for every fragment, monotonic
+    starts and ends, and a common visible interval. Spaces come from authored
+    text, explicit blank positions, or measured advances in the exact font.
     """
-    buckets: dict[tuple, list[Event]] = {}
-    passthrough = []
+    quantum = .011  # ASS times have centisecond precision.
+    removed: set[int] = set()
+    replacements: dict[int,Event] = {}
+    anchors: dict[int,list[tuple[str,float]]] = {}
+    duplicate_count = merged_count = 0
+
+    # Collapse paint copies only at the same position, with matching text,
+    # geometry and complete timing. This precedes row reconstruction so that
+    # duplicate glyphs cannot become duplicate letters in the assembled text.
+    copies: dict[tuple,list[Event]] = {}
     for e in events:
-        pos = get_pos(e.text)
-        visible = visible_map.get(e.source_index, "")
-        if (e.kind != "Dialogue" or pos is None or not visible or
-                len(visible) > 8 or e.duration < .8 or
-                e.state.get("p", 0) or inline_layout_key(e)):
-            passthrough.append(e)
+        if (e.kind == "Dialogue" and get_pos(e.text) is not None and
+                (e.lyric or e.source_index in animated_sources) and
+                visible_map.get(e.source_index) and not inline_layout_key(e)):
+            key = (e.start,e.end,e.style,e.name,e.row,get_pos(e.text),
+                   visible_map[e.source_index],text_layout_key(e),placement_key(e))
+            copies.setdefault(key,[]).append(e)
+    for group in copies.values():
+        if len(group) < 2:
+            continue
+        chosen = min(group,key=lambda e:(e.state.get("1a",0),
+                     -int(e.layer) if e.layer.lstrip("-").isdigit() else 0,
+                     -e.source_index))
+        removed.update(e.source_index for e in group if e is not chosen)
+        duplicate_count += len(group)-1
+
+    eligible = []
+    for e in events:
+        text = visible_map.get(e.source_index, "")
+        if (e.source_index in removed or e.kind != "Dialogue" or not text or
+                get_pos(e.text) is None or e.duration <= 0 or e.state.get("p",0) or
+                inline_layout_key(e) or "clip" in e.state or "iclip" in e.state or
+                any(tag in e.text for tag in (r"\N",r"\n")) or
+                any(abs(e.state.get(tag,0)) > .001
+                    for tag in ("frz","frx","fry","fax","fay"))):
+            continue
+        eligible.append(e)
+
+    def base_key(e):
+        return (e.style,e.name,e.row,e.margin_l,e.margin_r,e.margin_v,
+                tuple(e.state.get(k,DEFAULT_STATE.get(k))
+                      for k in ("fn","fs","b","i","an","fsp")))
+
+    comments: dict[str,list[tuple[Event,str]]] = {}
+    for e in events:
+        if e.kind == "Comment":
+            comments.setdefault(e.style,[]).append((e,simplify_text(e.text)[1]))
+
+    def join(run: list[Event], animated: bool) -> bool:
+        nonlocal merged_count
+        if len(run) < 2 or any(e.source_index in removed or
+                              e.source_index in replacements for e in run):
+            return False
+        ordered = sorted(run,key=lambda e:get_pos(e.text)[0])
+        xs = [get_pos(e.text)[0] for e in ordered]
+        ys = [get_pos(e.text)[1] for e in ordered]
+        tolerance = min(e.unit for e in run)
+        if (any(b-a <= tolerance for a,b in zip(xs,xs[1:])) or
+                max(ys)-min(ys) > .15*min(text_height(e) for e in run)):
+            return False
+        start,end = min(e.start_s for e in run),max(e.end_s for e in run)
+        if animated:
+            if (not all(e.source_index in animated_sources for e in run) or
+                    min(e.end_s for e in run)-max(e.start_s for e in run) <= quantum or
+                    not any(all(direction*(b.start_s-a.start_s) >= -quantum and
+                                    direction*(b.end_s-a.end_s) >= -quantum
+                                    for a,b in zip(ordered,ordered[1:]))
+                            for direction in (1,-1))):
+                return False
+        fragments = [visible_map[e.source_index] for e in ordered]
+        norm = lambda value: "".join(value.split())
+        authored = {words for comment,words in comments.get(run[0].style,[])
+                    if min(comment.end_s,end)-max(comment.start_s,start) >=
+                       .8*max(comment.duration,end-start) and
+                       norm(words) == norm("".join(fragments))}
+        text = next(iter(authored)) if len(authored) == 1 else None
+        x,y = (xs[0]+xs[-1])/2,statistics.median(ys)
+        alignment = 5
+        sx = statistics.median(e.state.get("fscx",100) for e in run)
+        sy = statistics.median(e.state.get("fscy",100) for e in run)
+        if text is None:
+            blanks = space_map.get((format_time(start),format_time(end),
+                                    run[0].style,run[0].name,run[0].row),set())
+            if blanks:
+                text = fragments[0]+"".join(
+                    (" " if any(a < space < b for space in blanks) else "")+part
+                    for a,b,part in zip(xs,xs[1:],fragments[1:]))
+        measured = False
+        if text is None and font_spacing is not None:
+            # Karaoke pulses can leave different sampled scales per glyph.
+            # Animated rows share their median scale; static rows are exact.
+            metric_row = [dataclass_replace(e,state={**e.state,"fscx":sx,"fscy":sy})
+                          for e in ordered] if animated else ordered
+            fit = font_spacing.recover(metric_row,fragments)
+            if fit is not None:
+                text,x,sx,sy,alignment = fit
+                measured = True
+            elif all(unicodedata.category(c) == "Lo" and
+                     unicodedata.east_asian_width(c) in ("W","F")
+                     for part in fragments for c in part):
+                fit = font_spacing.fit_fullwidth_run(metric_row,fragments)
+                if fit is not None:
+                    x,sx = fit
+                    text = "".join(fragments)
+                    alignment = int(ordered[0].state.get("an",5))
+                    measured = True
+        if text is None:
+            return False
+        chosen = ordered[0]
+        if animated:
+            # Aggressive animated rows have one explicit readable paint policy.
+            # Static rows retain their paint; no majority-color guess is made.
+            body = aggressive_caption(chosen.state,text,an=alignment,pos=(x,y),
+                                      fscx=sx,fscy=sy)
         else:
-            buckets.setdefault((e.style, e.name, e.row, e.margin_l,
-                                e.margin_r, e.margin_v), []).append(e)
+            # Candidate grouping guarantees identical static state. Reusing
+            # its tags also preserves underline, outline axes and other tags.
+            tags = "".join(OVERRIDE_RE.findall(chosen.text))
+            tags = POS_RE.sub("",tags)
+            body = "{"+tags+f"\\an{alignment}\\pos({x:g},{y:g})\\fscx{sx:g}\\fscy{sy:g}"+"}"+text
+        first = min(e.source_index for e in run)
+        replacements[first] = replace_event(chosen,source_index=first,
+            start=format_time(start),end=format_time(end),start_s=start,end_s=end,
+            text=body,effect="",layer="0" if animated else chosen.layer)
+        visible_map[first] = text
+        anchors[first] = list(zip(fragments,xs))
+        removed.update(e.source_index for e in run if e.source_index != first)
+        merged_count += len(run)-1
+        if measured:
+            font_spacing.merged += 1
+        return True
 
-    # Separate paint layers only when they actually compete at the same glyph
-    # position. A row with one differently painted character still needs all
-    # of its characters combined in their original spatial order.
-    partitioned: dict[tuple,list[Event]] = {}
-    for key,bucket in buckets.items():
-        by_x=sorted(bucket,key=lambda e:get_pos(e.text)[0])
-        overlapping_layers=any(
-            a.layer!=b.layer and
-            abs(get_pos(a.text)[0]-get_pos(b.text)[0]) <= .1*min(text_height(a),text_height(b)) and
-            min(a.end_s,b.end_s)>max(a.start_s,b.start_s)
-            for a,b in zip(by_x,by_x[1:]))
-        if overlapping_layers and key[:3] in (masked_rows or set()):
-            counts={layer:sum(e.layer==layer for e in bucket)
-                    for layer in {e.layer for e in bucket} if layer!="0"}
-            main_layer=max(counts,key=counts.get) if counts else None
-            for e in bucket:
-                layer=e.layer
-                if layer=="0" and main_layer is not None:
-                    pos=get_pos(e.text)
-                    if not any(peer.layer==main_layer and
-                               abs(get_pos(peer.text)[0]-pos[0])<=.1*min(text_height(e),text_height(peer)) and
-                               min(peer.end_s,e.end_s)>max(peer.start_s,e.start_s)
-                               for peer in bucket):
-                        layer=main_layer
-                partitioned.setdefault((*key,layer),[]).append(e)
-        else:
-            partitioned[key]=bucket
-    buckets=partitioned
-
-    removed = 0
-    anchors: dict[int, list[tuple[str,float]]] = {}
-    for bucket in buckets.values():
-        run: list[Event] = []
-
-        def flush() -> None:
-            nonlocal removed, run
-            if len(run) < 2 or (len(run) < 4 and not all(
-                    e.source_index in (animated_sources or set()) for e in run)):
-                passthrough.extend(run)
-                return
-            xs = [get_pos(e.text)[0] for e in run]
-            if len({round(x / run[0].unit) for x in xs}) != len(run):
-                passthrough.extend(run)
-                return
-            ordered = sorted(run, key=lambda e: get_pos(e.text)[0])
-            # ASS timestamps are quantized. Equal-time neighbours may occur in
-            # any source order; validate temporal progression in spatial order.
-            if not any(all(direction * (b.start_s-a.start_s) >= -0.011 and
-                               direction * (b.end_s-a.end_s) >= -0.011
-                               for a,b in zip(ordered,ordered[1:]))
-                       for direction in (1,-1)):
-                passthrough.extend(run)
-                return
-            start, end = min(e.start_s for e in run), max(e.end_s for e in run)
-            fragments = [visible_map[e.source_index] for e in ordered]
-            norm = lambda text: "".join(text.split())
-            # Prefer authored text. Geometry alone cannot distinguish a narrow
-            # word gap from a wide glyph, particularly without the actual font.
-            matches = []
-            for comment in events:
-                if (comment.kind == "Comment" and comment.style == ordered[0].style
-                        and abs(comment.start_s-start) <= .25
-                        and abs(comment.end_s-end) <= .25):
-                    _, words = simplify_text(comment.text)
-                    if norm(words) == norm("".join(fragments)):
-                        matches.append(words)
-            lyric = matches[0] if len(set(matches)) == 1 else None
-            if lyric is None:
-                blanks = set()
-                for key, positions in (space_map or {}).items():
-                    if (key[2:] == (ordered[0].style, ordered[0].name, ordered[0].row)
-                            and key[:2] == (format_time(start), format_time(end))):
-                        blanks.update(positions)
-                if blanks:
-                    pieces = [fragments[0]]
-                    for previous, current, text in zip(ordered, ordered[1:], fragments[1:]):
-                        if any(get_pos(previous.text)[0] < x < get_pos(current.text)[0]
-                               for x in blanks):
-                            pieces.append(" ")
-                        pieces.append(text)
-                    lyric = "".join(pieces)
-            measured = None
-            if lyric is None and font_spacing is not None:
-                measured = font_spacing.recover(ordered, fragments)
-                if measured is not None:
-                    lyric = measured[0]
-            if lyric is None:
-                # Keep spatial gaps exactly as positioned in the source instead
-                # of inventing spaces from approximate character widths. All
-                # fragments appear/disappear together, with one static copy each.
-                first = min(e.source_index for e in run)
-                for fragment, text in zip(ordered, fragments):
-                    state = fragment.state.copy()
-                    # Use the row's median scale so a glyph sampled during a
-                    # karaoke size pulse does not intrude into its neighbours.
-                    peers = [e for e in ordered
-                             if e.state.get("fn") == state.get("fn")
-                             and e.state.get("fs") == state.get("fs")]
-                    for tag in ("fscx", "fscy"):
-                        state[tag] = statistics.median(e.state.get(tag,100) for e in peers)
-                    x, y = get_pos(fragment.text)
-                    tags = (f"\\an{int(state.get('an',5))}\\pos({x:g},{y:g})"
-                            + r"\fn" + str(state.get("fn", "Arial"))
-                            + "".join(f"\\{tag}{state.get(tag, default):g}" for tag, default in
-                                      (("fs",20),("fscx",100),("fscy",100),("fsp",0),
-                                       ("b",0),("i",0),("frz",0)))
-                            + r"\1c&HFFFFFF&\3c&H000000&\1a&H00&\3a&H00&\bord2\shad0\blur0")
-                    frozen = replace(fragment, layer="0", effect="",
-                                     start=format_time(start), end=format_time(end),
-                                     start_s=start, end_s=end, text="{"+tags+"}"+text)
-                    passthrough.append(frozen)
-                    anchors[fragment.source_index] = [(text,x)]
-                anchors[first] = [(text,get_pos(e.text)[0])
-                                  for e,text in zip(ordered,fragments)]
-                return
-            # A missing word between paired punctuation means another timed
-            # fragment participates in the line. Preserve those events until
-            # their reading order can be established unambiguously.
-            if re.search(r"[¿¡]\s*[?!]", lyric):
-                split=next((i for i,e in enumerate(run)
-                            if visible_map[e.source_index] in {"¿","¡"}),0)
-                if split>=4:
-                    original=run
-                    run=original[:split]
-                    flush()
-                    run=original
-                    passthrough.extend(original[split:])
-                else:
-                    passthrough.extend(run)
-                return
-            chosen = min(run, key=lambda e: (abs(e.start_s-statistics.median(x.start_s for x in run)),
-                                             e.source_index))
-            state = chosen.state.copy()
-            y = statistics.median(get_pos(e.text)[1] for e in run)
-            x = (min(xs)+max(xs))/2
-            alignment = 5
-            if measured is not None:
-                _, x, state["fscx"], state["fscy"], alignment = measured
-                font_spacing.merged += 1
-            tags = (f"\\an{alignment}\\pos({x:g},{y:g})"
-                    + r"\fn" + str(state.get("fn", "Arial"))
-                    + f"\\fs{state.get('fs',20):g}"
-                    + f"\\fscx{state.get('fscx',100):g}\\fscy{state.get('fscy',100):g}"
-                    + r"\1c&HFFFFFF&\3c&H000000&\1a&H00&\3a&H00&\bord2\shad0")
-            start, end = min(e.start_s for e in run), max(e.end_s for e in run)
-            first = min(e.source_index for e in run)
-            anchors[first] = [(visible_map[e.source_index],get_pos(e.text)[0]) for e in ordered]
-            visible_map[first] = lyric
-            passthrough.append(replace(chosen, source_index=first, layer="0", effect="",
-                                       start=format_time(start), end=format_time(end),
-                                       start_s=start, end_s=end, text="{"+tags+"}"+lyric))
-            removed += len(run)-1
-
-        for e in sorted(bucket, key=lambda x: (x.start_s, x.source_index)):
-            if run:
-                prev = run[-1]
-                # The entire row is revealed within a short portion of its
-                # display time; each successive glyph has a matching end.
-                if (e.start_s-prev.start_s > .12 or
-                        abs(e.end_s-prev.end_s) > .12 or
-                        abs(e.duration-prev.duration) > .12 or
-                        abs(get_pos(e.text)[1]-get_pos(prev.text)[1]) > .15*text_height(e)):
-                    flush()
+    # Animated candidates are tried as complete sweeps before equal-time
+    # subsets, so a syllable is not prematurely assembled into a separate word.
+    sweeps: dict[tuple,list[Event]] = {}
+    for e in eligible:
+        if e.source_index in animated_sources:
+            sweeps.setdefault(base_key(e),[]).append(e)
+    candidates = []
+    for bucket in sweeps.values():
+        for direction in (1,-1):
+            run = []
+            for e in sorted(bucket,key=lambda e:(e.start_s,direction*get_pos(e.text)[0])):
+                if run and (direction*(get_pos(e.text)[0]-get_pos(run[-1].text)[0]) <= e.unit or
+                            e.end_s < run[-1].end_s-quantum or
+                            e.start_s >= min(p.end_s for p in run)-quantum or
+                            abs(get_pos(e.text)[1]-get_pos(run[0].text)[1]) >
+                            .15*min(text_height(e),text_height(run[0]))):
+                    candidates.append(run)
                     run = []
-            run.append(e)
-        if run:
-            flush()
-    return sorted(passthrough, key=lambda e: e.source_index), removed, anchors
+                run.append(e)
+            candidates.append(run)
+    for run in sorted(candidates,key=lambda run:-len(run)):
+        join(run,True)
+
+    simultaneous: dict[tuple,list[Event]] = {}
+    for e in eligible:
+        if e.source_index not in removed and e.source_index not in replacements:
+            key = (base_key(e),e.start,e.end,e.layer,state_key(e,{"pos"}))
+            simultaneous.setdefault(key,[]).append(e)
+    for run in simultaneous.values():
+        join(run,False)
+    return ([replacements.get(e.source_index,e) for e in events
+             if e.source_index not in removed],merged_count,duplicate_count,anchors)
 
 
 def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,str],
@@ -1999,13 +2030,6 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
                     abs(pos[1]-get_pos(base.text)[1]) > .15*text_height(base)):
                 continue
             glyphs = anchors[base.source_index]
-            if (e.name!=base.name and e.duration<=.5*base.duration and
-                    (e.state.get("1a",0)>=250 or
-                     str(e.state.get("fn","")).casefold()!=str(base.state.get("fn","")).casefold()) and
-                    min(x for _,x in glyphs)-text_height(base)<=pos[0]<=
-                    max(x for _,x in glyphs)+text_height(base)):
-                removed.add(e.source_index)
-                break
             for index in range(len(glyphs)):
                 text = ""
                 for last in range(index,min(len(glyphs),index+8)):
@@ -2022,99 +2046,6 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
             if e.source_index in removed:
                 break
     return [e for e in events if e.source_index not in removed],len(removed)
-
-
-def merge_static_fullwidth_runs(events: list[Event],
-                                visible_map: dict[int,str],
-                                font_spacing: FontSpacing | None = None) -> tuple[list[Event],int]:
-    """Join simultaneous East Asian glyphs using their measured font advances.
-
-    Only fullwidth letter fragments with identical styling and timing qualify.
-    Exact font advances verify placement before replacing individual glyphs.
-    If the font is unavailable, preserve the individual positions.
-    """
-    groups: dict[tuple,list[Event]] = {}
-    for e in events:
-        glyph = visible_map.get(e.source_index, "")
-        pos = get_pos(e.text)
-        if (e.kind != "Dialogue" or pos is None or not glyph or
-                any(unicodedata.category(c) != "Lo" or
-                    unicodedata.east_asian_width(c) not in ("W", "F") for c in glyph) or
-                e.text.count("{") != 1 or e.text.count("}") != 1 or
-                not e.text.endswith("}"+glyph) or
-                e.state.get("p",0) or inline_layout_key(e) or
-                abs(e.state.get("fsp",0)) > .001 or
-                any(abs(e.state.get(tag,0)) > .001
-                    for tag in ("frz","frx","fry","fax","fay"))):
-            continue
-        # The tag block must be identical apart from its position. This also
-        # keeps color, outline, alpha, font and scale changes separate.
-        tags = POS_RE.sub("", e.text.rsplit("}",1)[0])
-        key = (e.start,e.end,e.style,e.name,e.layer,e.effect,e.row,
-               e.margin_l,e.margin_r,e.margin_v,tags,
-               round(pos[1]/e.unit))
-        groups.setdefault(key,[]).append(e)
-
-    replacements: dict[int,Event] = {}
-    removed: set[int] = set()
-
-    def join(run: list[Event]) -> None:
-        if len(run) < 2 or sum(len(visible_map[e.source_index]) for e in run) < 3:
-            return
-        first = run[0]
-        if font_spacing is None:
-            return
-        # East Asian fonts can use proportional advances. Validate against
-        # the actual glyph widths; requiring uniform gaps rejects valid rows.
-        glyphs = [visible_map[e.source_index] for e in run]
-        fit = font_spacing.fit_fullwidth_run(run,glyphs)
-        text = "".join(glyphs)
-        alignment = None
-        if fit is None:
-            # Some Japanese captions contain authored phrase spaces. Use the
-            # same measured-space inference as other scripts, never erase gaps.
-            spaced = font_spacing.recover(run,glyphs)
-            if spaced is None:
-                return
-            text, x, scale, _, alignment = spaced
-        else:
-            x, scale = fit
-        y = statistics.median(get_pos(e.text)[1] for e in run)
-        # Reuse the original static tags, so outline, alpha, font weight and
-        # other non-layout styling survive unchanged.
-        tags = first.text.split("}",1)[0][1:]
-        tags = POS_RE.sub(lambda _: f"\\pos({x:g},{y:g})", tags)
-        if alignment is not None:
-            tags += f"\\an{alignment}"
-        scale_tag = re.compile(r"\\fscx"+NUM, re.I)
-        if scale_tag.search(tags):
-            tags = scale_tag.sub(lambda _: f"\\fscx{scale:g}", tags)
-        else:
-            tags += f"\\fscx{scale:g}"
-        replacements[first.source_index] = replace(first,
-                                                   text="{"+tags+"}"+text)
-        visible_map[first.source_index] = text
-        removed.update(e.source_index for e in run[1:])
-        font_spacing.merged += 1
-
-    for group in groups.values():
-        ordered = sorted(group,key=lambda e:get_pos(e.text)[0])
-        run = [ordered[0]]
-        for e in ordered[1:]:
-            prev = run[-1]
-            state = prev.state
-            nominal = state.get("fs",0)*state.get("fscx",100)/100
-            x_gap = get_pos(e.text)[0]-get_pos(prev.text)[0]
-            max_fragment = max(len(visible_map[prev.source_index]),len(visible_map[e.source_index]))
-            if (nominal > 0 and 0 < x_gap <= 1.4*nominal*max_fragment and
-                    abs(get_pos(e.text)[1]-get_pos(prev.text)[1]) <= e.unit):
-                run.append(e)
-            else:
-                join(run)
-                run = [e]
-        join(run)
-    return ([replacements.get(e.source_index,e) for e in events
-             if e.source_index not in removed],len(removed))
 
 
 def static_object_key(e: Event, styles: dict) -> tuple | None:
@@ -2193,7 +2124,7 @@ def merge_static_timed_copies(events: list[Event], styles: dict) -> tuple[list[E
                     for peer in layers[e.layer])
             if can_join:
                 members.add(e.source_index)
-                current = replace(current, end=e.end, end_s=e.end_s,
+                current = replace_event(current, end=e.end, end_s=e.end_s,
                                   source_index=min(members))
                 removed += 1
             else:
@@ -2229,12 +2160,15 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
             e = parse_dialogue(line,idx,event_fields)
             if e is not None:
                 e.unit = unit
+                e.defaults = styles.get(e.style, DEFAULT_STATE)
+                e.styles = styles
                 e.state = effective_state(e.text,styles.get(e.style,DEFAULT_STATE),styles)
                 parsed_by_line[idx] = e
     animated_sources = {idx for idx,e in parsed_by_line.items()
                         if re.search(r"\\(?:t\s*\(|[kK](?:f|o)?\d|fad(?:e)?\s*\(|move\s*\()", e.text)}
     simplified_events: list[Event] = []
     vector_events: list[Event] = []
+    backdrops: list[tuple[Event,list]] = []
     visible_map: dict[int, str] = {}
     space_map: dict[tuple, set[float]] = {}
     dropped_drawings = 0
@@ -2250,13 +2184,30 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
             simplified_events.append(e)
             continue
         original_dialogues += 1
+        if level == 1 and re.search(r"\\p[1-9]\d*(?![\dA-Za-z])",e.text,re.I):
+            # A cheap opaque rectangle may hide text baked into the video.
+            # Keep it as a candidate until we know a retained caption actually
+            # sits above it. Decorative/curved/translucent drawings still go.
+            drawing,words,chars = simplify_visual_text(
+                e.text,max_blur,e.duration,e.defaults,styles,2)
+            candidate = replace_event(e,text=drawing,effect="")
+            geometry = coverage_geometry(candidate,scaled_borders)
+            if chars and not words and geometry is not None and geometry[2]:
+                points = geometry[0]
+                xs,ys = {x for x,y in points},{y for x,y in points}
+                corners = {(x,y) for x in xs for y in ys}
+                if (len(xs)==len(ys)==2 and len(points) in (4,5) and
+                        set(points)==corners and
+                        all(a==c or b==d for (a,b),(c,d) in
+                            zip(points,points[1:]+points[:1]))):
+                    backdrops.append((candidate,points))
         new_text, visible, drawing_chars = simplify_visual_text(
             e.text, max_blur, e.duration, styles.get(e.style,DEFAULT_STATE), styles, level)
         e.state = effective_state(new_text,styles.get(e.style,DEFAULT_STATE),styles)
         visible_map[idx] = visible
         if drawing_chars:
             if max_drawing_chars <= 0 or drawing_chars <= max_drawing_chars:
-                vector_events.append(replace(e, text=new_text, effect=""))
+                vector_events.append(replace_event(e, text=new_text, effect=""))
             else:
                 dropped_drawings += 1
             continue
@@ -2268,11 +2219,11 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
                     not re.search(r"\\p\d", e.text, re.I)):
                 key = (e.start, e.end, e.style, e.name, e.row)
                 space_map.setdefault(key, set()).add(round(pos[0] / e.unit, 1) * e.unit)
-                blank_events.append(replace(e, text=new_text))
+                blank_events.append(replace_event(e, text=new_text))
             # A dialogue event with no remaining text is generally a vector drawing/effect.
             dropped_drawings += 1
             continue
-        simplified_events.append(replace(e, text=new_text, effect=""))
+        simplified_events.append(replace_event(e, text=new_text, effect=""))
 
     assign_layout(simplified_events + blank_events, visible_map)
     space_map.clear()
@@ -2281,17 +2232,16 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         space_map.setdefault((e.start,e.end,e.style,e.name,e.row),set()).add(pos[0])
 
     aggressive_copies = masked_decorations = 0
-    masked_rows: set[tuple] = set()
     if level == 1:
-        simplified_events, masked_decorations, masked_rows = remove_masked_glyph_effects(
-            simplified_events, visible_map)
+        simplified_events, masked_decorations = remove_masked_glyph_effects(
+            simplified_events, visible_map, font_spacing)
         simplified_events, aggressive_copies = flatten_aggressive_text_copies(
             simplified_events, visible_map)
 
     sign_copies_removed = 0
     if level == 1:
         simplified_events, sign_copies_removed = reduce_static_sign_copies(
-            simplified_events, visible_map, parsed_by_line)
+            simplified_events, visible_map)
 
     # Reconstruct each glyph's complete lifetime before trying to assemble rows.
     simplified_events, phase_merged = coalesce_lyric_phases(
@@ -2315,10 +2265,7 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
 
     # Work in chronological/source order. Effect-layer dedup is safe regardless of adjacency.
     simplified_events, deduped = deduplicate_layers(simplified_events, visible_map)
-    simplified_events, lyric_merged = merge_timed_lyrics(
-        simplified_events, visible_map, space_map, level)
-    for e in simplified_events:
-        e.state = effective_state(e.text, styles.get(e.style, DEFAULT_STATE), styles)
+    lyric_merged = 0
     overlap_removed = full_copies_removed = 0
     if level == 1:
         simplified_events, overlap_removed = collapse_matching_lyric_layers(
@@ -2331,23 +2278,19 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         max_gap=short_gap,
     )
     aggressive_sequences = 0
-    staggered_rows = overlaid_letters = covered_fragments = fullwidth_merged = 0
+    # Legacy JSON counters remain zero for compatibility with older reports.
+    staggered_rows = fullwidth_merged = progressive_rows = 0
+    overlaid_letters = covered_fragments = 0
     if level == 1:
         simplified_events, aggressive_sequences = flatten_aggressive_text_sequences(
             simplified_events, visible_map, styles, animated_sources)
         simplified_events, overlaid_letters = remove_letters_over_full_lines(
             simplified_events, visible_map)
-        simplified_events, staggered_rows, row_anchors = merge_staggered_text_rows(
-            simplified_events, visible_map, masked_rows, space_map, font_spacing,
-            animated_sources)
+        simplified_events, lyric_merged, row_duplicates, row_anchors = reconstruct_text_rows(
+            simplified_events, visible_map, space_map, font_spacing, animated_sources)
+        deduped += row_duplicates
         simplified_events, covered_fragments = remove_covered_fragment_effects(
             simplified_events, visible_map, row_anchors, animated_sources)
-        # Earlier passes may have frozen a different point of an animation;
-        # fit the row against its new static tags, not the source phase state.
-        for e in simplified_events:
-            e.state = effective_state(e.text, styles.get(e.style,DEFAULT_STATE), styles)
-        simplified_events, fullwidth_merged = merge_static_fullwidth_runs(
-            simplified_events, visible_map, font_spacing)
     covered_vectors = 0
     vector_copies_removed = vector_glows_removed = vector_frames_removed = excess_vectors = 0
     if level == 2:
@@ -2359,6 +2302,39 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         vector_events, covered_vectors = remove_fully_covered_vectors(vector_events, scaled_borders)
         vector_events, excess_vectors = cap_vector_cues(vector_events, max_vectors_per_cue)
         simplified_events = sorted(simplified_events + vector_events, key=lambda e: e.source_index)
+
+    backdrops_retained = 0
+    if level == 1:
+        captions = [(e,get_pos(e.text)) for e in simplified_events
+                    if e.kind=="Dialogue" and visible_map.get(e.source_index) and
+                    not e.state.get("p",0) and get_pos(e.text) is not None and
+                    e.layer.lstrip("-").isdigit()]
+        raised_layers = {}
+        for backdrop,points in backdrops:
+            order = (int(backdrop.layer),backdrop.source_index)
+            pad = .5*backdrop.unit
+            covered_captions = []
+            for caption,pos in captions:
+                source = parsed_by_line.get(caption.source_index,caption)
+                if (not source.layer.lstrip("-").isdigit() or
+                        (int(source.layer),source.source_index)<=order or
+                        backdrop.start_s > caption.start_s+.001 or
+                        backdrop.end_s < caption.end_s-.001):
+                    continue
+                if polygon_covers_box(points,(pos[0]-pad,pos[1]-pad,pos[0]+pad,pos[1]+pad)):
+                    covered_captions.append(caption)
+            if covered_captions:
+                vector_events.append(backdrop)
+                backdrops_retained += 1
+                dropped_drawings -= 1
+                # Reconstructed lyrics may have been moved to layer zero.
+                # Restore their order above any backdrop that now survives.
+                for caption in covered_captions:
+                    raised_layers[caption.source_index] = max(
+                        raised_layers.get(caption.source_index,int(caption.layer)),int(backdrop.layer)+1)
+        simplified_events = [replace_event(e,layer=str(raised_layers[e.source_index]))
+                             if e.source_index in raised_layers else e for e in simplified_events]
+        simplified_events = sorted(simplified_events+vector_events,key=lambda e:e.source_index)
 
     static_merged = 0
     if level == 2:
@@ -2372,7 +2348,7 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         return {key: 0 for key in ("original", "output", "deduped", "lyric_merged",
                 "merged", "dropped", "overlap_removed", "full_copies_removed", "phase_merged",
                 "text_copies_removed", "vector_copies_removed", "vector_glows_removed",
-                "vector_frames_removed", "vector_output", "excess_vectors", "static_merged", "covered_vectors", "tiles_joined", "aggressive_copies", "aggressive_sequences", "staggered_rows", "overlaid_letters", "covered_fragments", "fullwidth_merged", "masked_decorations")}
+                "vector_frames_removed", "vector_output", "excess_vectors", "static_merged", "covered_vectors", "tiles_joined", "aggressive_copies", "aggressive_sequences", "staggered_rows", "overlaid_letters", "covered_fragments", "fullwidth_merged", "progressive_rows", "masked_decorations", "backdrops_retained")}
 
     first_event_line = event_line_indices[0]
     last_event_line = event_line_indices[-1]
@@ -2393,6 +2369,7 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
     output_dialogues = sum(1 for e in simplified_events if e.kind == "Dialogue")
     return {
         "original": original_dialogues,
+        "backdrops_retained": backdrops_retained,
         "static_merged": static_merged,
         "covered_vectors": covered_vectors,
         "tiles_joined": tiles_joined,
@@ -2401,6 +2378,7 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         "aggressive_sequences": aggressive_sequences,
         "staggered_rows": staggered_rows,
         "fullwidth_merged": fullwidth_merged,
+        "progressive_rows": progressive_rows,
         "overlaid_letters": overlaid_letters,
         "covered_fragments": covered_fragments,
         "phase_merged": phase_merged,
@@ -2545,6 +2523,7 @@ def main() -> int:
                 f"frame pieces merged: {stats['merged']}, "
                 f"identical timed copies merged: {stats['static_merged']}, "
                 f"duplicate sign text: {stats['text_copies_removed']}, "
+                f"masked texture copies removed: {stats['masked_decorations']}, "
                 f"identical text strips joined: {stats['tiles_joined']}, "
                 f"aggressive text copies flattened: {stats['aggressive_copies']}, "
                 f"text effect sequences frozen: {stats['aggressive_sequences']}, "
@@ -2553,6 +2532,7 @@ def main() -> int:
                 f"fully covered drawings: {stats['covered_vectors']}, "
                 f"drawing animation frames: {stats['vector_frames_removed']}, "
                 f"vectors retained: {stats['vector_output']}, "
+                f"caption backdrops retained: {stats['backdrops_retained']}, "
                 f"excess vector details removed: {stats['excess_vectors']}, "
                 f"drawings/effects dropped: {stats['dropped']})"
             )
