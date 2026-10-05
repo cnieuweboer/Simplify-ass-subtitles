@@ -31,7 +31,7 @@ from itertools import islice
 from pathlib import Path
 from typing import Iterable
 
-__version__ = "2026.10.05.46"
+__version__ = "2026.10.05.47"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -3058,11 +3058,123 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
     return output,merged_count,duplicate_count,list(row_evidence.values())
 
 
+def match_translucent_glyph_particles(events: list[Event], row_evidence: list[TextRow],
+                                      words: dict[int,str],
+                                      animated_sources: set[int]) -> set[int]:
+    """Prove dense, complete particle phases behind an opaque source row.
+
+    Match original movement endpoints to authored glyph anchors, without font
+    substitution or sampled geometry. Each repeated phase must cover every
+    glyph exactly once; incomplete or multiply owned families remain intact.
+    This matcher returns membership only and never changes foreground rows.
+    """
+    if not events or not row_evidence:
+        return set()
+    buckets = {}
+    identity = lambda e: (e.style,e.name,e.margin_l,e.margin_r,e.margin_v)
+    geometry = {key for key,_ in text_layout_key(row_evidence[0].base)}
+    varying = {"fscx","fscy","frz","frx","fry"}
+    paint = {"alpha","1a","2a","3a","4a","c","1c","2c","3c","4c","blur","be"}
+    for e in events:
+        word = words.get(e.source_index,"")
+        if (e.kind != "Dialogue" or e.source_index not in animated_sources or
+                len(word) != 1 or word.isspace() or e.duration <= 0 or
+                not e.layer.lstrip('-').isdigit() or inline_layout_key(e)):
+            continue
+        tags = [item for block in OVERRIDE_RE.findall(e.text)
+                for item in tokenize_override(block)]
+        moves = [value for tag,value in tags if tag == "move"]
+        if (len(moves) != 1 or any(tag not in geometry|paint|{"move","fad","t"}
+                                   for tag,value in tags)):
+            continue
+        try:
+            move = tuple(float(v.strip()) for v in moves[0][1:-1].split(','))
+        except ValueError:
+            continue
+        if (len(move) not in (4,6) or not all(math.isfinite(v) for v in move) or
+                len(move) == 6 and not 0 <= move[4] <= move[5] <= 1000*e.duration):
+            continue
+        state = effective_state(e.text,e.defaults,e.styles)
+        final = state.copy()
+        states = [state]
+        safe = True
+        for tag,value in tags:
+            if tag != "t":
+                continue
+            for name,argument in tokenize_override(value[1:-1]):
+                if name not in varying|paint:
+                    safe = False
+                    break
+                apply_tag(final,name,argument,e.styles,e.defaults)
+                states.append(final.copy())
+        if (not safe or state.get("blur",0) <= 0 or
+                any(min(s.get(k,0) for k in ("1a","3a","4a")) < 128 for s in states)):
+            continue
+        buckets.setdefault(identity(e),[]).append((e,word,move,state,states))
+    for key,group in buckets.items():
+        group.sort(key=lambda item:item[0].start_s)
+        buckets[key] = ([item[0].start_s for item in group],group)
+
+    families = []
+    for row in row_evidence:
+        if row.virtual or len(row.pieces) < 4:
+            continue
+        first = row.base
+        foreground = [piece for piece,word,pos in row.pieces]
+        if (first.duration <= 0 or any(len(word) != 1 or word.isspace() or
+                piece.start != first.start or piece.end != first.end or
+                piece.state.get("1a",0) != 0 or
+                not piece.layer.lstrip('-').isdigit() or
+                piece.source_index in animated_sources for piece,word,pos in row.pieces)):
+            continue
+        index = buckets.get(identity(first))
+        if index is None:
+            continue
+        starts,group = index
+        height = min(text_height(piece) for piece in foreground)
+        radius = .25*height
+        foreground_layer = min(int(piece.layer) for piece in foreground)
+        phases = {}
+        for e,word,move,state,states in group[
+                bisect_left(starts,first.start_s-.25*first.duration):
+                bisect_right(starts,first.end_s+.25*first.duration)]:
+            if (e.duration > .25*first.duration or
+                    e.end_s > first.end_s+.25*first.duration or
+                    int(e.layer) >= foreground_layer):
+                continue
+            matches = []
+            for glyph,(piece,text,pos) in enumerate(row.pieces):
+                if (word != text or math.dist(move[:2],pos) > radius or
+                        math.dist(move[2:4],pos) > radius or
+                        any((str(state.get(k,"")).casefold() != str(piece.state.get(k,"")).casefold()
+                             if k == "fn" else state.get(k) != piece.state.get(k))
+                            for k in geometry) or
+                        any(not .5*piece.state.get(k,100) <= s.get(k,100) <=
+                                2*piece.state.get(k,100)
+                            for s in states for k in ("fscx","fscy"))):
+                    continue
+                matches.append(glyph)
+            if len(matches) == 1:
+                phases.setdefault((e.layer,e.start,e.end),[]).append((matches[0],e))
+        if (len(phases) < 3 or any(len(phase) != len(row.pieces) or
+                len({glyph for glyph,e in phase}) != len(row.pieces) for phase in phases.values())):
+            continue
+        peers = [e for phase in phases.values() for glyph,e in phase]
+        if max(e.end_s for e in peers)-min(e.start_s for e in peers) < .5*first.duration:
+            continue
+        families.append({e.source_index for e in peers})
+    owners = {}
+    for family in families:
+        for index in family:
+            owners[index] = owners.get(index,0)+1
+    return set().union(*(family for family in families if all(owners[index] == 1 for index in family)))
+
+
 def remove_source_fragment_effects(events: list[Event], row_evidence: list[TextRow],
                                    words: dict[int,str],
                                    positions: dict[int,tuple[float,float] | None],
                                    animated_sources: set[int] | None = None) -> tuple[list[Event],int]:
-    """Remove effects proven by original layered rows and visibility phases.
+    """Remove effects proven by original source rows and visibility phases.
 
     Use source text and anchors before freezing or coalescing glyph lifetimes.
     Confirm stable rows and record their foreground paint in the supplied row
@@ -3074,7 +3186,7 @@ def remove_source_fragment_effects(events: list[Event], row_evidence: list[TextR
     for e in parsed.values():
         if positions.get(e.source_index) is not None and words.get(e.source_index):
             indexed.setdefault((e.style,e.name,e.margin_l,e.margin_r,e.margin_v),[]).append(e)
-    removed = set()
+    removed = match_translucent_glyph_particles(events,row_evidence,words,animated_sources)
     for row in row_evidence:
         if len({paint_row[0].layer for paint_row in row.paint_rows}) < 2:
             continue
