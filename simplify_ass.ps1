@@ -2,6 +2,8 @@
 # Put the current simplify_ass.py beside this script, or supply -Simplifier.
 # Level 1 uses embedded fonts; install once: python -m pip install Pillow fonttools
 # Use -SimplificationLevel 2 to retain static sign text and vector drawings.
+# Default: add tracks above 50,000 bytes with more than 10% fewer events.
+# Use -ProcessAllTracks to bypass both thresholds; -ReplaceOriginals to replace.
 param(
     [string] $InputFolder,
     [string] $OutputFolder,
@@ -10,10 +12,15 @@ param(
     [string] $Python = 'python',
     [string] $MkvToolNixFolder,
     [switch] $Recurse,
-    [switch] $AddSimplifiedSubtitles
+    [switch] $AddSimplifiedSubtitles = $true,
+    [switch] $ReplaceOriginals,
+    [switch] $ProcessAllTracks,
+    [ValidateRange(0, 2147483647)] [long] $MinimumSubtitleBytes = 50000,
+    [ValidateRange(0, 100)] [double] $MinimumEventReductionPercent = 10
 )
 
 $ErrorActionPreference = 'Stop'
+if ($ReplaceOriginals) { $AddSimplifiedSubtitles = $false }
 if (-not $InputFolder) { $InputFolder = (Get-Location).Path }
 if (-not $Simplifier) {
     $Simplifier = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'simplify_ass.py'
@@ -53,12 +60,6 @@ $mkvextract = Resolve-Executable 'mkvextract'
 $pythonCmd = Get-Command $Python -ErrorAction SilentlyContinue
 if (-not $pythonCmd) { throw "Cannot find Python command: $Python" }
 $pythonPath = $pythonCmd.Source
-if ($SimplificationLevel -eq 1) {
-    & $pythonPath -c "import PIL.ImageFont; import fontTools.ttLib"
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Font spacing needs Pillow and fonttools in this Python installation. Run: python -m pip install Pillow fonttools'
-    }
-}
 New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
 
 $files = @(Get-ChildItem -LiteralPath $inputRoot -Filter '*.mkv' -File -Recurse:$Recurse |
@@ -66,6 +67,7 @@ $files = @(Get-ChildItem -LiteralPath $inputRoot -Filter '*.mkv' -File -Recurse:
 if (-not $files.Count) { Write-Host 'No MKV files found.'; return }
 
 $failures = 0
+$fontDependenciesChecked = $false
 foreach ($file in $files) {
     $relative = $file.FullName.Substring($inputRoot.Length).TrimStart('\', '/')
     $destination = Join-Path $outputRoot $relative
@@ -91,6 +93,35 @@ foreach ($file in $files) {
             Copy-Item -LiteralPath $file.FullName -Destination $destination -ErrorAction Stop
             Write-Host "  No ASS/SSA tracks; copied unchanged."
             continue
+        }
+
+        $candidates = @()
+        foreach ($track in $assTracks) {
+            $ext = if ($track.properties.codec_id -eq 'S_TEXT/SSA') { '.ssa' } else { '.ass' }
+            $extracted = Join-Path $work ("track-$($track.id)" + $ext)
+            & $mkvextract $file.FullName tracks ("$($track.id):$extracted")
+            Check-Exit "extract track $($track.id)"
+            if (-not (Test-Path -LiteralPath $extracted -PathType Leaf)) { throw "Track $($track.id) was not extracted." }
+            $size = (Get-Item -LiteralPath $extracted).Length
+            if (-not $ProcessAllTracks -and $size -le $MinimumSubtitleBytes) {
+                Write-Host "  Track $($track.id): skipped size threshold ($size bytes; requires more than $MinimumSubtitleBytes)."
+                continue
+            }
+            $simple = Join-Path $work ("track-$($track.id).simple" + $ext)
+            $candidates += [pscustomobject]@{ Original = $track; Input = $extracted; File = $simple }
+        }
+        if (-not $candidates.Count) {
+            Copy-Item -LiteralPath $file.FullName -Destination $destination -ErrorAction Stop
+            Write-Host '  No tracks above size threshold; copied unchanged.'
+            continue
+        }
+
+        if ($SimplificationLevel -eq 1 -and -not $fontDependenciesChecked) {
+            & $pythonPath -c "import PIL.ImageFont; import fontTools.ttLib"
+            if ($LASTEXITCODE -ne 0) {
+                throw 'Font spacing needs Pillow and fonttools in this Python installation. Run: python -m pip install Pillow fonttools'
+            }
+            $fontDependenciesChecked = $true
         }
 
         # Extract fonts once per MKV using the already-resolved MKVToolNix
@@ -133,32 +164,53 @@ foreach ($file in $files) {
         $replacements = @()
         $pythonArgs = @($simplifierPath, '--level', [string]$SimplificationLevel)
         if ($SimplificationLevel -eq 1) { $pythonArgs += @('--fonts-dir', $fontsFolder) }
-        foreach ($track in $assTracks) {
-            $ext = if ($track.properties.codec_id -eq 'S_TEXT/SSA') { '.ssa' } else { '.ass' }
-            $extracted = Join-Path $work ("track-$($track.id)" + $ext)
-            & $mkvextract $file.FullName tracks ("$($track.id):$extracted")
-            Check-Exit "extract track $($track.id)"
-            if (-not (Test-Path -LiteralPath $extracted -PathType Leaf)) { throw "Track $($track.id) was not extracted." }
-
-            $pythonArgs += $extracted
-            $simple = Join-Path $work ("track-$($track.id).simple" + $ext)
-            $replacements += [pscustomobject]@{ Original = $track; File = $simple }
-        }
+        $statsPath = Join-Path $work 'simplification-stats.json'
+        if (-not $ProcessAllTracks) { $pythonArgs += @('--stats-json', $statsPath) }
+        $pythonArgs += @($candidates | ForEach-Object { $_.Input })
 
         # One Python process reuses the font index across every subtitle track.
         & $pythonPath @pythonArgs
         Check-Exit 'simplify subtitle tracks'
-        foreach ($replacement in $replacements) {
-            if (-not (Test-Path -LiteralPath $replacement.File -PathType Leaf)) {
-                throw "Missing simplified track: $($replacement.File)"
+        $statsByInput = @{}
+        if (-not $ProcessAllTracks) {
+            $statsReport = Get-Content -LiteralPath $statsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach ($record in @($statsReport.tracks)) {
+                if ($record.error -or $null -eq $record.stats) { throw 'Simplifier returned failed or missing event statistics.' }
+                $statsByInput[[IO.Path]::GetFullPath([string]$record.input)] = $record.stats
             }
         }
+        foreach ($candidate in $candidates) {
+            if (-not (Test-Path -LiteralPath $candidate.File -PathType Leaf)) {
+                throw "Missing simplified track: $($candidate.File)"
+            }
+            if (-not $ProcessAllTracks) {
+                $stats = $statsByInput[[IO.Path]::GetFullPath($candidate.Input)]
+                if ($null -eq $stats -or $null -eq $stats.original -or $null -eq $stats.output -or
+                    [long]$stats.original -lt 0 -or [long]$stats.output -lt 0) {
+                    throw "Missing or invalid event counts for track $($candidate.Original.id)."
+                }
+                $reduction = if ([long]$stats.original -gt 0) {
+                    100.0 * ([long]$stats.original - [long]$stats.output) / [long]$stats.original
+                } else { 0.0 }
+                if ($reduction -le $MinimumEventReductionPercent) {
+                    Write-Host ("  Track {0}: skipped reduction threshold ({1:N1}% fewer events; requires more than {2}%)." -f
+                        $candidate.Original.id, $reduction, $MinimumEventReductionPercent)
+                    continue
+                }
+            }
+            $replacements += $candidate
+        }
+        if (-not $replacements.Count) {
+            Copy-Item -LiteralPath $file.FullName -Destination $destination -ErrorAction Stop
+            Write-Host '  No tracks passed the reduction threshold; copied unchanged.'
+            continue
+        }
 
-        $ids = ($assTracks | ForEach-Object { $_.id }) -join ','
+        $ids = ($replacements | ForEach-Object { $_.Original.id }) -join ','
         $mergeArgs = [System.Collections.Generic.List[string]]::new()
         $mergeArgs.Add('-o'); $mergeArgs.Add($partial)
         if (-not $AddSimplifiedSubtitles) {
-            if (@($info.tracks | Where-Object { $_.type -eq 'subtitles' }).Count -eq $assTracks.Count) {
+            if (@($info.tracks | Where-Object { $_.type -eq 'subtitles' }).Count -eq $replacements.Count) {
                 $mergeArgs.Add('--no-subtitles')
             } else {
                 $mergeArgs.Add('--subtitle-tracks'); $mergeArgs.Add('!' + $ids)
@@ -216,13 +268,13 @@ foreach ($file in $files) {
         $outputInfo = ((& $mkvmerge -J $partial) -join "`n" | ConvertFrom-Json)
         Check-Exit 'output validation'
         $expectedTracks = @($info.tracks).Count
-        if ($AddSimplifiedSubtitles) { $expectedTracks += $assTracks.Count }
+        if ($AddSimplifiedSubtitles) { $expectedTracks += $replacements.Count }
         if (@($outputInfo.tracks).Count -ne $expectedTracks) { throw 'Output track count differs from expected count.' }
         Move-Item -LiteralPath $partial -Destination $destination -ErrorAction Stop
         if ($AddSimplifiedSubtitles) {
-            Write-Host "  Saved: $destination ($($assTracks.Count) simplified track(s) added)"
+            Write-Host "  Saved: $destination ($($replacements.Count) simplified track(s) added)"
         } else {
-            Write-Host "  Saved: $destination ($($assTracks.Count) ASS/SSA track(s) simplified)"
+            Write-Host "  Saved: $destination ($($replacements.Count) ASS/SSA track(s) simplified)"
         }
     } catch {
         $failures++
