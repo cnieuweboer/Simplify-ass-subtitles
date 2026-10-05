@@ -24,12 +24,14 @@ import math
 import logging
 import re
 import statistics
+import sys
 import unicodedata
 from dataclasses import dataclass, replace as dataclass_replace, field
 from pathlib import Path
 from typing import Iterable
 
-__version__ = "2026.10.05.26"
+__version__ = "2026.10.05.31"
+GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
 class _FontTimestampFilter(logging.Filter):
@@ -490,9 +492,18 @@ def sample_transform_state(base: dict, transforms: list, at: float,
 
 
 def select_static_state(base: dict, transforms: list, boundaries: set[float],
-                        styles: dict, default: dict) -> dict:
-    """Choose the same visible, settled, stable interval for text and drawings."""
-    if not transforms:
+                        styles: dict, default: dict,
+                        paint_events: Iterable[Event] | None = None,
+                        opaque_spans: list[tuple[float,float]] | None = None) -> dict:
+    """Keep settled geometry and choose colours by their total visible time.
+
+    Repeated colour holds add together across animation intervals. Event
+    copies use compositing order, so simultaneous backing layers do not get
+    duplicate votes. Colour ramps retain a representative interval sample.
+    """
+    if not transforms and paint_events is None:
+        if opaque_spans is not None and base.get('1a',0) == 0 and boundaries:
+            opaque_spans.append((min(boundaries),max(boundaries)))
         return base
     geometry = ("pos", "org", "fs", "fscx", "fscy", "fsp", "frz",
                 "frx", "fry", "fax", "fay", "clip", "iclip")
@@ -503,6 +514,7 @@ def select_static_state(base: dict, transforms: list, boundaries: set[float],
                            for a,b,_,changes in transforms]
     times = sorted(boundaries)
     candidates = []
+    paint_samples = []
     for start, end in zip(times,times[1:]):
         at = (start+end)/2
         state = sample_transform_state(base,transforms,at,styles,default)
@@ -525,11 +537,64 @@ def select_static_state(base: dict, transforms: list, boundaries: set[float],
         # unused shadow channel remains opaque. Prefer the visible fill too.
         strength = 255 - state.get("1a",0)
         candidates.append(((visible, settled, stable, strength > 16, end-start, strength),state))
-    return max(candidates,key=lambda item:item[0])[1] if candidates else base
+        paint_samples.append((start,end,state,(0,len(paint_samples))))
+        if opaque_spans is not None and state.get('1a',0) == 0:
+            if opaque_spans and abs(opaque_spans[-1][1]-start) < 1e-6:
+                opaque_spans[-1] = (opaque_spans[-1][0],end)
+            else:
+                opaque_spans.append((start,end))
+    chosen = (max(candidates,key=lambda item:item[0])[1] if candidates else base).copy()
+    if paint_events is None and not any(
+            name in {'c','1c','3c','4c','r'}
+            for _,_,_,changes in transforms for name,_ in changes):
+        return chosen
+    if paint_events is not None:
+        paint_samples = [(e.start_s,e.end_s,e.state,
+                          (int(e.layer) if e.layer.lstrip('-').isdigit() else 0,e.source_index))
+                         for e in paint_events if e.end_s > e.start_s]
+    # Count each channel only when it can paint visible pixels. Exact repeated
+    # colours accumulate dwell time; a short highlight cannot replace a longer
+    # base just because it was first, topmost, or present at the cue midpoint.
+    if paint_events is None:
+        spans = [(start,end,[(state,order)]) for start,end,state,order in paint_samples]
+    else:
+        times = sorted({t for start,end,_,_ in paint_samples for t in (start,end)})
+        spans = [(start,end,[(state,order) for a,b,state,order in paint_samples
+                            if a <= (start+end)/2 < b])
+                 for start,end in zip(times,times[1:])]
+    dwell = {channel:{} for channel in (1,3,4)}
+    for start,end,active in spans:
+        active = [(state,order) for state,order in active if
+                  abs(state.get('fscx',100)) > .01 and abs(state.get('fscy',100)) > .01]
+        for channel in dwell:
+            eligible = [(state,order) for state,order in active
+                        if state.get(f'{channel}a',0) < 254 and
+                        re.fullmatch(r'[0-9A-Fa-f]{6}',str(state.get(f'{channel}c',''))) and
+                        (channel == 1 or channel == 3 and
+                         max(abs(state.get(k,state.get('bord',0))) for k in ('xbord','ybord')) > 0 or
+                         channel == 4 and
+                         max(abs(state.get(k,state.get('shad',0))) for k in ('xshad','yshad')) > 0)]
+            remaining = 1.0
+            for state,_ in sorted(eligible,key=lambda item:item[1],reverse=True):
+                color = state[f'{channel}c'].upper()
+                opacity = min(1.0,max(0.0,(255-state.get(f'{channel}a',0))/255))
+                dwell[channel][color] = (dwell[channel].get(color,0)+
+                                         (end-start)*remaining*opacity)
+                remaining *= 1-opacity
+                if remaining <= 1e-9:
+                    break
+    for channel,colors in dwell.items():
+        if colors:
+            key = f'{channel}c'
+            winner = max(colors,key=colors.get)
+            if colors.get(chosen.get(key),-1) < colors[winner]-1e-6:
+                chosen[key] = winner
+    return chosen
 
 
 def freeze_block(block: str, duration: float, initial: dict, default: dict,
-                 styles: dict, max_blur: float) -> tuple[str, dict]:
+                 styles: dict, max_blur: float,
+                 opaque_spans: list[tuple[float,float]] | None = None) -> tuple[str, dict]:
     """Choose the longest visible stable interval, then resolve all its tags."""
     tokens = tokenize_override(block)
     transforms = []
@@ -572,7 +637,8 @@ def freeze_block(block: str, duration: float, initial: dict, default: dict,
             apply_tag(base, name, value, styles, default)
             if name == "r":
                 reset = value
-    state = select_static_state(base,transforms,boundaries,styles,default)
+    state = select_static_state(base,transforms,boundaries,styles,default,
+                                opaque_spans=opaque_spans)
     for name in ("blur","be"):
         if name in state:
             state[name] = min(max_blur,max(0,state[name]))
@@ -581,8 +647,19 @@ def freeze_block(block: str, duration: float, initial: dict, default: dict,
     reference = styles.get(reset, default) if reset else (default if reset is not None else initial)
     text = ("\\r" + reset) if reset is not None else ""
     # Keep state dependencies in insertion order, particularly bord/xbord.
+    # Uniform border/shadow tags clear earlier axis overrides even when the
+    # uniform value already equals the style default.
+    forced = {k for k in ("bord","shad") if reset is None and k in state and
+              any(axis+k in initial and axis+k not in state for axis in "xy")}
+    event_level = {"an","pos","org","clip","iclip","q","p","pbo"}
+    # Emitting a uniform tag also clears axes that are intentionally restored
+    # later in this block, even if their values equal the previous span's.
+    forced.update(axis+k for k in ("bord","shad")
+                  if k in state and (k in forced or k not in reference or state[k] != reference[k])
+                  for axis in "xy" if axis+k in state)
     text += "".join(render_tag(k,v) for k,v in state.items()
-                    if k in allowed and (k not in reference or v != reference[k]))
+                    if k in allowed and (k in forced or k not in reference or v != reference[k])
+                    and not (reset is not None and k in event_level and initial.get(k) == v))
     return text,state
 
 
@@ -947,7 +1024,9 @@ def collapse_full_lyric_copies(events: list[Event],
             first = min(cluster, key=lambda item: item.source_index)
             earlier = min(item.start_s for item in cluster)
             later = max(item.end_s for item in cluster)
-            text = aggressive_caption(best.state, visible_map[best.source_index],
+            state = select_static_state(best.state,[],set(),best.styles,best.defaults,
+                                        paint_events=cluster)
+            text = aggressive_caption(state, visible_map[best.source_index],
                                       outline_states=[e.state for e in cluster])
             replacements[first.source_index] = replace_event(
                 first, layer="0", start=format_time(earlier), end=format_time(later),
@@ -1032,9 +1111,6 @@ def freeze_vector_sequences(events: list[Event], short_duration: float = 0.16,
         key = (e.kind,e.layer,e.name,geometry_key(e.text),state_key(e,changing),placement_key(e))
         groups.setdefault(key,[]).append(e)
 
-    def transparency(e: Event) -> int:
-        return sum(e.state.get(f"{c}a",0) for c in range(1,5))
-
     output: list[Event] = []
     removed = frame_removed
 
@@ -1047,9 +1123,17 @@ def freeze_vector_sequences(events: list[Event], short_duration: float = 0.16,
                 or any(b.start_s < a.end_s - 1e-6 for a, b in zip(run, run[1:]))):
             output.extend(run)
             return
-        # Prefer the unfaded frame, then the longest-held position. Keeping
-        # that event's paint intact preserves intentional transparent fills.
-        chosen = min(run, key=lambda e: (transparency(e), -e.duration, e.source_index))
+        # Rank the visible primary paint, then the longest hold. Unused
+        # secondary/shadow alpha must not outweigh an unfaded foreground.
+        # Outline-only and shadow-only objects use their actual paint channel.
+        channel = next((c for c in (1,3,4) if any(
+            e.state.get(f"{c}a",0) < 254 and
+            (c == 1 or c == 3 and max(abs(e.state.get(k,e.state.get("bord",0)))
+                                    for k in ("xbord","ybord")) > 0 or
+             c == 4 and max(abs(e.state.get(k,e.state.get("shad",0)))
+                            for k in ("xshad","yshad")) > 0)
+            for e in run)),1)
+        chosen = min(run, key=lambda e: (e.state.get(f"{channel}a",0), -e.duration, e.source_index))
         output.append(replace_event(chosen, start=run[0].start, start_s=run[0].start_s,
                               end=run[-1].end, end_s=run[-1].end_s,
                               source_index=min(e.source_index for e in run)))
@@ -1797,7 +1881,7 @@ def flatten_aggressive_text_sequences(events: list[Event],
                                       _scale_trails: bool = True) -> tuple[list[Event],int]:
     """Freeze connected full-text styling phases as one static caption.
 
-    For unmasked text choose the visible style at the temporal midpoint;
+    For unmasked text keep representative geometry and sustained colours;
     for clipped effects retain a plain readable caption. Gaps split runs.
     """
     animated_sources = animated_sources or set()
@@ -2002,9 +2086,20 @@ def flatten_aggressive_text_sequences(events: list[Event],
                         -max(e.start_s-midpoint,midpoint-e.end_s,0),
                         -e.state.get("1a",255),
                         int(e.layer) if e.layer.lstrip("-").isdigit() else 0))
-                text=(aggressive_caption(chosen.state,OVERRIDE_RE.sub("",chosen.text),
-                                         outline_states=[e.state for e in component])
-                      if trail else chosen.text)
+                state = select_static_state(chosen.state,[],set(),styles,chosen.defaults,
+                                            paint_events=visible_candidates)
+                # Preserve the chosen object's geometry and inline text. The
+                # shared selector changes only colours when given event paint.
+                color_tags = ''.join(render_tag(k,state[k]) for k in ('1c','3c','4c')
+                                     if state.get(k) != chosen.state.get(k) and k in state)
+                if trail:
+                    text = aggressive_caption(state,OVERRIDE_RE.sub("",chosen.text),
+                                              outline_states=[e.state for e in component])
+                elif color_tags and chosen.text.startswith('{'):
+                    index = chosen.text.index('}')
+                    text = chosen.text[:index]+color_tags+chosen.text[index:]
+                else:
+                    text = ('{'+color_tags+'}' if color_tags else '')+chosen.text
                 output.append(replace_event(chosen,start=format_time(start),end=format_time(end),
                                       start_s=start,end_s=end,text=text,
                                       source_index=min(e.source_index for e in component)))
@@ -2014,7 +2109,9 @@ def flatten_aggressive_text_sequences(events: list[Event],
                 e.state.get("1a",255)==0,
                 "clip" not in e.state and "iclip" not in e.state,
                 e.duration,int(e.layer) if e.layer.lstrip("-").isdigit() else 0))
-            text = aggressive_caption(chosen.state, OVERRIDE_RE.sub("", chosen.text),
+            state = select_static_state(chosen.state,[],set(),styles,chosen.defaults,
+                                        paint_events=visible_candidates)
+            text = aggressive_caption(state, OVERRIDE_RE.sub("", chosen.text),
                                       outline_states=[e.state for e in component])
             output.append(replace_event(chosen,start=format_time(start),end=format_time(end),
                                   start_s=start,end_s=end,text=text,layer="0",effect="",
@@ -2489,11 +2586,36 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
             return False
         chosen = ordered[0]
         if animated:
-            # Aggressive animated rows have one explicit readable paint policy.
-            # Static rows retain their paint; no majority-color guess is made.
+            # Normalize geometry and effects, retaining each fragment's paint.
+            # Visibility changes also mark stable gradient glyphs as animated;
+            # merging them must not spread the first glyph's fill over the row.
             body = aggressive_caption(chosen.state,text,
                                       outline_states=[e.state for e in ordered],
                                       an=alignment,pos=(x,y),fscx=sx,fscy=sy)
+            paints = [effective_state(aggressive_caption(e.state,fragment),e.defaults,e.styles)
+                      for e,fragment in zip(ordered,fragments)]
+            colors = [tuple(paint[k] for k in ('1c','3c')) for paint in paints]
+            if len(set(colors)) > 1:
+                # Spacing may come from comments, blank anchors or exact font
+                # measurements. Map by literal nonspace characters in all three
+                # routes; never alter the recovered text or infer word breaks.
+                if norm(text) != norm(''.join(fragments)):
+                    return False
+                header = body[:body.index('}')+1]
+                live = effective_state(header,chosen.defaults,chosen.styles)
+                segments = []
+                cursor = 0
+                for fragment,paint in zip(fragments,paints):
+                    begin = cursor
+                    remaining = len(norm(fragment))
+                    while remaining and cursor < len(text):
+                        remaining -= not text[cursor].isspace()
+                        cursor += 1
+                    tags = ''.join(render_tag(k,paint[k]) for k in ('1c','3c')
+                                   if live.get(k) != paint[k])
+                    segments.append(('{' + tags + '}' if tags else '')+text[begin:cursor])
+                    live.update({k:paint[k] for k in ('1c','3c')})
+                body = header+''.join(segments)+text[cursor:]
         else:
             # Candidate grouping guarantees identical static state. Reusing
             # its tags also preserves underline, outline axes and other tags.
@@ -2608,8 +2730,9 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
                                     source_data: tuple[list[TextRow], dict, dict] | None = None) -> tuple[list[Event],int]:
     """Remove effect copies proven to repeat a recorded text row.
 
-    Original source rows prove dense fade families before glyph lifetimes are
-    coalesced. Reconstructed and virtual rows prove later, nested highlights.
+    Original source rows prove nested syllable highlights and dense fade
+    families before glyph lifetimes are coalesced. Reconstructed and virtual
+    rows prove later effects.
     All modes consume shared fragment coordinates; uncertain word spacing
     never requires inventing text or rediscovering a row in this stage.
     """
@@ -2626,9 +2749,53 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
             if len({paint_row[0].layer for paint_row in row.paint_rows}) < 2:
                 continue
             first = row.base
+            phases = {}
+            for paint_row in row.paint_rows:
+                profile = paint_row[0].state.get('_opaque_spans',((first.start_s,first.end_s),))
+                phases.setdefault(profile,[]).append(paint_row)
+            alternating = any(profile != ((first.start_s,first.end_s),) for profile in phases)
+            if alternating:
+                # Different segmentations can replace each other during a cue.
+                # Require complete, nonoverlapping visibility and layered text
+                # in every phase; a partial row cannot prove full-cue coverage.
+                if (len(phases) < 2 or any(len({paint_row[0].layer for paint_row in peers}) < 2
+                                          for peers in phases.values())):
+                    continue
+                spans = sorted(span for profile in phases for span in profile)
+                cursor = first.start_s
+                complete = True
+                for start,end in spans:
+                    if abs(start-cursor) > .001:
+                        complete = False
+                        break
+                    cursor = end
+                if not complete or abs(cursor-first.end_s) > .001:
+                    continue
+                selected = first.state['_opaque_spans']
+                removed.update(e.source_index for profile,peers in phases.items()
+                               if profile != selected for paint_row in peers for e in paint_row)
             chosen = [e for e, _, _ in row.pieces]
             height = text_height(first)
             anchors = row.source_anchors
+            # A highlight may spell several separately positioned glyphs.
+            # Retain their original anchors before paint-based reconstruction
+            # divides a gradient into differently coloured caption fragments.
+            syllables = {}
+            for index, (_, _, start_pos) in enumerate(row.pieces):
+                text = ""
+                for last in range(index, len(row.pieces)):
+                    text += "".join(row.pieces[last][1].split())
+                    if len(text) > 8:
+                        break
+                    end_pos = row.pieces[last][2]
+                    if last > index and (end_pos[0]-row.pieces[last-1][2][0] > 2*height):
+                        break
+                    syllables.setdefault(text, []).append(
+                        ((start_pos[0]+end_pos[0])/2, (start_pos[1]+end_pos[1])/2))
+            top_layer = max(int(paint_row[0].layer) if paint_row[0].layer.lstrip('-').isdigit()
+                            else 0 for paint_row in row.paint_rows)
+            layout_tags = ({tag for tag,_ in text_layout_key(first)} - {'fscx','fscy'} |
+                           {'a','r','fr','pos','move','clip','iclip','p'})
             candidates = []
             evidence = set()
             for e in indexed.get((first.style,first.name,first.margin_l,first.margin_r,first.margin_v),[]):
@@ -2639,6 +2806,27 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
                 pos = positions[e.source_index]
                 nearby = [anchor for anchor in anchors.get(words[e.source_index],[]) if
                           abs(pos[0]-anchor[0]) <= height and abs(pos[1]-anchor[1]) <= .25*height]
+                state = e.state or effective_state(e.text,e.defaults,e.styles)
+                e.state = state
+                # This proof removes only a nested animated copy above an
+                # existing layered row. It does not confirm a dense fade family
+                # or normalize the underlying row's gradient paint.
+                if (e.source_index in animated_sources and e.duration < first.duration-.011 and
+                        e.end_s <= first.end_s and e.start_s >= first.start_s and
+                        (int(e.layer) if e.layer.lstrip('-').isdigit() else 0) > top_layer and
+                        state.get('1a',0) < 128 and not state.get('p',0) and
+                        'clip' not in state and 'iclip' not in state and
+                        not inline_layout_key(e) and text_layout_key(e) == text_layout_key(first) and
+                        not re.search(r'\\(?:move|org)\s*\(',e.text,re.I)):
+                    transforms = [value for block in OVERRIDE_RE.findall(e.text)
+                                  for tag,value in tokenize_override(block) if tag == 't']
+                    moving = any(tag in layout_tags for value in transforms
+                                 for tag,_ in tokenize_override(value))
+                    matches = [anchor for anchor in syllables.get(''.join(words[e.source_index].split()),[]) if
+                               abs(pos[0]-anchor[0]) <= .12*height and
+                               abs(pos[1]-anchor[1]) <= .06*height]
+                    if not moving and len(matches) == 1:
+                        removed.add(e.source_index)
                 # Some fade copies rise and shrink about a distant origin. The
                 # unchanged x anchor, explicit transparency and smaller scale tie
                 # them to the same glyph even after they leave the baseline.
@@ -2654,8 +2842,6 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
                                       abs(pos[1]-p[1]) <= 2*height]
                 if not nearby:
                     continue
-                state = e.state or effective_state(e.text,e.defaults,e.styles)
-                e.state = state
                 if (state.get("p",0) or "clip" in state or "iclip" in state or
                         str(state.get("fn","")).casefold() != str(first.state.get("fn","")).casefold() or
                         abs(state.get("fs",75)-first.state.get("fs",75)) > .05*first.state.get("fs",75) or
@@ -2683,7 +2869,7 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
                 elif (e.end_s <= first.end_s+.001 and any(math.dist(pos,p) <= .06*height for p in nearby)):
                     candidates.append(e)
             # Ordinary layered signs and isolated highlights are insufficient.
-            if (len(evidence) < max(3, math.ceil(len(chosen)/2)) or
+            if (alternating or len(evidence) < max(3, math.ceil(len(chosen)/2)) or
                     sum(e.source_index in animated_sources for e in candidates) < 3*len(evidence)):
                 continue
             # Static foreground highlight paint provides the fill, while the base
@@ -2872,6 +3058,7 @@ def collect_source_text_rows(parsed: dict[int, Event], animated: set[int]) -> tu
     This collector records text and geometry only. Effect membership belongs
     to remove_covered_fragment_effects; paint and text output belong to
     reconstruct_text_rows. Color-only transforms do not change row geometry.
+    Visibility intervals distinguish whole-cue rows from alternating layouts.
     """
     groups: dict[tuple, list[Event]] = {}
     words = {}
@@ -2894,14 +3081,27 @@ def collect_source_text_rows(parsed: dict[int, Event], animated: set[int]) -> tu
                 re.search(r"\\(?:move|clip|iclip|p[1-9]\d*|org|fad|fade)\b", e.text, re.I)):
             continue
         e.state = effective_state(e.text, e.defaults, e.styles)
-        if (inline_layout_key(e) or e.state.get("1a",0) != 0 or
+        if (inline_layout_key(e) or any(abs(e.state.get(k,100)) <= .01 for k in ('fscx','fscy')) or
                 any(abs(e.state.get(k,0)) > .001 for k in ("frz","frx","fry","fax","fay"))):
             continue
+        profile = ((e.start_s,e.end_s),)
+        if transforms and any(tag in {'alpha','1a','r'} for transform in transforms
+                              for tag,_ in tokenize_override(transform[1:-1])):
+            opaque_spans = []
+            _, state = freeze_block(''.join(OVERRIDE_RE.findall(e.text)),e.duration,
+                                    e.defaults,e.defaults,e.styles,0,opaque_spans)
+            if not opaque_spans:
+                continue
+            profile = tuple((e.start_s+a/1000,e.start_s+b/1000) for a,b in opaque_spans)
+            e = dataclass_replace(e,state=state)
+        if e.state.get('1a',0) != 0:
+            continue
+        e = dataclass_replace(e,state={**e.state,'_opaque_spans':profile})
         key = (e.style,e.name,e.margin_l,e.margin_r,e.margin_v,
                e.start,e.end,pos[1],
                tuple(e.state.get(k,DEFAULT_STATE.get(k)) for k in
                      ("fn","fs","fscx","fscy","fsp","b","i","an")))
-        groups.setdefault((*key,e.layer),[]).append(e)
+        groups.setdefault((*key,profile,e.layer),[]).append(e)
 
     families: dict[tuple,list[list[Event]]] = {}
     norm = lambda value: "".join(value.split())
@@ -2911,11 +3111,12 @@ def collect_source_text_rows(parsed: dict[int, Event], animated: set[int]) -> tu
                 or len(norm("".join(words[e.source_index] for e in ordered))) < 8):
             continue
         text = norm("".join(words[e.source_index] for e in ordered))
-        families.setdefault((*key[:-1],text),[]).append(ordered)
+        families.setdefault((*key[:-2],text),[]).append(ordered)
 
     evidence = []
     for rows in families.values():
-        chosen = max(rows,key=lambda row:(len(row),int(row[0].layer) if row[0].layer.lstrip('-').isdigit() else 0))
+        chosen = max(rows,key=lambda row:(sum(b-a for a,b in row[0].state['_opaque_spans']),
+                                         len(row),int(row[0].layer) if row[0].layer.lstrip('-').isdigit() else 0))
         first = chosen[0]
         height = text_height(first)
         if any(abs(positions[row[0].source_index][0]-positions[first.source_index][0]) > .5*height or
@@ -3179,7 +3380,8 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
     # We replace Dialogue/Comment lines at their original region with the processed sequence.
     event_line_indices = sorted(parsed_by_line)
     if not event_line_indices:
-        output.write_text(raw, encoding="utf-8-sig")
+        output.write_text(raw if lines and lines[0] == GENERATED_MARKER else
+                          GENERATED_MARKER+"\n"+raw, encoding="utf-8-sig")
         return {key: 0 for key in ("original", "output", "deduped", "lyric_merged",
                 "merged", "dropped", "overlap_removed", "full_copies_removed", "phase_merged",
                 "text_copies_removed", "vector_copies_removed", "vector_glows_removed",
@@ -3197,6 +3399,8 @@ def simplify_ass(path: Path, output: Path, max_blur: float,
         rendered.append(f"{e.kind}: " + ",".join(data.get(key,"") for key in event_fields))
 
     final_lines = before + rendered + after
+    if not final_lines or final_lines[0] != GENERATED_MARKER:
+        final_lines.insert(0,GENERATED_MARKER)
     output.write_text("\n".join(final_lines) + ("\n" if raw.endswith(("\n", "\r")) else ""),
                       encoding="utf-8-sig")
 
@@ -3239,13 +3443,26 @@ def iter_inputs(targets: Iterable[str], recursive: bool, suffix: str = ".simple"
     for target in targets:
         p = Path(target)
         if p.is_file():
-            if p.suffix.lower() in {".ass", ".ssa"} and not p.stem.lower().endswith(suffix.lower()):
+            # An explicit file is intentional, including a suffix-like name.
+            if p.suffix.lower() in {".ass", ".ssa"}:
                 found.append(p)
         elif p.is_dir():
             pattern = "**/*" if recursive else "*"
             for f in p.glob(pattern):
-                if f.is_file() and f.suffix.lower() in {".ass", ".ssa"} and not f.stem.lower().endswith(suffix.lower()):
-                    found.append(f)
+                if not f.is_file() or f.suffix.lower() not in {".ass", ".ssa"}:
+                    continue
+                # Preserve the established default-output exclusion for older
+                # files without a marker. Custom suffixes can be source names.
+                if suffix.lower() == ".simple" and f.stem.lower().endswith(".simple"):
+                    continue
+                try:
+                    with f.open("rb") as stream:
+                        marker = stream.readline(256).removeprefix(codecs.BOM_UTF8).rstrip(b"\r\n")
+                    if marker == GENERATED_MARKER.encode("utf-8"):
+                        continue
+                except OSError:
+                    pass  # Let the per-file batch handler report unreadable inputs.
+                found.append(f)
         else:
             print(f"Warning: not found: {p}")
     return sorted(set(found))
@@ -3299,7 +3516,7 @@ def main() -> int:
     ap.add_argument("-r", "--recursive", action="store_true", help="scan folders recursively")
     ap.add_argument("--level", type=int, choices=(1, 2), default=1,
                     help="1: maximum reduction (default); 2: preserve static visual elements")
-    ap.add_argument("--suffix", default=".simple", help="output suffix before extension (default: .simple; compatible with the MKV wrapper)")
+    ap.add_argument("--suffix", default=".simple", help="output suffix before extension (default: .simple; compatible with the MKV wrapper); scans skip marked outputs (and legacy *.simple files with the default suffix)")
     ap.add_argument("--encoding", help="input encoding override for legacy or BOM-less files; "
                     "default: UTF-8 or BOM-marked UTF-16/UTF-32, decoded strictly")
     ap.add_argument("--max-blur", type=float, default=0.0,
@@ -3353,10 +3570,21 @@ def main() -> int:
                           "python -m pip install uharfbuzz (unmerged rows keep original timing)")
         total_in = total_out = 0
         records = []
+        failed = 0
+        input_paths = {src.resolve() for src in inputs}
         for src in inputs:
             dst = src.with_name(src.stem + args.suffix + src.suffix)
-            stats = simplify_ass(src, dst, args.max_blur, args.short_duration, args.short_gap,
-                                 args.max_drawing_chars, args.max_vectors_per_cue, args.level, metric, args.encoding)
+            try:
+                if dst.resolve() in input_paths:
+                    raise ValueError(f"Output is another input file: {dst}; choose a different --suffix.")
+                stats = simplify_ass(src, dst, args.max_blur, args.short_duration, args.short_gap,
+                                     args.max_drawing_chars, args.max_vectors_per_cue, args.level, metric, args.encoding)
+            except (ValueError,OSError) as exc:
+                failed += 1
+                records.append({"input":str(src.resolve()),"output":str(dst.resolve()),
+                                "error":str(exc)})
+                print(f"Error: {src.name}: {exc}",file=sys.stderr)
+                continue
             total_in += stats["original"]
             total_out += stats["output"]
             records.append({"input": str(src.resolve()),
@@ -3393,14 +3621,16 @@ def main() -> int:
                 print("Exact fonts unavailable (kept positions): " + ", ".join(sorted(metric.missing)))
         if len(inputs) > 1:
             print(f"Total dialogue events: {total_in} -> {total_out}")
+        if failed:
+            print(f"Failed files: {failed}/{len(inputs)}",file=sys.stderr)
         if args.stats_json:
             import json
             args.stats_json.write_text(json.dumps({"level": args.level,
                                                    "tracks": records},
                                                   ensure_ascii=False, indent=2),
                                        encoding="utf-8")
-        return 0
-    except ValueError as exc:
+        return 1 if failed else 0
+    except (ValueError,OSError) as exc:
         ap.error(str(exc))
     finally:
         if font_temp is not None:
