@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Simplify ASS/SSA subtitles at two levels for limited renderers.
 
+Requires Python 3.10 or newer.
+
 Level 1 favors maximum reduction, retaining simple opaque caption backdrops;
 level 2 retains static sign styling and
 static vector shapes. Basic simplification requires only the standard library.
@@ -17,6 +19,12 @@ Ambiguous fragments keep their positions; drawing budgets are opt-in.
 
 from __future__ import annotations
 
+import sys
+
+if sys.version_info < (3, 10):
+    sys.exit("simplify_ass.py requires Python 3.10 or newer "
+             f"(running {sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}).")
+
 import argparse
 import codecs
 from bisect import bisect_left, bisect_right
@@ -24,7 +32,6 @@ import math
 import logging
 import re
 import statistics
-import sys
 import unicodedata
 from dataclasses import dataclass, replace as dataclass_replace, field
 from io import BytesIO
@@ -32,7 +39,7 @@ from itertools import islice
 from pathlib import Path
 from typing import Iterable
 
-__version__ = "2026.10.06.61"
+__version__ = "2026.10.06.67"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -144,6 +151,29 @@ class TextRow:
     @property
     def anchors(self) -> list[tuple[str, float]]:
         return [(text, pos[0]) for _, text, pos in self.pieces]
+
+
+def peak_concurrent_events(events: Iterable[Event]) -> int:
+    """Count active Dialogue events, including drawings, on [start, end).
+
+    Comments and empty/reversed intervals do not render. Aggregate equal
+    boundaries so touching captions never count as overlapping, regardless
+    of source order. Use serialized times so rounding a generated boundary
+    cannot create a phantom overlap. Only distinct timestamps are sorted.
+    """
+    boundaries: dict[float,int] = {}
+    for e in events:
+        if e.kind != "Dialogue":
+            continue
+        start,end = parse_time(e.start),parse_time(e.end)
+        if start < end:
+            boundaries[start] = boundaries.get(start,0)+1
+            boundaries[end] = boundaries.get(end,0)-1
+    active = peak = 0
+    for time in sorted(boundaries):
+        active += boundaries[time]
+        peak = max(peak,active)
+    return peak
 
 
 def parse_time(value: str) -> float:
@@ -756,6 +786,25 @@ def simplify_visual_text(text: str, max_blur: float, duration: float | None = No
                 visible.append(part)
     vis = "".join(visible).replace(r"\N"," ").replace(r"\n"," ").replace(r"\h"," ")
     return "".join(output), re.sub(r"\s+"," ",vis).strip(), drawing_chars
+
+
+def compact_static_overrides(events: list[Event], max_blur: float) -> list[Event]:
+    """Serialize finished captions relative to their style and preceding spans.
+
+    Reuse the normal override resolver after effect recognition has finished.
+    Blur/edge blur default to zero even though ASS styles have no such fields.
+    Keep drawing payloads, inline formatting, resets and comments intact.
+    """
+    output = []
+    for e in events:
+        if e.kind == "Dialogue":
+            defaults = {**(e.defaults or DEFAULT_STATE), "blur":0.0, "be":0.0}
+            text, _, _ = simplify_visual_text(
+                e.text,max_blur,e.duration,defaults,e.styles,2)
+            if text != e.text:
+                e = replace_event(e,text=text)
+        output.append(e)
+    return output
 
 
 def get_pos(text: str) -> tuple[float, float] | None:
@@ -1626,29 +1675,262 @@ def reduce_text_layers(events: list[Event], visible_map: dict[int, str],
     return sorted(output,key=lambda e:e.source_index),len(events)-len(output)
 
 
+def collapse_frame_text_echoes(events: list[Event],
+                              max_piece_duration: float) -> tuple[list[Event], int]:
+    """Collapse exit echoes proven by paint stacks or a settled caption.
+
+    Require the same multilayer paint stack at every offset, a short touching
+    frame sequence, and evenly spaced offsets along the motion direction.
+    Already flattened copies require a longer isolated opaque hold with the
+    same fill/layout. Static labels and unrelated paint remain separate.
+    """
+    families = {}
+    for e in events:
+        if (e.kind != "Dialogue" or e.effect or e.duration <= 0 or
+                get_pos(e.text) is None or inline_layout_key(e) or
+                e.state.get("p", 0) or "clip" in e.state or "iclip" in e.state):
+            continue
+        key = (e.style, e.name, e.margin_l, e.margin_r, e.margin_v,
+               OVERRIDE_RE.sub("", e.text),
+               tuple((k,v) for k,v in text_layout_key(e) if k not in {"fscx","fscy"}))
+        families.setdefault(key, {}).setdefault((e.start_s,e.end_s), []).append(e)
+    removed, replacements = set(), {}
+    omit = {"pos", "fscx", "fscy", "1a", "2a", "3a", "4a"}
+
+    def follows_motion(points, center, previous_center, height):
+        span = math.dist(points[0], points[-1])
+        if not (len(points) >= 3 and .001*height < span <= .5*height and
+                math.dist(center,previous_center) > span):
+            return False
+        direction = tuple(points[-1][axis]-points[0][axis] for axis in (0,1))
+        motion = tuple(center[axis]-previous_center[axis] for axis in (0,1))
+        return (abs(direction[0]*motion[1]-direction[1]*motion[0]) <=
+                .05*span*math.hypot(*motion) and
+                all(math.dist(point, tuple(points[0][axis] + direction[axis]*i/(len(points)-1)
+                                          for axis in (0,1))) <= .01*height
+                    for i,point in enumerate(points)))
+
+    def freeze_echo(members, anchor, text, layer=None):
+        index = min(e.source_index for e in members)
+        sample = members[0]
+        replacements[index] = replace_event(sample, text=text, layer=anchor.layer if layer is None else layer,
+                                            source_index=index, row=anchor.row, lyric=anchor.lyric)
+        removed.update(e.source_index for e in members)
+
+    for frames in families.values():
+        # Most subtitles have no replicated exit frames. Avoid resolving
+        # complete paint profiles for their ordinary frame animation.
+        candidates = {time for time,members in frames.items()
+                      if len(members) >= 3 and time[1]-time[0] <= max_piece_duration+1e-6 and
+                      len({get_pos(e.text) for e in members}) >= 3 and
+                      (len(members) >= 6 and all(0 < e.state.get("1a",0) < 255 for e in members) or
+                       len(members) == len({get_pos(e.text) for e in members}) and
+                       all(e.state.get("1a",0) < 255 for e in members))}
+        if not candidates:
+            continue
+        starts = {start for start,_ in candidates}
+        relevant = candidates | {time for time in frames if time[1] in starts}
+        times = sorted(frames)
+        isolated_frames = set()
+        latest_end = -math.inf
+        for i,(start,end) in enumerate(times):
+            if latest_end <= start and (i+1 == len(times) or times[i+1][0] >= end):
+                isolated_frames.add((start,end))
+            latest_end = max(latest_end,end)
+        # Brief entrances to persistent repeated labels are not exit echoes.
+        # Propagate that ambiguity back through the touching frame sequence.
+        blocked_starts, blocked = set(), set()
+        for start,end in reversed(times):
+            if (end in blocked_starts or end-start > max_piece_duration+1e-6 and
+                    len({get_pos(e.text) for e in frames[(start,end)]}) > 1):
+                blocked.add((start,end))
+                blocked_starts.add(start)
+        previous = None
+        held = None
+        for start,end in sorted(relevant):
+            members = frames[(start,end)]
+            if (len({text_layout_key(e) for e in members}) != 1 or
+                    any(e.state.get("borderstyle",1) != 1 for e in members)):
+                previous = None
+                held = None
+                continue
+            positions = {}
+            for e in members:
+                positions.setdefault(get_pos(e.text), []).append(e)
+            height = min(text_height(e) for e in members)
+            points = sorted(positions)
+            center = tuple(statistics.mean(p[axis] for p in points) for axis in (0,1))
+            # A previous simplification can erase both layer multiplicity
+            # and transparency. Use the isolated hold and geometry instead.
+            isolated = (start,end) in isolated_frames and (start,end) not in blocked
+            if (len(members) == 1 and end-start > max_piece_duration+1e-6 and isolated and
+                    members[0].state.get("1a",0) == 0):
+                held = (end,center,members[0])
+            elif held is not None:
+                anchor = held[2]
+                flattened = (isolated and len(members) == len(points) and
+                    end-start <= max_piece_duration+1e-6 and abs(start-held[0]) <= 1e-6 and
+                    math.dist(center,held[1]) <= 5*height and
+                    all(e.state.get("1c") == anchor.state.get("1c") and
+                        e.state.get("1a",0) < 255 and
+                        all(abs(e.state.get(k,0)-anchor.state.get(k,0)) <= .1*max(
+                            abs(anchor.state.get(k,100)),1) for k in ("fscx","fscy")) and
+                        all(e.state.get(axis+"shad",e.state.get("shad",0)) ==
+                            anchor.state.get(axis+"shad",anchor.state.get("shad",0))
+                            for axis in "xy") for e in members) and
+                    follows_motion(points,center,held[1],height))
+                if flattened:
+                    freeze_echo(members,anchor,anchor.text)
+                    held = (end,center,anchor)
+                    previous = None
+                    continue
+                held = None
+            profiles = []
+            for stack in positions.values():
+                layers = {e.layer for e in stack}
+                if (len(layers) != len(stack) or len(layers) < 2 or
+                        any(not layer.lstrip("-").isdigit() for layer in layers)):
+                    profiles = []
+                    break
+                profiles.append(tuple(sorted((int(e.layer), state_key(e, {"pos"})) for e in stack)))
+            if not profiles or len(set(profiles)) != 1:
+                previous = None
+                continue
+            foreground = max(members, key=lambda e: (int(e.layer), -math.dist(get_pos(e.text),center)))
+            stack = next(iter(positions.values()))
+            # Contour widths can change between exit frames. Each offset
+            # must still carry an identical complete stack within its frame.
+            continuity = tuple(sorted((int(e.layer), state_key(e, omit | {"bord","xbord","ybord"}))
+                                      for e in stack))
+            if len(points) == 1:
+                previous = ((end, continuity, center, foreground, stack)
+                            if foreground.state.get("1a",0) == 0 else None)
+                continue
+            echoes = (previous is not None and abs(start-previous[0]) <= 1e-6 and
+                      continuity == previous[1] and end-start <= max_piece_duration+1e-6 and
+                      all(0 < e.state.get("1a",0) < 255 for e in members) and
+                      follows_motion(points,center,previous[2],height))
+            if not echoes:
+                previous = None
+                continue
+            # Freeze the exit at its preceding opaque pose and paint; using
+            # a translucent echo would replace its real outline with fallback
+            # paint and prevent the existing frame reducer joining the hold.
+            anchor = previous[3]
+            text = aggressive_caption(anchor.state, OVERRIDE_RE.sub("", anchor.text),
+                                      outline_states=[e.state for e in previous[4]])
+            freeze_echo(members,anchor,text,layer="0")
+            previous = (end, continuity, center, anchor, previous[4])
+    return ([replacements[e.source_index] if e.source_index in replacements else e
+             for e in events if e.source_index not in removed or e.source_index in replacements],
+            len(removed)-len(replacements))
+
+
 def flatten_aggressive_text_copies(events: list[Event],
                                    visible_map: dict[int,str],
-                                   animated_sources: set[int] | None = None) -> tuple[list[Event], int]:
-    """Replace stacked static copies of the same positioned text with one.
+                                   animated_sources: set[int] | None = None, *,
+                                   max_piece_duration: float = .16) -> tuple[list[Event], int]:
+    """Replace stacked static copies of the same text with one.
 
     This is for level 1: color gradients, clipped stripes, shadows and
     alternate paint layers are intentionally replaced by a readable caption.
     No font, style name, color, language or strip-count assumption is used.
     """
+    events, echo_removed = collapse_frame_text_echoes(events, max_piece_duration)
     groups = {}
     kept = []
+    collision_peers = {}
+    paint = {"alpha", "1a", "2a", "3a", "4a", "c", "1c", "2c", "3c", "4c",
+             "bord", "xbord", "ybord", "shad", "xshad", "yshad", "blur", "be"}
     for e in events:
+        if e.kind == "Dialogue" and get_pos(e.text) is None:
+            collision_peers.setdefault(e.layer, []).append(e)
         visible = visible_map.get(e.source_index, "")
         pos = get_pos(e.text)
-        if (e.kind != "Dialogue" or not visible or pos is None or
-                e.state.get("p", 0) > 0 or inline_layout_key(e)):
+        if (e.kind != "Dialogue" or not visible or e.state.get("p", 0) > 0):
             kept.append(e)
             continue
         key = (e.start, e.end, e.style, e.name, e.margin_l, e.margin_r,
                e.margin_v, pos, visible)
         groups.setdefault(key, []).append(e)
-    removed = 0
+    removed = echo_removed
     for key, group in groups.items():
+        if len(group) < 2:
+            kept.extend(group)
+            continue
+        if key[-2] is None or any(inline_layout_key(e) for e in group):
+            # Equal final states do not prove equal inline spacing/fonts.
+            # Compare every literal span, coalescing paint-only boundaries.
+            layouts = {}
+            spans = {}
+            for e in group:
+                obj = static_object_key(e, e.styles, allow_unpositioned=True)
+                geometry = []
+                if obj is not None:
+                    spans[e.source_index] = obj[-1]
+                    for signature, drawing, payload in obj[-1]:
+                        state = dict(signature)
+                        if drawing or state.get("borderstyle", 1) != 1:
+                            geometry = []
+                            break
+                        layout = state_key(dataclass_replace(e, state=state),
+                                           paint | {"clip", "iclip"})
+                        if geometry and geometry[-1][0] == layout:
+                            geometry[-1] = (layout, geometry[-1][1] + payload)
+                        else:
+                            geometry.append((layout, payload))
+                if not geometry:
+                    kept.append(e)
+                else:
+                    layouts.setdefault(tuple(geometry), []).append(e)
+            for peers in layouts.values():
+                ids = {e.source_index for e in peers}
+                layers = {e.layer for e in peers}
+                unpositioned = key[-2] is None
+                # Same-layer unpositioned copies can occupy different rows.
+                # Other captions can also displace either member of a stack.
+                collision = unpositioned and (
+                    len(layers) != len(peers) or
+                    any(not layer.lstrip("-").isdigit() for layer in layers) or
+                    any(other.source_index not in ids and
+                        other.start_s < peers[0].end_s and other.end_s > peers[0].start_s
+                        for layer in layers for other in collision_peers[layer]))
+                opaque = [e for e in peers if all(
+                    dict(signature).get("1a", 0) < 128 and
+                    "clip" not in dict(signature) and "iclip" not in dict(signature)
+                    for signature, _, _ in spans[e.source_index])]
+                if len(peers) < 2 or collision or not opaque:
+                    kept.extend(peers)
+                    continue
+                chosen = max(opaque, key=lambda e: (
+                    int(e.layer) if e.layer.lstrip("-").isdigit() else 0,
+                    e.source_index))
+                outlines = [dict(signature) for e in peers
+                            for signature, _, _ in spans[e.source_index]]
+                # Reuse level 1's paint choice while retaining all authored
+                # geometry, including resets, wrapping and inline tracking.
+                header = aggressive_caption(chosen.state, "", outline_states=outlines)
+                normalized = effective_state(header, chosen.defaults, chosen.styles)
+                if normalized.get("pos") != chosen.state.get("pos"):
+                    kept.extend(peers)
+                    continue
+                tags = "".join("\\" + name + value for name, value in
+                               tokenize_override(header[1:-1]) if name in paint)
+                def retain_geometry(match):
+                    geometry = "".join("\\" + name + value for name, value in
+                                       tokenize_override(match[1])
+                                       if name not in paint | {"clip", "iclip"})
+                    return "{" + geometry + tags + "}"
+                text = OVERRIDE_RE.sub(retain_geometry, chosen.text)
+                if not text.startswith("{"):
+                    text = "{" + tags + "}" + text
+                caption = replace_event(chosen, text=text, effect="",
+                                        source_index=min(ids))
+                # Remove paint-only boundaries now so the existing frame
+                # reducer can recognize the newly exposed complete caption.
+                kept.extend(compact_static_overrides([caption], 0))
+                removed += len(peers) - 1
+            continue
         clipped = any("clip" in e.state or "iclip" in e.state for e in group)
         # Some effects paint the letters entirely with the shadow channel.
         # A stack of animated, coincident shadow copies is still one text
@@ -2735,6 +3017,14 @@ def flatten_aggressive_text_sequences(events: list[Event],
             output,visible_map,source_events,font_spacing)
         removed += phase_removed
         output = normalize_karaoke_completion_paint(output,visible_map,source_events)
+    if _scale_trails:
+        # Unmasking/normalizing a caption can reveal an ordinary same-anchor
+        # styling phase that was separate while it still had clips or scales.
+        # Consolidate those results once with the existing phase rules and
+        # original move/hold evidence; do not repeat the animation pipeline.
+        output,phase_removed = flatten_aggressive_text_sequences(
+            output,visible_map,styles,animated_sources,False,source_events=source_events)
+        removed += phase_removed
     return sorted(output,key=lambda e:e.source_index),removed
 
 
@@ -3330,7 +3620,8 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
                           font_spacing: FontSpacing | None,
                           animated_sources: set[int],
                           source_rows: list[TextRow] | None = None,
-                          source_only: bool = False) -> tuple[list[Event],int,int,list[TextRow]]:
+                          source_only: bool = False, *,
+                          static_only: bool = False) -> tuple[list[Event],int,int,list[TextRow]]:
     """Reconstruct static and animated rows with shared evidence and rendering.
 
     Static fragments must share their complete timing and effective styling.
@@ -3340,8 +3631,10 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
     text, explicit blank positions, or measured advances in the exact font.
     Persistent matching row neighbors cannot occupy gaps between fragments.
     If spacing is unproven, preserve the original fragment positions and timing.
+    The final static-only pass assembles equal-time, equal-paint fragments;
+    it neither extends lifetimes nor chooses between different paint copies.
     """
-    source_rows = [row for row in (source_rows or []) if row.confirmed]
+    source_rows = [row for row in (source_rows or []) if row.confirmed and not static_only]
     if source_only:
         # The normal reconstruction stage owns paint for both positioned
         # fragments and assembled lines. Source cues retain their exact timing.
@@ -3370,7 +3663,7 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
     # duplicate glyphs cannot become duplicate letters in the assembled text.
     copies: dict[tuple,list[Event]] = {}
     for e in events:
-        if (e.kind == "Dialogue" and get_pos(e.text) is not None and
+        if (not static_only and e.kind == "Dialogue" and get_pos(e.text) is not None and
                 (e.lyric or e.source_index in animated_sources) and
                 visible_map.get(e.source_index) and not inline_layout_key(e)):
             key = (e.start,e.end,e.style,e.name,e.row,get_pos(e.text),
@@ -3549,7 +3842,8 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
     # subsets, so a syllable is not prematurely assembled into a separate word.
     sweeps: dict[tuple,list[Event]] = {}
     for e in eligible:
-        if e.source_index in animated_sources and e.source_index not in protected:
+        if (not static_only and e.source_index in animated_sources and
+                e.source_index not in protected):
             sweeps.setdefault(base_key(e),[]).append(e)
     candidates = []
     for bucket in sweeps.values():
@@ -3606,6 +3900,8 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
                     replacements[index] = row.base
                     break
     output = [replacements.get(e.source_index,e) for e in events if e.source_index not in removed]
+    if static_only:
+        return output,merged_count,duplicate_count,list(row_evidence.values())
     # Record unassembled rows here too. These models supply shadow-copy
     # evidence without requiring fonts or emitting inferred word spacing.
     fragments: dict[tuple,list[Event]] = {}
@@ -4690,7 +4986,8 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
     Consume shared fragment anchors without guessing spacing or rediscovering
     rows. Visible overlays require nested animation evidence. Static glyphs
     can repeat an animated row's recorded glyphs with identical placement and
-    paint; virtual rows authorize only matching shadow copies. Original
+    source styling, provided the emitted paint is unchanged or matches its
+    level-1 normalized form; virtual rows authorize only matching shadow copies. Original
     trajectories and exact font measurements prove entrance and exit groups.
     """
     animated_sources = animated_sources or set()
@@ -4732,12 +5029,22 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
             continue
         glyphs = []
         for (piece,text,pos),(char,paint) in zip(row.pieces,painted):
-            if (paint.get('1a',0) != 0 or paint.get('3a',0) != 0 or
+            if (piece.state.get('1a',0) != 0 or
+                    paint.get('1a',0) != 0 or paint.get('3a',0) != 0 or
                     (int(paint.get('an',2))-1)//3 != (int(piece.state.get('an',2))-1)//3 or
                     abs(get_pos(row.base.text)[1]-pos[1]) > .001):
                 continue
             emitted = dataclass_replace(piece,state=paint)
-            glyphs.append((piece,text,pos,state_key(emitted,{'pos','an'})))
+            # Assembly intentionally replaces outlines, shadows and blur.
+            # Validate that known conversion rather than equating the output
+            # paint with the unsimplified held phase. Foreground formatting
+            # and geometry, including per-glyph colours and scales, must agree.
+            paint_key = state_key(emitted,{'pos','an'})
+            if paint_key != state_key(piece,{'pos','an'}):
+                normalized = replace_event(piece,text=aggressive_caption(piece.state,text))
+                if paint_key != state_key(normalized,{'pos','an'}):
+                    continue
+            glyphs.append((piece,text,pos))
         static_glyphs[row.base.source_index] = glyphs
 
     def held_glyph_copy(e: Event, visible: str, pos: tuple, base: Event) -> bool:
@@ -4746,15 +5053,14 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
                 e.style != base.style or e.name != base.name or
                 e.start_s < base.start_s or e.end_s > base.end_s):
             return False
-        matches = [(piece,paint) for piece,text,anchor,paint in
+        matches = [piece for piece,text,anchor in
                    static_glyphs.get(base.source_index,[]) if text == visible and
                    math.dist(pos,anchor) <= .001]
         if len(matches) != 1:
             return False
-        piece,paint = matches[0]
+        piece = matches[0]
         return (e.layer == piece.layer and placement_key(e) == placement_key(piece) and
                 state_key(e,{'pos'}) == state_key(piece,{'pos'}) and
-                state_key(e,{'pos','an'}) == paint and
                 static_object_key(e,e.styles) is not None)
 
     # Index each style's original row order by start time. Prefix maximum
@@ -4870,13 +5176,14 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
     return [e for e in events if e.source_index not in removed],len(removed)
 
 
-def static_object_key(e: Event, styles: dict) -> tuple | None:
+def static_object_key(e: Event, styles: dict, *,
+                      allow_unpositioned: bool = False) -> tuple | None:
     """Describe every static text/drawing span, including inherited styling."""
     if e.kind != "Dialogue" or e.effect or e.duration <= 0:
         return None
     # Unpositioned subtitles participate in renderer collision placement.
     # Extending one could change that placement even with identical text.
-    if get_pos(e.text) is None:
+    if not allow_unpositioned and get_pos(e.text) is None:
         return None
     default = styles.get(e.style, DEFAULT_STATE)
     state = default.copy()
@@ -5257,6 +5564,7 @@ def simplify_ass(path: Path, output: Path, config: SimplifyConfig, *,
                 if e.kind != "Dialogue":
                     e.state = effective_state(e.text,e.defaults,styles)
                 parsed_by_line[idx] = e
+    max_concurrent_in = peak_concurrent_events(parsed_by_line.values())
     animated_sources = {idx for idx,e in parsed_by_line.items()
                         if re.search(r"\\(?:t\s*\(|[kK](?:f|o)?\d|fad(?:e)?\s*\(|move\s*\()", e.text)}
     source_rows = []
@@ -5347,7 +5655,8 @@ def simplify_ass(path: Path, output: Path, config: SimplifyConfig, *,
         simplified_events, masked_decorations = remove_masked_glyph_effects(
             simplified_events, visible_map, font_spacing, animated_sources)
         simplified_events, aggressive_copies = flatten_aggressive_text_copies(
-            simplified_events, visible_map, animated_sources)
+            simplified_events, visible_map, animated_sources,
+            max_piece_duration=config.short_duration)
 
     sign_copies_removed = 0
     if config.level == 1:
@@ -5453,6 +5762,21 @@ def simplify_ass(path: Path, output: Path, config: SimplifyConfig, *,
         simplified_events = [replace_event(e,layer=str(raised_layers[e.source_index]))
                              if e.source_index in raised_layers else e for e in simplified_events]
         simplified_events = sorted(simplified_events+vector_events,key=lambda e:e.source_index)
+        # Late generators emit full state headers. Compact them only after
+        # source-dependent effect/timing proofs, then remove exact duplicates
+        # whose formerly redundant tag spelling hid their identity.
+        simplified_events = compact_static_overrides(simplified_events,config.max_blur)
+        simplified_events, final_duplicates = deduplicate_layers(simplified_events,visible_map)
+        deduped += final_duplicates
+        # Effect removal and timing cleanup can uncover complete static rows.
+        # Reuse the same source comments, spacing and neighbor checks without
+        # extending lifetimes or selecting new animation/foreground paint.
+        simplified_events, final_rows_merged, _, _ = reconstruct_text_rows(
+            simplified_events,visible_map,space_map,font_spacing,animated_sources,
+            static_only=True)
+        lyric_merged += final_rows_merged
+        if final_rows_merged:
+            simplified_events = compact_static_overrides(simplified_events,config.max_blur)
 
     static_merged = 0
     if config.level == 2:
@@ -5464,7 +5788,8 @@ def simplify_ass(path: Path, output: Path, config: SimplifyConfig, *,
     if not event_line_indices:
         output.write_text("\n".join(mark_generated(lines)) +
                           ("\n" if raw.endswith(("\n", "\r")) else ""), encoding="utf-8-sig")
-        return {key: 0 for key in ("original", "output", "deduped", "lyric_merged",
+        return {key: 0 for key in ("original", "output", "max_concurrent_in", "max_concurrent_out",
+                "deduped", "lyric_merged",
                 "merged", "dropped", "overlap_removed", "cue_overlaps_trimmed", "full_copies_removed", "phase_merged",
                 "text_copies_removed", "vector_copies_removed", "vector_glows_removed",
                 "vector_frames_removed", "vector_output", "excess_vectors", "static_merged", "covered_vectors", "tiles_joined", "aggressive_copies", "aggressive_sequences", "staggered_rows", "overlaid_letters", "covered_fragments", "fullwidth_merged", "progressive_rows", "masked_decorations", "backdrops_retained")}
@@ -5488,6 +5813,8 @@ def simplify_ass(path: Path, output: Path, config: SimplifyConfig, *,
     output_dialogues = sum(1 for e in simplified_events if e.kind == "Dialogue")
     return {
         "original": original_dialogues,
+        "max_concurrent_in": max_concurrent_in,
+        "max_concurrent_out": peak_concurrent_events(simplified_events),
         "backdrops_retained": backdrops_retained,
         "static_merged": static_merged,
         "covered_vectors": covered_vectors,
@@ -5678,6 +6005,8 @@ def main() -> int:
             records.append({"input": str(src.resolve()),
                             "output": str(dst.resolve()), "stats": stats})
             print(f"{src.name} -> {dst.name} (level {args.level})")
+            print(f"  Peak simultaneous events: {stats['max_concurrent_in']} -> "
+                  f"{stats['max_concurrent_out']}")
             print(
                 f"  dialogue events: {stats['original']} -> {stats['output']} "
                 f"(duplicate layers removed: {stats['deduped']}, "
