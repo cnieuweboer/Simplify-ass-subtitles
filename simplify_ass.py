@@ -32,7 +32,7 @@ from itertools import islice
 from pathlib import Path
 from typing import Iterable
 
-__version__ = "2026.10.06.55"
+__version__ = "2026.10.06.57"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -3030,7 +3030,7 @@ class FontSpacing:
         # ASS font size conventions differ from Pillow's em size. Calibrate
         # one common multiplier for the row, checking every boundary against
         # an integral number of measured spaces. Ambiguous fits stay positioned.
-        fits = {}
+        fits, unbroken_fits = {}, {}
         for distance, advance in zip(deltas,base):
             for bit in (0,1):
                 factor = distance/(advance+bit*space)
@@ -3041,9 +3041,9 @@ class FontSpacing:
                                  for distance,advance in zip(deltas,base))
                     predicted = [advance+bit*space for advance,bit in zip(base,bits)]
                     factor = sum(a*b for a,b in zip(predicted,deltas))/sum(a*a for a in predicted)
-                if (not .5 <= factor <= 1.5 or not any(bits) or 0 not in bits or
+                if (not .5 <= factor <= 1.5 or
                         sum(bits) > sum(map(len,fragments))
-                        or (bits.count(0)<2 and len(bits)<4)):
+                        or (any(bits) and 0 in bits and bits.count(0)<2 and len(bits)<4)):
                     continue
                 errors = [abs(actual-factor*expected)/(factor*space)
                           for actual,expected in zip(deltas,predicted)]
@@ -3051,14 +3051,23 @@ class FontSpacing:
                 if max(errors) > .22 + min(.12,1/(factor*space)):
                     continue
                 score = sum(e*e for e in errors)/len(errors)
-                if bits not in fits or score < fits[bits][0]:
-                    fits[bits] = (score,factor)
-        if not fits:
+                destination = fits if any(bits) and 0 in bits else unbroken_fits
+                if bits not in destination or score < destination[bits][0]:
+                    destination[bits] = (score,factor)
+        # Preserve established mixed-space recovery. When it has no fit,
+        # try an unbroken run, retaining entirely spaced alternatives as
+        # ambiguity evidence (especially for equal-width fonts).
+        candidates = fits or unbroken_fits
+        if not candidates:
             return None
-        ranked = sorted(fits.items(),key=lambda pair:pair[1][0])
+        ranked = sorted(candidates.items(),key=lambda pair:pair[1][0])
         if len(ranked)>1 and ranked[1][1][0]-ranked[0][1][0] < .02:
             return None
         bits, (_,factor) = ranked[0]
+        # Entirely spaced rows cannot calibrate a no-space reference. Keep
+        # them as ambiguity evidence, but only emit mixed or unbroken fits.
+        if 0 not in bits:
+            return None
         text = fragments[0]+''.join(' '*bit+t for bit,t in zip(bits,fragments[1:]))
         # A merged font may kern across the old fragment seams. Reject a large
         # difference between the assembled advance and the measured row span.
@@ -3370,7 +3379,7 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
         y = statistics.median(ys)
         (positions,spatial),(starts,temporal) = neighbors[base_key(ordered[0])]
         left,right = bisect_right(positions,xs[0]+tolerance),bisect_left(positions,xs[-1]-tolerance)
-        # Mutual 80% overlap implies a nearby start. These broad bounds keep
+        # Mutual 50% overlap implies a nearby start. These broad bounds keep
         # past/future cues out before the exact lifetime and geometry checks.
         early,late = bisect_left(starts,start-(end-start)),bisect_left(starts,end)
         peers,begin,stop = ((spatial,left,right) if right-left <= late-early else
@@ -3378,7 +3387,7 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
         for index in range(begin,stop):
             peer,px,py,peer_height = peers[index]
             if (peer.source_index in members or abs(py-y) > .15*min(height,peer_height) or
-                    min(peer.end_s,end)-max(peer.start_s,start) < .8*max(peer.duration,end-start)):
+                    min(peer.end_s,end)-max(peer.start_s,start) < .5*max(peer.duration,end-start)):
                 continue
             gap = bisect_left(xs,px)
             if 0 < gap < len(xs) and xs[gap-1]+tolerance < px < xs[gap]-tolerance:
@@ -3671,6 +3680,272 @@ def match_translucent_glyph_particles(events: list[Event], row_evidence: list[Te
     return set().union(*(family for family in families if all(owners[index] == 1 for index in family)))
 
 
+def collapse_backed_glyph_pulses(events: list[Event], words: dict[int,str],
+                                  positions: dict[int,tuple[float,float] | None]) -> tuple[list[Event],int]:
+    """Freeze complete glyph rows proven by a continuous stationary backing.
+
+    A translucent copy supplies exact anchors and cue bounds. Every glyph
+    needs an opaque held foreground pose and uninterrupted foreground coverage.
+    Colour pulses must return to that shared paint; frame jitter must converge
+    to it. Partial rows, gradients, ambiguous copies and moving labels stay.
+    Text spacing remains the responsibility of the existing row reconstruction.
+    """
+    allowed = {'c','1c','3c','4c','alpha','1a','3a','4a','blur','be','fscx','fscy'}
+    indexed, backing = {}, {}
+    details = {}
+    for e in events:
+        word,pos = words.get(e.source_index,''),positions.get(e.source_index)
+        if (e.kind != 'Dialogue' or len(word) != 1 or word.isspace() or
+                unicodedata.combining(word) or pos is None or e.duration <= 0 or
+                not e.layer.lstrip('-').isdigit() or inline_layout_key(e)):
+            continue
+        state = e.state or effective_state(e.text,e.defaults,e.styles)
+        if (not all(math.isfinite(v) for v in pos) or
+                any(not math.isfinite(state.get(k,0)) or state.get(k,0) <= 0
+                    for k in ('fs','fscx','fscy')) or
+                state.get('p',0) or state.get('borderstyle',1) != 1 or
+                any(k in state for k in ('clip','iclip','org')) or
+                any(abs(state.get(k,0)) > .001 for k in ('frz','frx','fry','fax','fay')) or
+                any(abs(state.get(k,state.get('shad',0))) > .001 for k in ('xshad','yshad'))):
+            continue
+        tokens = event_override_tokens(e)
+        if any(tag in {'move','fade','k','kf','ko'} for tag,value in tokens):
+            continue
+        transforms = []
+        safe = True
+        final = state.copy()
+        for tag,value in tokens:
+            if tag == 't':
+                transform = parse_effect_transform(value,e.duration,allowed)
+                if transform is None:
+                    safe = False; break
+                begin,end,changes = transform
+                for name,argument in changes:
+                    apply_tag(final,name,argument,e.styles,e.defaults)
+                transforms.append((begin,end,final.copy()))
+        if not safe:
+            continue
+        fades = [value for tag,value in tokens if tag == 'fad']
+        try:
+            fade = tuple(float(v) for v in fades[0].strip('()').split(',')) if fades else (0,0)
+        except ValueError:
+            continue
+        if (len(fades) > 1 or len(fade) != 2 or
+                not all(math.isfinite(v) and v >= 0 for v in fade)):
+            continue
+        sample = dataclass_replace(e,state=state)
+        layout = tuple((k,v) for k,v in text_layout_key(sample) if k not in {'fscx','fscy'})
+        key = (e.style,e.name,e.margin_l,e.margin_r,e.margin_v,layout)
+        details[e.source_index] = (state,transforms,fade)
+        indexed.setdefault(key,[]).append(e)
+        if (0 < state.get('1a',0) < 255 and
+                all(final.get('1c') == state.get('1c') and 0 < final.get('1a',0) < 255
+                    for _,_,final in transforms)):
+            backing.setdefault((key,e.layer,pos,word,state.get('1c')),[]).append(e)
+
+    rows = {}
+    for (key,layer,pos,word,colour),phases in backing.items():
+        phases.sort(key=lambda e:(e.start_s,e.end_s,e.source_index))
+        runs = []
+        for e in phases:
+            if not runs or abs(runs[-1][-1].end_s-e.start_s) > .011:
+                runs.append([])
+            runs[-1].append(e)
+        for run in runs:
+            if run[-1].end_s-run[0].start_s > .25:
+                rows.setdefault((key,layer,run[0].start_s,run[-1].end_s,pos[1]),[]).append(
+                    (pos,word,run))
+
+    def pose(state: dict) -> tuple:
+        return tuple(state.get(k,DEFAULT_STATE.get(k)) for k in
+                     ('1c','3c','bord','xbord','ybord','fscx','fscy'))
+
+    def converges(frames: list[Event], base: dict, *, clipped: bool = False) -> bool:
+        distances = []
+        for frame in frames:
+            state = details[frame.source_index][0]
+            if any(state.get(k,DEFAULT_STATE.get(k)) != base.get(k,DEFAULT_STATE.get(k))
+                   for k in ('3c','bord','xbord','ybord')):
+                return False
+            distances.append((sum(abs(int(state['1c'][i:i+2],16)-
+                                      int(base['1c'][i:i+2],16)) for i in (0,2,4)),
+                              abs(state.get('fscx',100)-base.get('fscx',100)),
+                              abs(state.get('fscy',100)-base.get('fscy',100))))
+        if any(any(b > a+.02 for a,b in zip(left,right))
+               for left,right in zip(distances,distances[1:])):
+            return False
+        # A pulse cut short by the recorded cue boundary still needs a
+        # substantial return toward a pose held elsewhere in this glyph's cue.
+        return (not clipped or len(frames) >= 2 and any(distances[0]) and
+                all(b <= .5*a+.02 for a,b in zip(distances[0],distances[-1])))
+
+    proposals = []
+    for (key,layer,start,end,y),row in rows.items():
+        row.sort(key=lambda item:item[0][0])
+        if len(row) < 4 or len({pos[0] for pos,word,run in row}) != len(row):
+            continue
+        glyphs,common = [], None
+        for pos,word,run in row:
+            height = text_height(dataclass_replace(run[0],state=details[run[0].source_index][0]))
+            peers = [e for e in indexed[key] if words[e.source_index] == word and
+                     int(e.layer) > int(layer) and e.start_s >= start-.001 and
+                     e.end_s <= end+.001 and math.dist(positions[e.source_index],pos) <= .12*height]
+            holds = {}
+            for e in peers:
+                state,transforms,fade = details[e.source_index]
+                if (not transforms and fade == (0,0) and state.get('1a',0) == 0 and
+                        e.duration >= .02 and math.dist(positions[e.source_index],pos) <= e.unit):
+                    holds.setdefault(pose(state),[]).append(e)
+            common = set(holds) if common is None else common & set(holds)
+            glyphs.append((pos,word,run,peers,holds,height))
+        if not common:
+            continue
+        if any(sum(words[e.source_index] == word and
+                   math.dist(positions[e.source_index],pos) <= .12*height
+                   for pos,word,run,peers,holds,height in glyphs) != 1
+               for *_,peers,holds,height in glyphs for e in peers):
+            continue
+        height = min(glyph[-1] for glyph in glyphs)
+        if any(e.start_s < end and e.end_s > start and
+               min(e.end_s,end)-max(e.start_s,start) > .02 and
+               row[0][0][0]-height <= positions[e.source_index][0] <= row[-1][0][0]+height and
+               abs(positions[e.source_index][1]-y) <= .12*height and
+               int(e.layer) >= int(layer) and
+               not any(words[e.source_index] == word and
+                       math.dist(positions[e.source_index],pos) <= .12*height
+                       for pos,word,run in row)
+               for e in indexed[key]):
+            continue
+        ranked = sorted(common,key=lambda p:-sum(sum(e.duration for e in holds[p])
+                                                 for *_,holds,height in glyphs))
+        target = ranked[0]
+        # Two similarly sustained common paints do not identify a base pose.
+        scores = [sum(sum(e.duration for e in holds[p]) for *_,holds,height in glyphs)
+                  for p in ranked[:2]]
+        if len(scores) > 1 and scores[0] < 2*scores[1]:
+            continue
+        changed,activation,kept,members = 0,[],[],set()
+        valid = True
+        for pos,word,run,peers,holds,height in glyphs:
+            chosen = max(holds[target],key=lambda e:e.duration)
+            base = details[chosen.source_index][0]
+            if any(not .8*base.get(k,100) <= sample.get(k,100) <= 1.2*base.get(k,100)
+                   for e in run+peers
+                   for sample in [details[e.source_index][0]]+
+                                 [final for _,_,final in details[e.source_index][1]]
+                   for k in ('fscx','fscy')):
+                valid = False; break
+            boundaries = sorted({start,end}|{t for e in peers for t in (e.start_s,e.end_s)})
+            foreground = []
+            for a,b in zip(boundaries,boundaries[1:]):
+                covering = [e for e in peers if e.start_s <= a+.001 and e.end_s >= b-.001]
+                if not covering:
+                    valid = False; break
+                top = max(int(e.layer) for e in covering)
+                top_events = [e for e in covering if int(e.layer) == top]
+                if len(top_events) != 1:
+                    valid = False; break
+                e = top_events[0]
+                if not foreground or foreground[-1] is not e:
+                    foreground.append(e)
+            if not valid:
+                break
+            pending = []
+            pulse_times = []
+            for e in foreground:
+                state,transforms,fade = details[e.source_index]
+                if state.get('1a',0) != 0:
+                    valid = False; break
+                if pose(state) == target:
+                    if pending:
+                        # A frame pulse must approach the held paint and size
+                        # monotonically, then return to an exact authored hold.
+                        if not converges(pending,base):
+                            valid = False; break
+                        pending = []
+                    if not transforms:
+                        continue
+                if transforms:
+                    if (e.end_s == end and fade[0] == 0 and fade[1] > 0 and
+                            state.get('1c') == base.get('1c') and
+                            all(final.get('1c') == base.get('1c') for _,_,final in transforms)):
+                        continue
+                    final = transforms[-1][2]
+                    if pose(final) != target or final.get('1a',0) != 0:
+                        valid = False; break
+                    # Separate colour and size transforms may share a pulse,
+                    # but none may introduce another destination or a cycle.
+                    for tag,value in event_override_tokens(e):
+                        if tag != 't':
+                            continue
+                        changes = parse_effect_transform(value,e.duration,allowed)[2]
+                        for name,argument in changes:
+                            sample = base.copy()
+                            apply_tag(sample,name,argument,e.styles,e.defaults)
+                            if pose(sample) != target or sample.get('1a',0) != 0:
+                                valid = False; break
+                    if not valid:
+                        break
+                    if pose(state) != target:
+                        pulse_times.append(e.start_s)
+                else:
+                    if e.duration > .1 or fade != (0,0):
+                        valid = False; break
+                    pending.append(e)
+                    if pose(state) != target:
+                        pulse_times.append(e.start_s)
+            if pending and pending[-1].end_s == end and converges(pending,base,clipped=True):
+                pending = []
+            if not valid or pending:
+                valid = False; break
+            if pulse_times:
+                changed += 1;activation.append(min(pulse_times))
+            members.update(e.source_index for e in run+peers)
+            kept.append(replace_event(chosen,start=format_time(start),end=format_time(end),
+                        start_s=start,end_s=end,text=aggressive_caption(base,word,
+                        pos=pos,an=int(base.get('an',5))),layer='0'))
+        if valid:
+            # A simultaneous final colour flash/fade is an exit, not another
+            # lyric. Extend only when the complete backing and foreground
+            # both fade at every recorded anchor to one shared boundary.
+            tails = []
+            for pos,word,run,peers,holds,height in glyphs:
+                fading = [e for e in indexed[key] if words[e.source_index] == word and
+                          e.start_s == end and int(e.layer) >= int(layer) and
+                          math.dist(positions[e.source_index],pos) <= e.unit and
+                          details[e.source_index][2][0] == 0 and
+                          details[e.source_index][2][1] > 0 and
+                          details[e.source_index][1] and
+                          details[e.source_index][1][-1][2].get('1a',0) >= 254]
+                if (not fading or not any(e.layer == layer for e in fading) or
+                        not any(int(e.layer) > int(layer) for e in fading)):
+                    tails = []; break
+                tails.extend(fading)
+            if tails and len({e.end for e in tails}) == 1:
+                members.update(e.source_index for e in tails)
+                finish = tails[0].end_s
+                kept = [replace_event(e,end=tails[0].end,end_s=finish) for e in kept]
+        if (valid and changed >= 3 and
+                (all(a <= b for a,b in zip(activation,activation[1:])) or
+                 all(a >= b for a,b in zip(activation,activation[1:])))):
+            proposals.append((members,kept))
+    owners = {}
+    for members,kept in proposals:
+        for index in members:
+            owners[index] = owners.get(index,0)+1
+    removed,replacements = set(),{}
+    for members,kept in proposals:
+        if any(owners[index] != 1 for index in members):
+            continue
+        removed.update(members)
+        replacements.update((e.source_index,e) for e in kept)
+    if not removed:
+        return events,0
+    output = [replacements.get(e.source_index,e) for e in events
+              if e.source_index not in removed or e.source_index in replacements]
+    return output,len(events)-len(output)
+
+
 def remove_source_fragment_effects(events: list[Event], row_evidence: list[TextRow],
                                    words: dict[int,str],
                                    positions: dict[int,tuple[float,float] | None],
@@ -3827,7 +4102,9 @@ def remove_source_fragment_effects(events: list[Event], row_evidence: list[TextR
         row.confirmed = True
         kept = {e.source_index for e in chosen}
         removed.update(e.source_index for e in candidates if e.source_index not in kept)
-    return [e for e in events if e.source_index not in removed], len(removed)
+    output,pulses = collapse_backed_glyph_pulses(
+        [e for e in events if e.source_index not in removed],words,positions)
+    return output, len(removed)+pulses
 
 
 def match_boundary_glyph_effects(events: list[Event], visible_map: dict[int,str],
@@ -4146,9 +4423,10 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
     """Remove copies proven to repeat reconstructed, authored or virtual rows.
 
     Consume shared fragment anchors without guessing spacing or rediscovering
-    rows. Visible overlays require nested animation evidence; virtual rows
-    authorize only matching shadow copies. Original trajectories and exact
-    font measurements separately prove complete entrance and exit groups.
+    rows. Visible overlays require nested animation evidence. Static glyphs
+    can repeat an animated row's recorded glyphs with identical placement and
+    paint; virtual rows authorize only matching shadow copies. Original
+    trajectories and exact font measurements prove entrance and exit groups.
     """
     animated_sources = animated_sources or set()
     anchors = {row.base.source_index: row.anchors for row in row_evidence}
@@ -4163,6 +4441,56 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
         rows.setdefault(row.base.style,[]).append(row.base)
         if row.virtual:
             virtual.add(row.base.source_index)
+
+    # A row extended across animation phases may also cover surviving held
+    # glyphs. Match its recorded pieces and emitted per-character paint, not
+    # substrings or nearby positions. Requiring unchanged scales avoids
+    # treating an approximate font fit as proof of identical glyph geometry.
+    static_glyphs = {}
+    for row in row_evidence:
+        if (row.virtual or len(row.pieces) < 2 or
+                any(piece.source_index not in animated_sources or len(text) != 1 or
+                    text.isspace() or unicodedata.combining(text) or
+                    unicodedata.bidirectional(text) in {'R','AL','AN'} or
+                    piece.layer != row.base.layer
+                    for piece,text,pos in row.pieces)):
+            continue
+        state = row.base.defaults.copy()
+        painted = []
+        for part in re.split(r"(\{[^}]*\})",row.base.text):
+            if part.startswith('{'):
+                for tag,value in tokenize_override(part[1:-1]):
+                    apply_tag(state,tag,value,row.base.styles,row.base.defaults)
+            else:
+                painted.extend((char,state.copy()) for char in part if not char.isspace())
+        if ''.join(char for char,state in painted) != ''.join(text for piece,text,pos in row.pieces):
+            continue
+        glyphs = []
+        for (piece,text,pos),(char,paint) in zip(row.pieces,painted):
+            if (paint.get('1a',0) != 0 or paint.get('3a',0) != 0 or
+                    (int(paint.get('an',2))-1)//3 != (int(piece.state.get('an',2))-1)//3 or
+                    abs(get_pos(row.base.text)[1]-pos[1]) > .001):
+                continue
+            emitted = dataclass_replace(piece,state=paint)
+            glyphs.append((piece,text,pos,state_key(emitted,{'pos','an'})))
+        static_glyphs[row.base.source_index] = glyphs
+
+    def held_glyph_copy(e: Event, visible: str, pos: tuple, base: Event) -> bool:
+        if (not static_glyphs.get(base.source_index) or
+                e.source_index in animated_sources or len(visible) != 1 or
+                e.style != base.style or e.name != base.name or
+                e.start_s < base.start_s or e.end_s > base.end_s):
+            return False
+        matches = [(piece,paint) for piece,text,anchor,paint in
+                   static_glyphs.get(base.source_index,[]) if text == visible and
+                   math.dist(pos,anchor) <= .001]
+        if len(matches) != 1:
+            return False
+        piece,paint = matches[0]
+        return (e.layer == piece.layer and placement_key(e) == placement_key(piece) and
+                state_key(e,{'pos'}) == state_key(piece,{'pos'}) and
+                state_key(e,{'pos','an'}) == paint and
+                static_object_key(e,e.styles) is not None)
 
     # Index each style's original row order by start time. Prefix maximum
     # ends keep earlier long-running captions in the candidate window.
@@ -4227,6 +4555,9 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
                                     for text,x in anchors[base.source_index])):
                         candidates.append(base)
         for base in candidates:
+            if held_glyph_copy(e,visible,pos,base):
+                removed.add(e.source_index)
+                break
             # A substring and nearby anchor do not identify an effect copy.
             # Compare the source fragment layout: assembly may change the
             # row's alignment and scales, but not its font or caption identity.
