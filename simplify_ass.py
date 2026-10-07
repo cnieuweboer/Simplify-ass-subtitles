@@ -26,6 +26,7 @@ if sys.version_info < (3, 10):
              f"(running {sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}).")
 
 import argparse
+import collections
 import codecs
 from bisect import bisect_left, bisect_right
 import math
@@ -40,7 +41,7 @@ from itertools import islice
 from pathlib import Path
 from typing import Iterable
 
-__version__ = "2026.10.07.92"
+__version__ = "2026.10.07.100"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -148,6 +149,9 @@ class TextRow:
     foreground: list[Event] = field(default_factory=list)
     confirmed: bool = False
     virtual: bool = False
+    # Optional protected cue core proved by source phase correspondence.
+    # The overlap pass preserves every activation point inside this interval.
+    phase_core: tuple[float, float] | None = None
 
     @property
     def anchors(self) -> list[tuple[str, float]]:
@@ -697,6 +701,25 @@ def upright_text_state(state: dict, *, include_shadow: bool = False,
     return (visible and
             all(state.get(k,100) > .01 for k in ('fscx','fscy')) and
             unrotated_text_state(state))
+
+
+def animated_shadow_painted_source(e: Event, sources: dict[int,Event] | None,
+                                   animated: set[int]) -> bool:
+    """Recognize source text painted exclusively by an animated shadow."""
+    original = (sources or {}).get(e.source_index)
+    if original is None or original.kind != 'Dialogue' or e.source_index not in animated:
+        return False
+    state = effective_state(original.text,original.defaults,original.styles)
+    if (state.get('1a',0) < 254 or state.get('3a',0) < 254 or
+            state.get('borderstyle',1) != 1 or
+            state.get('p',0) or any(k in state for k in ('clip','iclip','org')) or
+            get_pos(original.text) is None or re.search(r'\\move\s*\(',original.text,re.I) or
+            inline_layout_key(dataclass_replace(original,state=state)) or
+            not any(abs(state.get(k,state.get('shad',0))) > 0 for k in ('xshad','yshad'))):
+        return False
+    return not any(tag in {'alpha','1a','3a','r'}
+                   for name,value in event_override_tokens(original) if name == 't'
+                   for tag,_ in tokenize_override(value.strip('()')))
 
 
 def upright_transform_pose(base: dict, transforms: list, times: list[float],
@@ -2385,8 +2408,7 @@ def flatten_aggressive_text_copies(events: list[Event],
         # size. The output paint is uniform and opaque by design in level 1.
         # Dominantly visible foreground paint may be slightly translucent.
         # Prefer its actual compositing order over an opaque backing fill.
-        candidates = ([e for e in group if e.state.get('4a',0) < 254] if static_shadow_text else
-                      group if shadow_text else
+        candidates = ([e for e in group if e.state.get('4a',0) < 254] if static_shadow_text or shadow_text else
                       [e for e in group if e.state.get("1a",255) < 128] if solid_stack else
                       [e for e in group if e.state.get("1a",255) == 0])
         chosen = max(candidates,key=lambda e:(
@@ -2395,7 +2417,20 @@ def flatten_aggressive_text_copies(events: list[Event],
             e.source_index))
         state = chosen.state
         outlines = [e.state for e in group]
-        if static_shadow_text:
+        if shadow_text:
+            # Animated shadow-painted letters still have real foreground
+            # paint. Keep the established frozen glyph anchor while removing
+            # shadow jitter; use the top visible contour below the fill rather
+            # than conflicting lower glow colours. Effects become opaque.
+            state = {**state,'1c':state.get('4c','FFFFFF'),'1a':0}
+            contours = [e for e in group if e.state.get('4a',0) < 254 and
+                        max(e.state.get(k,e.state.get('bord',0))
+                            for k in ('xbord','ybord')) > 0]
+            contour = max(contours,key=lambda e:(
+                int(e.layer) if e.layer.lstrip('-').isdigit() else 0,e.source_index)) if contours else None
+            outlines = ([{**contour.state,'3c':contour.state.get('4c','000000'),'3a':0}]
+                        if contour is not None else [])
+        elif static_shadow_text:
             dx = state.get('xshad',state.get('shad',0))
             dy = state.get('yshad',state.get('shad',0))
             state = {**state,'pos':(key[-2][0]+dx,key[-2][1]+dy),
@@ -2404,7 +2439,7 @@ def flatten_aggressive_text_copies(events: list[Event],
                          '3a':e.state.get('4a',0)} for e in group]
         text = aggressive_caption(state, OVERRIDE_RE.sub("", chosen.text),
                                   outline_states=outlines)
-        kept.append(replace_event(chosen, text=text, layer="0", effect="",
+        kept.append(replace_event(chosen, text=text, layer=chosen.layer if shadow_text else "0", effect="",
                             source_index=min(e.source_index for e in group),
                             lyric=chosen.lyric or static_shadow_text))
         removed += len(group)-1
@@ -2949,12 +2984,15 @@ def literal_font_spans(e: Event) -> tuple[tuple[str,str],...] | None:
 
 
 def parse_effect_transform(value: str, duration: float,
-                           allowed: set[str]) -> tuple[float,float,list[tuple[str,str]]] | None:
+                           allowed: set[str], *, allow_instant: bool = False,
+                           allow_after_end: bool = False) -> tuple[float,float,list[tuple[str,str]]] | None:
     """Validate one transform used as evidence for an effect family.
 
     Resolve all four ASS timing forms, requiring forward finite timing and
-    positive acceleration. These proofs allow at most 50 ms of endpoint
+    positive acceleration. Instant alpha handoffs can opt into equal endpoints.
+    These proofs allow at most 50 ms of endpoint
     rounding; the general static freezer retains its more permissive parsing.
+    Geometry-only paint proofs may allow transforms ending after the cue.
     Each matcher supplies the tags that its own effect can safely change.
     """
     prefix,sep,tail = value[1:-1].partition('\\')
@@ -2965,7 +3003,8 @@ def parse_effect_transform(value: str, duration: float,
     changes = tokenize_override('\\'+tail)
     begin,end = args[:2] if len(args) >= 2 else (0,1000*duration)
     if (not sep or len(args) > 3 or not all(math.isfinite(v) for v in args) or
-            not 0 <= begin < end <= 1000*duration+50 or
+            not 0 <= begin <= end or not allow_after_end and end > 1000*duration+50 or
+            not allow_instant and begin == end or
             len(args) in (1,3) and args[-1] <= 0 or
             any(tag not in allowed for tag,value in changes)):
         return None
@@ -2992,6 +3031,187 @@ def parse_effect_move(value: str, duration: float, *,
             len(nums) == 6 and not 0 <= nums[4] < nums[5] <= 1000*duration+endpoint_slack):
         return None
     return nums
+
+
+def collapse_shrinking_glyph_rows(events: dict[int,Event],
+                                  metric: FontSpacing | None,
+                                  max_blur: float) -> tuple[dict[int,Event],int]:
+    """Use a held caption for its complete moving, shrinking, fading row.
+
+    Work before freezing/merging glyphs loses their source identity. Every
+    layer must spell the whole caption and match its exact-font anchors at
+    the held size. Paint copies may differ; the retained caption supplies
+    formatting. Touching entrances and copies within the hold share that proof.
+    Without a unique held owner, keep the existing simplification.
+    """
+    if metric is None or not metric.available:
+        return events,0
+    # Reject unrelated families before parsing transforms or freezing holds.
+    # Every accepted shrinking fade must explicitly change both scale axes
+    # and at least one visible alpha channel inside a moving source event.
+    families = {(e.style,e.name) for e in events.values()
+                if e.kind == 'Dialogue' and
+                re.search(r'\\move\s*\(',e.text) and
+                re.search(r'\\t\s*\(',e.text) and
+                re.search(r'\\fscx(?=[^A-Za-z]|$)',e.text) and
+                re.search(r'\\fscy(?=[^A-Za-z]|$)',e.text) and
+                re.search(r'\\(?:alpha|[13]a)(?=[^A-Za-z]|$)',e.text)}
+    families &= {(e.style,e.name) for e in events.values()
+                 if (e.style,e.name) in families and e.kind == 'Dialogue' and
+                 re.search(r'\\pos\s*\(',e.text) and
+                 not re.search(r'\\move\s*\(',e.text) and
+                 len(OVERRIDE_RE.sub('',e.text).strip()) >= 3}
+    if not families:
+        return events,0
+
+    def geometry(e: Event) -> tuple:
+        return (e.style,e.name,placement_key(e),
+                tuple((k,v) for k,v in text_layout_key(e)
+                      if k not in {'fscx','fscy'}))
+
+    groups, captions = {}, {}
+    for original in events.values():
+        if (original.kind != 'Dialogue' or original.duration <= 0 or
+                (original.style,original.name) not in families or
+                not re.search(r'\\(?:move|pos)\s*\(',original.text) or
+                inline_layout_key(original)):
+            continue
+        tokens = event_override_tokens(original)
+        moves = [v for k,v in tokens if k == 'move']
+        transforms = [v for k,v in tokens if k == 't']
+        text = simplify_text(original.text,visible_only=True)[1]
+        if not text:
+            continue
+        state = effective_state(original.text,original.defaults,original.styles)
+        e = dataclass_replace(original,state=state)
+        if (not unrotated_text_state(state) or state.get('p',0) or
+                state.get('borderstyle',1) != 1 or
+                any(k in state for k in ('clip','iclip','org')) or
+                any(abs(state.get(k,0)) > .001 for k in ('fax','fay')) or
+                any(k in {'fad','fade','k','K','kf','ko'} for k,v in tokens)):
+            continue
+        if not moves and len(text.strip()) >= 3 and get_pos(e.text) is not None:
+            # A held caption may fade, but its font and geometry must stay held.
+            if any(any(k not in {'alpha','1a','2a','3a','4a'}
+                       for k,v in tokenize_override('\\'+value[1:-1].partition('\\')[2]))
+                   for value in transforms):
+                continue
+            frozen,visible,drawings = simplify_visual_text(
+                e.text,max_blur,e.duration,e.defaults,e.styles,1,
+                upright_crossings=False)
+            held = replace_event(e,text=frozen)
+            if drawings or visible != text or held.state.get('1a',0) != 0:
+                continue
+            for boundary in (e.start_s,e.end_s):
+                captions.setdefault(geometry(held),{}).setdefault(boundary,[]).append(held)
+            continue
+        if (len(text) != 1 or text.isspace() or unicodedata.combining(text) or
+                len(moves) != 1 or len(transforms) != 1 or get_pos(e.text) is not None):
+            continue
+        move = parse_effect_move(moves[0],e.duration,endpoint_slack=50)
+        transform = parse_effect_transform(transforms[0],e.duration,
+                                           {'fscx','fscy','alpha','1a','2a','3a','4a','blur','be'})
+        if (move is None or transform is None or
+                transform[0] >= 1000*e.duration or
+                len(move) == 6 and move[4] >= 1000*e.duration or
+                abs(move[0]-move[2]) > e.unit):
+            continue
+        final = state.copy()
+        for tag,value in transform[2]:
+            apply_tag(final,tag,value,e.styles,e.defaults)
+        if (not all(0 < final.get(k,100) < state.get(k,100) for k in ('fscx','fscy')) or
+                final.get('1a',0) != 255 or final.get('3a',0) != 255 or
+                state.get('1a',0) == 255 and
+                (state.get('3a',0) == 255 or state.get('bord',0) <= 0)):
+            continue
+        key = (geometry(e),e.start_s,e.end_s,e.layer)
+        groups.setdefault(key,[]).append((e,text,move))
+
+    caption_index = {key:(sorted(times),times) for key,times in captions.items()}
+    proposals = []
+    for (key,start,end,layer),peers in groups.items():
+        peers.sort(key=lambda item:item[2][0])
+        if len(peers) < 3 or len({m[0] for e,c,m in peers}) != len(peers):
+            continue
+        owners = []
+        for time,helds in nearby_boundary_groups(caption_index,key,end):
+            # Extend touching entrances; an existing hold can also cover the
+            # whole burst. Never bridge a real gap or erase a partial overlap.
+            if abs(time-end) > 1e-6:
+                continue
+            for held in helds:
+                literal = simplify_text(held.text,visible_only=True)[1]
+                if ''.join(c for e,c,m in peers) != ''.join(literal.split()):
+                    continue
+                pos = get_pos(held.text)
+                height = held.state.get('fs',20)*held.state.get('fscy',100)/100
+                if (held.duration < end-start or
+                        not (held.start_s == end or
+                             held.start_s <= start and held.end_s >= end) or
+                        any(abs(y-pos[1]) > .3*height for e,c,m in peers
+                            for y in (m[1],m[3])) or
+                        not metric.matches_authored_glyph_positions(
+                            held.state,[m[0] for e,c,m in peers],literal,pos[0],held.unit)):
+                    continue
+                owners.append(held)
+        if len(owners) == 1:
+            proposals.append((start,end,layer,peers,owners[0]))
+
+    # Ambiguous repetitions at one boundary cannot share ownership. Different
+    # paint layers of the same complete row deliberately share a caption.
+    claims = {}
+    for start,end,layer,peers,held in proposals:
+        key = (held.source_index,layer,end)
+        claims[key] = claims.get(key,0)+1
+    removed, replacements = set(), {}
+    for start,end,layer,peers,held in proposals:
+        if claims[(held.source_index,layer,end)] != 1:
+            continue
+        removed.update(e.source_index for e,c,m in peers)
+        previous = replacements.get(held.source_index,held)
+        if start < previous.start_s:
+            replacements[held.source_index] = replace_event(
+                held,start=format_time(start),start_s=start)
+    if not removed:
+        return events,0
+    # Extending an entrance must not revive a preceding caption that was
+    # already completely transparent. A single validated terminal alpha
+    # transform proves a clean handoff; visible/ambiguous overlaps stay intact.
+    for current in list(replacements.values()):
+        original = events[current.source_index]
+        if current.start_s >= original.start_s:
+            continue
+        preceding = [held for time,holds in nearby_boundary_groups(
+                         caption_index,geometry(current),original.start_s)
+                     for held in holds if held.source_index != current.source_index and
+                     held.end_s == original.start_s and held.start_s < current.start_s and
+                     held.layer == current.layer and get_pos(held.text) == get_pos(current.text)]
+        if len(preceding) != 1:
+            continue
+        held = preceding[0]
+        source = events[held.source_index]
+        transforms = [v for k,v in event_override_tokens(source) if k == 't']
+        if len(transforms) != 1:
+            continue
+        fade = parse_effect_transform(transforms[0],source.duration,
+            {'alpha','1a','2a','3a','4a'},allow_instant=True)
+        if fade is None or source.start_s+fade[1]/1000 > original.start_s+1e-6:
+            continue
+        final = effective_state(source.text,source.defaults,source.styles)
+        for tag,value in fade[2]:
+            apply_tag(final,tag,value,source.styles,source.defaults)
+        if not all(final.get(k,0) == 255 for k in ('1a','3a','4a')):
+            continue
+        finish = source.start_s+fade[1]/1000
+        previous = replacements.get(held.source_index,held)
+        replacements[held.source_index] = replace_event(
+            previous,end=format_time(finish),end_s=finish)
+        # If the preceding source stays visible for part of the entrance,
+        # delay the replacement caption to its fade boundary. Keep real gaps.
+        if finish > current.start_s:
+            replacements[current.source_index] = replace_event(
+                current,start=format_time(finish),start_s=finish)
+    return {idx:replacements.get(idx,e) for idx,e in events.items() if idx not in removed},len(removed)
 
 
 def collapse_moving_glyph_sequences(events: list[Event], visible_map: dict[int,str],
@@ -3971,6 +4191,136 @@ def match_nested_glyph_copies(events: list[Event], visible_map: dict[int,str],
             for index in members}
 
 
+def match_staggered_full_line_copies(events: list[Event], visible_map: dict[int,str],
+                                     metric: FontSpacing | None) -> set[int]:
+    """Match complete, near-coextensive glyph rows to retained full captions.
+
+    Exact font advances and the authored spaces prove the whole row, including
+    style-based caption placement. Actor labels may differ, but each letter
+    row keeps its own label/layer and needs exactly one owner. Keep the full
+    caption's formatting and timing; staggered copy lead-ins/tails are effects.
+    """
+    if metric is None or not metric.available:
+        return set()
+    captions, groups, unpositioned = [], {}, {}
+
+    def geometry(e: Event) -> tuple:
+        return (e.style,placement_key(e)[0],
+                tuple((k,str(v).casefold() if k == 'fn' else v)
+                      for k,v in text_layout_key(e) if k != 'an'),
+                (int(e.state.get('an',2))-1)%3)
+
+    for e in events:
+        word = visible_map.get(e.source_index,'')
+        if e.kind != 'Dialogue' or not word or e.duration <= 0:
+            continue
+        pos = get_pos(e.text)
+        if pos is None and not e.state.get('p',0):
+            collision_layer = int(e.layer) if e.layer.lstrip('+-').isdigit() else 0
+            unpositioned.setdefault((collision_layer,(int(e.state.get('an',2))-1)//3),[]).append(e)
+        if (not e.layer.lstrip('-').isdigit() or e.state.get('1a',0) != 0 or
+                e.state.get('p',0) or e.state.get('borderstyle',1) != 1 or
+                inline_layout_key(e) or not unrotated_text_state(e.state) or
+                any(k in e.state for k in ('clip','iclip','org')) or
+                any(abs(e.state.get(k,0)) > .001 for k in ('fax','fay'))):
+            continue
+        if len(word) == 1 and not word.isspace() and pos is not None:
+            key = (geometry(e),e.name,e.layer,e.row)
+            groups.setdefault(key,[]).append(e)
+        elif len(''.join(word.split())) >= 3:
+            captions.append(e)
+    if not captions or not groups:
+        return set()
+
+    # Default ASS placement can shift under collision handling. Only isolated
+    # unpositioned captions prove a baseline, even across different styles.
+    colliding = set()
+    for peers in unpositioned.values():
+        previous = None
+        for e in sorted(peers,key=lambda item:item.start_s):
+            if previous is not None and e.start_s < previous.end_s:
+                colliding.update((previous.source_index,e.source_index))
+            if previous is None or e.end_s > previous.end_s:
+                previous = e
+    indexes = {}
+    for (key,name,layer,row),peers in groups.items():
+        ordered = sorted(peers,key=lambda e:e.start_s)
+        indexes.setdefault(key,[]).append((int(layer),[e.start_s for e in ordered],ordered))
+
+    proposals = []
+    for full in captions:
+        key = geometry(full)
+        families = indexes.get(key,[])
+        if not families or full.source_index in colliding:
+            continue
+        pos = get_pos(full.text)
+        canvas = full.state.get('_canvas')
+        alignment = int(full.state.get('an',2))
+        if alignment not in range(1,10) or static_object_key(
+                full,full.styles,allow_unpositioned=True) is None:
+            continue
+        left,right,vertical = placement_key(full)[0]
+        height = text_height(full)
+        if pos is None:
+            if canvas is None:
+                continue
+            width,canvas_height = canvas
+            horizontal = (alignment-1)%3
+            pos = (left if horizontal == 0 else width-right if horizontal == 2 else
+                   (left+width-right)/2,
+                   canvas_height-vertical if alignment <= 3 else
+                   canvas_height/2 if alignment <= 6 else vertical)
+        center_y = pos[1]+((alignment-1)//3-1)*height/2
+        text = visible_map[full.source_index]
+        # Stagger may grow with a long cue. Bound both endpoints and shared
+        # visibility relative to that cue instead of assuming a fixed delay.
+        allowance = .2*full.duration
+        for layer,starts,peers in families:
+            if layer > int(full.layer):
+                continue
+            candidates = peers[bisect_left(starts,full.start_s-allowance-1e-6):
+                               bisect_right(starts,full.start_s+allowance+1e-6)]
+            candidates = [e for e in candidates
+                if abs(e.end_s-full.end_s) <= allowance+1e-6 and
+                   min(e.end_s,full.end_s)-max(e.start_s,full.start_s) >=
+                        .8*max(e.duration,full.duration)-1e-6 and
+                   e.state.get('1c') == full.state.get('1c') and
+                   abs(get_pos(e.text)[1]+((int(e.state.get('an',5))-1)//3-1)*
+                       text_height(e)/2-center_y) <= full.unit]
+            candidates.sort(key=lambda e:get_pos(e.text)[0])
+            if (len(candidates) != len(''.join(text.split())) or
+                    ''.join(visible_map[e.source_index] for e in candidates) != ''.join(text.split()) or
+                    len({get_pos(e.text)[0] for e in candidates}) != len(candidates) or
+                    not metric.matches_authored_glyph_positions(
+                        full.state,[get_pos(e.text)[0] for e in candidates],text,pos[0],full.unit)):
+                continue
+            # A caption that wraps is not the single row the letters prove.
+            # Explicit no-wrap formatting can intentionally span the canvas.
+            if full.state.get('q') != 2:
+                if canvas is None:
+                    continue
+                face = metric.matching_face(str(full.state.get('fn','')),
+                    bool(full.state.get('b',0)),bool(full.state.get('i',0)))
+                try:
+                    span = (metric.measure(face,text,bool(full.state.get('kerning',False)))*
+                            metric.ass_em_scale(face)*full.state.get('fs',20)*
+                            full.state.get('fscx',100)/100/1024+
+                            full.state.get('fsp',0)*full.state.get('fscx',100)/100*(len(text)-1))
+                except (OSError,ValueError,RuntimeError,TypeError):
+                    continue
+                if span > canvas[0]-left-right+full.unit:
+                    continue
+            if any(static_object_key(e,e.styles) is None for e in candidates):
+                continue
+            proposals.append({e.source_index for e in candidates})
+    owners = {}
+    for members in proposals:
+        for index in members:
+            owners[index] = owners.get(index,0)+1
+    return {index for members in proposals if all(owners[i] == 1 for i in members)
+            for index in members}
+
+
 def remove_letters_over_full_lines(events: list[Event],
                                    visible_map: dict[int, str],
                                    source_events: dict[int, Event] | None = None,
@@ -3979,8 +4329,8 @@ def remove_letters_over_full_lines(events: list[Event],
     """Use retained full lines or word fragments over proven letter copies.
 
     Match complete text and placement, using either equal timing or paired
-    entrance/exit rows. Near-coextensive word-fragment copies additionally
-    require exact-font glyph positions. Nearby letters alone never prove
+    entrance/exit rows. Near-coextensive full-line and word-fragment copies
+    additionally require exact-font glyph positions. Nearby letters alone never prove
     caption ownership. Complete shadow backings can supply authored text and
     its anchor, while matching opaque fragments supply foreground paint.
     """
@@ -3990,6 +4340,7 @@ def remove_letters_over_full_lines(events: list[Event],
             groups.setdefault((e.style,e.name,e.start,e.end,e.row,
                                e.margin_l,e.margin_r,e.margin_v),[]).append(e)
     removed = match_nested_glyph_copies(events,visible_map,font_spacing)
+    removed.update(match_staggered_full_line_copies(events,visible_map,font_spacing))
     replacements: dict[int,Event] = {}
     norm = lambda value: "".join(value.split()).casefold()
     if source_events is not None and row_evidence is not None:
@@ -4075,6 +4426,31 @@ def remove_letters_over_full_lines(events: list[Event],
             if e.source_index not in removed], len(removed)
 
 
+def fit_cubic_points(expected: tuple, actual: tuple, *,
+                     scale: float | None = None,
+                     y_offset: float | None = None) -> tuple | None:
+    """Fit matching contour commands with one uniform scale and translation."""
+    if len(expected) != len(actual) or any(
+            (isinstance(a,str) or isinstance(b,str)) and a != b for a,b in zip(expected,actual)):
+        return None
+    ep = [v for v in expected if not isinstance(v,str)]
+    ap = [v for v in actual if not isinstance(v,str)]
+    if len(ep) < 6 or not all(math.isfinite(v) for v in ep+ap):
+        return None
+    ex,ey,ax,ay = [p[axis::2] for p in (ep,ap) for axis in (0,1)]
+    ex0,ey0,ax0,ay0 = map(statistics.mean,(ex,ey,ax,ay))
+    denominator = sum((x-ex0)**2+(y-ey0)**2 for x,y in zip(ex,ey))
+    if denominator <= 0:
+        return None
+    if scale is None:
+        scale = sum((x-ex0)*(a-ax0)+(y-ey0)*(b-ay0)
+                    for x,y,a,b in zip(ex,ey,ax,ay))/denominator
+    tx,ty = ax0-scale*ex0,ay0-scale*ey0
+    error = max(math.hypot(a-(scale*x+tx),b-(scale*y+(ty if y_offset is None else y_offset)))
+                for x,y,a,b in zip(ex,ey,ax,ay))
+    return scale,tx,ty,error
+
+
 class FontSpacing:
     """Recover spaces from exact font advances and a consistent row geometry.
 
@@ -4087,6 +4463,8 @@ class FontSpacing:
         self.loaded = {}
         self.font_bytes = {}
         self.glyph_fragments = {}
+        self.cubic_outlines = {}
+        self.outline_profiles = {}
         self.ass_em_scales = {}
         self.missing = set()
         self.merged = 0
@@ -4287,7 +4665,129 @@ class FontSpacing:
                     font.close()
         return self.glyph_fragments[key]
 
-    def recover(self, ordered, fragments):
+    def cubic_outline(self, face, text: str) -> tuple | None:
+        """Cache exact-face contour topology and points for requested text.
+
+        Font coordinates remain unscaled; callers must prove size, placement
+        and cue ownership separately. Quadratic curves are converted exactly
+        to cubics, and composite glyphs use the same decomposed pen path.
+        Contextual shaping and missing glyphs cannot authorize recovery.
+        """
+        path,index,cmap = face
+        key = (path,index,text)
+        if key not in self.cubic_outlines:
+            self.cubic_outlines[key] = None
+            font = None
+            try:
+                from fontTools.ttLib import TTFont
+                from fontTools.pens.basePen import BasePen
+                if any(ord(c) not in cmap or unicodedata.combining(c) or
+                       unicodedata.bidirectional(c) in {'R','AL','AN'} for c in text):
+                    return None
+                if path not in self.font_bytes:
+                    self.font_bytes[path] = Path(path).read_bytes()
+                font = TTFont(BytesIO(self.font_bytes[path]),fontNumber=index,lazy=True)
+                glyphs, mapping = font.getGlyphSet(),font.getBestCmap()
+                class CubicPen(BasePen):
+                    def __init__(self):
+                        super().__init__(glyphs)
+                        self.offset, self.tokens = 0.0, []
+                    def add(self, op, *points):
+                        self.tokens.append(op)
+                        for x,y in points:
+                            self.tokens.extend((x+self.offset,-y))
+                    def _moveTo(self,p): self.add('m',p)
+                    def _lineTo(self,p): self.add('l',p)
+                    def _curveToOne(self,a,b,c): self.add('b',a,b,c)
+                    def _qCurveToOne(self,b,c):
+                        a = self._getCurrentPoint()
+                        self._curveToOne(tuple((x+2*y)/3 for x,y in zip(a,b)),
+                                         tuple((x+2*y)/3 for x,y in zip(c,b)),c)
+                    def _closePath(self): pass
+                    def _endPath(self): raise ValueError('Open font contour')
+                pen = CubicPen()
+                for char in text:
+                    glyph = glyphs[mapping[ord(char)]]
+                    glyph.draw(pen)
+                    pen.offset += glyph.width
+                if (not pen.tokens or not pen.offset or
+                        abs(self.measure(face,text,False)*font['head'].unitsPerEm/1024-
+                            pen.offset) > font['head'].unitsPerEm/1024):
+                    return None
+                self.cubic_outlines[key] = (tuple(pen.tokens),font['head'].unitsPerEm)
+            except Exception:
+                pass  # Unreadable/unsupported outlines are not evidence.
+            finally:
+                if font is not None:
+                    font.close()
+        return self.cubic_outlines[key]
+
+    def decode_cubic_outline(self, face, path: tuple, fs: float, unit: float,
+                             alphabet: set[str]) -> str | None:
+        """Read only an unambiguous exact-font contour/advance sequence.
+
+        Search printable ASCII plus literal characters present in the input,
+        rather than loading every installed font's glyphs. Every glyph must
+        share the first glyph's scale/baseline, and every gap must fit measured
+        advances/spaces. Ambiguity or a bounded search overflow rejects the run.
+        This is font geometry matching, with no language/word heuristics.
+        """
+        nominal = self.ass_em_scale(face)
+        if nominal is None or not math.isfinite(fs) or fs <= 0:
+            return None
+        characters = tuple(sorted(char for char in set(map(chr,range(33,127)))|alphabet
+                                  if not char.isspace() and ord(char) in face[2]))
+        key = (*face[:2],characters)
+        if key not in self.outline_profiles:
+            profiles = []
+            for char in characters:
+                if self.fragmented_glyph(face,char) is True:
+                    continue  # Grain/stamp fonts remain decorative effects.
+                outline = self.cubic_outline(face,char)
+                if outline is not None:
+                    profiles.append((char,outline[0],outline[1],
+                                     self.measure(face,char)*outline[1]/1024))
+            self.outline_profiles[key] = profiles
+        profiles = self.outline_profiles[key]
+        if not profiles:
+            return None
+        em = profiles[0][2]
+        nominal *= fs/em
+        space = self.measure(face,' ')*em/1024
+        if space <= 0:
+            return None
+        tolerance = max(unit,.04*fs)
+        options = [(0,'',None,None,None,None)]
+        completed = set()
+        examined = 0
+        while options:
+            offset,text,scale,y,last_x,last_advance = options.pop()
+            examined += 1
+            if examined > 4096 or len(options) > 32:
+                return None
+            if offset == len(path):
+                completed.add(text)
+                if len(completed) > 1:
+                    return None
+                continue
+            for char,model,em,advance in profiles:
+                fitted = fit_cubic_points(model,path[offset:offset+len(model)],scale=scale,y_offset=y)
+                if fitted is None:
+                    continue
+                factor,x,baseline,error = fitted
+                if abs(factor-nominal) > .2*nominal or error > tolerance:
+                    continue
+                spaces = 0
+                if last_x is not None:
+                    gap = x-last_x-last_advance*factor
+                    spaces = round(gap/(space*factor))
+                    if spaces < 0 or spaces > 3 or abs(gap-spaces*space*factor) > tolerance:
+                        continue
+                options.append((offset+len(model),text+' '*spaces+char,factor,
+                                baseline if y is None else y,x,advance))
+        return next(iter(completed)) if len(completed) == 1 else None
+
+    def recover(self, ordered, fragments, *, max_size_error: float | None = None):
         if not self.available or len(ordered) < 4:
             return None
         import unicodedata
@@ -4371,6 +4871,10 @@ class FontSpacing:
         if len(ranked)>1 and ranked[1][1][0]-ranked[0][1][0] < .02:
             return None
         bits, (_,factor) = ranked[0]
+        if max_size_error is not None:
+            nominal = self.ass_em_scale(face)
+            if nominal is None or abs(factor-nominal) > max_size_error*nominal:
+                return None
         # Entirely spaced rows cannot calibrate a no-space reference. Keep
         # them as ambiguity evidence, but only emit mixed or unbroken fits.
         if 0 not in bits:
@@ -4478,7 +4982,8 @@ class FontSpacing:
     def fragment_anchor(self, state: dict, xs: list[float], fragments: list[str],
                         text: str, unit: float, *, allow_tracking: bool = False,
                         separate_glyphs: bool = False,
-                        exact_size: bool = False) -> float | None:
+                        exact_size: bool = False,
+                        max_size_error: float | None = None) -> float | None:
         """Fit an authored fragment anchor to exact-font glyph positions.
 
         Calibrate the font's common size convention from the recorded run;
@@ -4529,6 +5034,10 @@ class FontSpacing:
                 any(abs(b-a-factor*w-gap) > 1.5*unit
                     for a,b,w,gap in zip(xs,xs[1:],advances,gaps))):
             return None
+        if max_size_error is not None:
+            nominal = self.ass_em_scale(face)
+            if nominal is None or abs(factor-nominal) > max_size_error*nominal:
+                return None
         if exact_size:
             factor = self.ass_em_scale(face)
             if factor is None:
@@ -4543,6 +5052,52 @@ class FontSpacing:
                 tracking*(anchor*(len(text.strip())-len(fragments[0]))+
                           (anchor-1)*(len(text)-len(text.lstrip()))+
                           anchor*(len(text)-len(text.rstrip()))))
+
+    def authored_glyph_positions(self, state: dict,
+                                         text: str, anchor_x: float,
+                                         unit: float) -> list[tuple[str,float]] | None:
+        """Measure a known caption's separate glyph anchors, including spaces.
+
+        Use its held size and ASS font metrics rather than fitting a new size.
+        Reject contextual shaping that changes the individual glyph advances.
+        """
+        if (not self.available or
+                any(unicodedata.combining(c) or
+                    unicodedata.bidirectional(c) in {'R','AL','AN'} for c in text) or
+                any(c in text for c in ('\\','\n','\r','\t'))):
+            return None
+        face = self.matching_face(str(state.get('fn','')),bool(state.get('b',0)),bool(state.get('i',0)))
+        if face is None or any(ord(c) not in face[2] for c in text):
+            return None
+        factor = self.ass_em_scale(face)
+        alignment = int(state.get('an',5))
+        if factor is None or alignment not in range(1,10):
+            return None
+        scale = state.get('fs',20)*state.get('fscx',100)/100/1024*factor
+        tracking = state.get('fsp',0)*state.get('fscx',100)/100
+        try:
+            kerning = bool(state.get('kerning',False))
+            widths = [self.measure(face,c,kerning)*scale for c in text]
+            width = self.measure(face,text,kerning)*scale
+        except (OSError,ValueError,RuntimeError):
+            return None
+        if scale <= 0 or abs(width-sum(widths)) > unit:
+            return None
+        anchor = ((alignment-1)%3)/2
+        origin = anchor_x-anchor*(width+tracking*(len(text)-1))
+        expected = []
+        for c,w in zip(text,widths):
+            if not c.isspace():
+                expected.append((c,origin+anchor*w))
+            origin += w+tracking
+        return expected
+
+    def matches_authored_glyph_positions(self, state: dict, xs: list[float],
+                                         text: str, anchor_x: float,
+                                         unit: float) -> bool:
+        expected = self.authored_glyph_positions(state,text,anchor_x,unit)
+        return (expected is not None and len(xs) == len(expected) and
+                all(abs(x-model) <= 1.5*unit for x,(_,model) in zip(xs,expected)))
 
     def fit_fullwidth_run(self, ordered: list[Event], glyphs: list[str]):
         """Fit one unbroken row against its exact font's glyph advances."""
@@ -4662,19 +5217,547 @@ def render_merged_caption(ordered: list[Event], fragments: list[str], text: str,
     return body
 
 
+def collapse_translated_phase_rows(events: list[Event], visible: dict[int,str],
+                                   metric: FontSpacing | None
+                                   ) -> tuple[list[Event],int,list[TextRow]]:
+    """Flatten complete authored rows with measured entrance/translation phases.
+
+    Touching before/after fragments prove a shared horizontal translation.
+    The exact font and authored spaces must account for every glyph in the
+    initial row and its held backing. Short bounce/fade phases may then vary
+    in paint and grouping; moving syllables need a touching held successor.
+    Without translation, at least four changing entrance fragments are needed.
+    Missing text, competing persistent neighbors or shared ownership reject
+    the cue. Neither actor names nor fixed effect timings/coordinates matter.
+    """
+    if metric is None or not getattr(metric,'available',False):
+        return events,0,[]
+    cues = [e for e in events if e.kind == 'Comment' and e.duration > 0]
+    if not cues:
+        return events,0,[]
+    cue_styles = {e.style for e in cues}
+    allids = {e.source_index:e for e in events}
+    def basic(e):
+        return (e.style,placement_key(e),tuple((k,v) for k,v in text_layout_key(e)
+                if k not in {'fscx','fscy','fax','fay'}))
+    def motion_profiles():
+        keys, poses, words, begins, ends, eligible = {}, {}, {}, {}, {}, []
+        for e in events:
+            word, pos = visible.get(e.source_index,''), get_pos(e.text)
+            if (e.kind != 'Dialogue' or e.style not in cue_styles or not word or pos is None or e.duration <= 0 or
+                    any(c.isspace() for c in word) or inline_layout_key(e) or
+                    not opaque_text_effect_state(e.state) or not unrotated_text_state(e.state) or
+                    static_object_key(e,e.styles) is None):
+                continue
+            key = basic(e)
+            keys[e.source_index], poses[e.source_index], words[e.source_index] = key,pos,word
+            eligible.append(e)
+            if not any(abs(e.state.get(k,0)) > .001 for k in ('fax','fay')):
+                begins.setdefault((key,round(e.start_s,2)),[]).append(e)
+                ends.setdefault((key,round(e.end_s,2)),[]).append(e)
+        def matches(peers,target):
+            peers = sorted(peers,key=lambda e:poses[e.source_index][0])
+            spans = index_fragment_spans(words[e.source_index] for e in peers)
+            output = []
+            for a,b in matching_fragment_spans(spans,words[target.source_index]):
+                row = peers[a:b+1]
+                if (len({state_key(p,{'pos'}) for p in row}) != 1 or
+                        any(abs(poses[p.source_index][1]-poses[target.source_index][1]) > .001 for p in row)):
+                    continue
+                anchor = metric.fragment_anchor(row[0].state,[poses[p.source_index][0] for p in row],
+                    [words[p.source_index] for p in row],words[target.source_index],target.unit,
+                    separate_glyphs=all(len(words[p.source_index]) == 1 for p in row),max_size_error=.1)
+                if anchor is not None:
+                    output.append((row,anchor))
+            return output
+        proposals = []
+        for e in eligible:
+            key, pos = keys[e.source_index],poses[e.source_index]
+            left = matches(ends.get((key,round(e.start_s,2)),[]),e)
+            right = matches(begins.get((key,round(e.end_s,2)),[]),e)
+            options = []
+            for before,bx in left:
+                for after,ax in right:
+                    delta = ax-bx
+                    if (state_key(before[0],{'pos'}) != state_key(after[0],{'pos'}) or
+                            abs(delta) <= e.unit or not min(ax,bx)-e.unit <= pos[0] <= max(ax,bx)+e.unit):
+                        continue
+                    if (len(before) == len(after) and any(
+                            abs(poses[b.source_index][0]-poses[a.source_index][0]-delta) > 1.5*e.unit
+                            for a,b in zip(before,after))):
+                        continue
+                    options.append((before,after,delta))
+            if len(options) == 1:
+                before,after,delta = options[0]
+                ids = {e.source_index}|{p.source_index for p in before+after}
+                proposals.append((ids,after,e,before,delta))
+        claims = {}
+        for ids,after,e,before,delta in proposals:
+            for index in ids:
+                claims[index] = claims.get(index,0)+1
+        return [p for p in proposals if all(claims[index] == 1 for index in p[0])]
+    profiles = motion_profiles()
+    pool = {}
+    for e in events:
+        w = visible.get(e.source_index, '')
+        p = get_pos(e.text)
+        if (e.kind == 'Dialogue' and e.style in cue_styles and w and p and (e.duration > 0)
+            and (not inline_layout_key(e)) and (static_object_key(e, e.styles) is not None)
+            and unrotated_text_state(e.state) and (not any((k in e.state for k in ['clip', 'iclip', 'org'])))):
+            pool.setdefault(e.style, []).append(e)
+    proposals = []
+    for cue in cues:
+        text = simplify_text(cue.text, visible_only=True)[1]
+        if len(''.join(text.split())) < 4 or cue.duration <= 0:
+            continue
+        # Scale lead-in/tail allowances with the cue, not a fixed time limit.
+        window = 0.25 * cue.duration
+        seeds = [p for p in profiles if p[2].style == cue.style and cue.start_s - 0.011 <= p[2].start_s
+            and (p[2].end_s <= cue.end_s + 0.011)]
+        if seeds:
+            k = basic(seeds[0][3][0])
+            delta = statistics.median((p[4] for p in seeds))
+            if any((basic(p[3][0]) != k or abs(p[4] - delta) > p[2].unit + 0.1 * text_height(p[2]) for p in seeds)):
+                continue
+            sample = seeds[0][3][0]
+            y = get_pos(sample.text)[1]
+        else:
+            options = [e for e in pool.get(cue.style, []) if opaque_text_effect_state(e.state)
+                and e.start_s <= cue.start_s + window and (e.end_s >= cue.end_s - window)
+                and (e.duration >= 0.5 * cue.duration) and (not any((abs(e.state.get(k, 0)) > 0.001 for k in ['fax',
+                'fay'])))]
+            if not options:
+                continue
+            sample = max(options, key=lambda e: e.duration)
+            k = basic(sample)
+            delta = 0
+            y = get_pos(sample.text)[1]
+        positions = metric.authored_glyph_positions(sample.state, text, 0, sample.unit)
+        if not positions:
+            continue
+        candidates = [e for e in pool.get(cue.style, []) if basic(e) == k
+            and cue.start_s - window - 0.001 <= e.start_s <= cue.start_s + window + 0.001
+            and (e.end_s <= cue.end_s + window + 0.001)
+            and (abs(get_pos(e.text)[1] - y) <= 0.25 * text_height(sample)) and (not any((abs(e.state.get(k,
+            0)) > 0.001 for k in ['fax', 'fay']))) and (e.state.get('fscx') == sample.state.get('fscx'))
+            and (e.state.get('fscy') == sample.state.get('fscy')) and (e.state.get('1c') == sample.state.get('1c'))]
+        # Full font geometry must account for every authored nonspace glyph.
+        first = [e for e in candidates if visible[e.source_index] == positions[0][0]]
+        models = {}
+        glyph_spans = index_fragment_spans(c for c,x in positions)
+        for e in first:
+            center = get_pos(e.text)[0] - positions[0][1]
+            matches = [[p for p in candidates if visible[p.source_index] == char
+                and abs(get_pos(p.text)[0] - (center + offset)) <= 1.5 * sample.unit] for char, offset in positions]
+            for ids, new, phase, before, d in seeds:
+                for b in before:
+                    word = visible[b.source_index]
+                    if len(word) <= 1:
+                        continue
+                    for a, z in matching_fragment_spans(glyph_spans, word):
+                        gp = metric.authored_glyph_positions(sample.state, word, 0, sample.unit)
+                        if (gp
+                            and abs(get_pos(b.text)[0] - (center + positions[a][1] - gp[0][1])) <= sample.unit + 0.1 * text_height(sample)):
+                            for i in range(a, z + 1):
+                                matches[i].append(b)
+            if any((not m for m in matches)):
+                continue
+            if (seeds and any((not all((any((p.source_index == b.source_index for m in matches for p in m))
+                for b in before)) for ids, new, p, before, d in seeds))):
+                continue
+            models[round(center, 1)] = (center, matches)
+        if len(models) != 1:
+            continue
+        center, matches = next(iter(models.values()))
+        xs = [center + x for c, x in positions]
+        initial_start = (min([b.start_s for ids, new, phase, before, d in seeds for b in before] + [p.start_s
+            for group in matches for p in group if (p.end_s > cue.start_s + 0.011 or abs(p.end_s-cue.start_s) < .001)
+            and abs(get_pos(p.text)[1] - y) <= sample.unit and (state_key(p, {'pos'}) == state_key(sample, {'pos'}))],
+            default=cue.start_s))
+        spans = glyph_spans
+
+        options_cache = {}
+        def span_options(e, dx=0, travel=False):
+            key = (e.source_index,dx,travel)
+            if key in options_cache:
+                return options_cache[key]
+            word = visible[e.source_index]
+            poss = []
+            for a, b in matching_fragment_spans(spans, ''.join(word.split())):
+                anchor = (metric.fragment_anchor(sample.state, xs[a:b + 1], [c for c, x in positions[a:b + 1]], word,
+                    sample.unit) if not any((c.isspace() for c in word)) else None)
+                if anchor is None:
+                    if any((c.isspace() for c in word)):
+                        g = metric.authored_glyph_positions(sample.state, word, 0, sample.unit)
+                        if g and len(g) == b - a + 1:
+                            anchor = xs[a] - g[0][1]
+                        if (anchor is not None and (not metric.matches_authored_glyph_positions(sample.state,
+                            xs[a:b + 1], word, anchor, sample.unit))):
+                            anchor = None
+                if anchor is not None:
+                    px, py = get_pos(e.text)
+                    if (min(anchor, anchor + dx) - sample.unit <= px <= max(anchor, anchor + dx) + sample.unit
+                        if travel else abs(px - anchor - dx) <= sample.unit + 0.1 * text_height(sample)):
+                        poss.append((a, b))
+            options_cache[key] = poss
+            return poss
+        before_ids = {p.source_index for ids,after,phase,before,d in seeds for p in before}
+        after_ids = {p.source_index for ids,after,phase,before,d in seeds for p in after}
+        effect_ends = {}
+        for p in pool.get(cue.style,[]):
+            changing = (any(abs(p.state.get(q,0)) > .001 for q in ('fax','fay')) or
+                        any(p.state.get(q) != sample.state.get(q) for q in ('fscx','fscy')))
+            if (basic(p) == k and changing and opaque_text_effect_state(p.state) and
+                    cue.start_s-.011 <= p.start_s < cue.end_s and
+                    abs(get_pos(p.text)[1]-y) <= sample.unit):
+                effect_ends.setdefault(round(p.end_s,2),[]).append(p)
+        stable = []
+        entrances = []
+        pulses = []
+        for e in pool.get(cue.style, []):
+            if (basic(e) != k or e.start_s < cue.start_s - window - 0.001 or e.end_s > cue.end_s + window + 0.001
+                or (e.start_s >= cue.end_s + window) or (e.end_s <= cue.start_s - window)):
+                continue
+            w = visible[e.source_index]
+            px, py = get_pos(e.text)
+            flat = (not any((abs(e.state.get(q, 0)) > 0.001 for q in ['fax', 'fay']))
+                and all((e.state.get(q) == sample.state.get(q) for q in ['fscx', 'fscy'])))
+            if flat and state_key(e, {'pos'}) == state_key(sample, {'pos'}) and (abs(py - y) <= sample.unit):
+                oldopts = span_options(e)
+                newopts = span_options(e, delta)
+                if e.source_index in after_ids:
+                    opts = set(newopts)
+                elif e.source_index in before_ids:
+                    opts = set(oldopts)
+                elif e.end_s < cue.end_s - window:
+                    if seeds and e.start_s < initial_start - 0.011:
+                        continue
+                    opts = set(oldopts)
+                elif e.start_s >= cue.start_s + window:
+                    opts = set(newopts)
+                else:
+                    opts = set(oldopts + newopts)
+                if len(opts) == 1 and e.start_s >= cue.end_s and e.source_index not in after_ids:
+                    # A late held tail needs its own touching effect phase.
+                    # The next cue's entrance cannot be backing for this row.
+                    opts = {span for span in opts if any(
+                        abs(p.end_s-e.start_s) <= .001 and any(
+                            max(span[0],ab[0]) <= min(span[1],ab[1])
+                            for ab in span_options(p,delta,True))
+                        for p in effect_ends.get(round(e.start_s,2),[]))}
+                if len(opts) == 1:
+                    stable.append((e, next(iter(opts))))
+                    continue
+            if (flat and e.duration <= window + 0.001 and (e.start_s <= cue.start_s + window)
+                and (e.end_s <= cue.start_s + window) and (abs(py - y) <= 0.25 * text_height(sample))
+                and (e.state.get('1c') == sample.state.get('1c'))):
+                opts = span_options(e)
+                if not opts:
+                    # A prior simplification may have mistaken a narrow
+                    # letter for a space in an entrance prefix. Match every
+                    # rendered glyph to the complete row instead of trusting
+                    # that partial transcript. Missing held glyphs still
+                    # reject the whole cue below.
+                    recorded = metric.authored_glyph_positions(
+                        e.state,visible[e.source_index],px,e.unit)
+                    owners = [[i for i,(c,x) in enumerate(zip(
+                        [c for c,x in positions],xs)) if c == char and
+                        abs(x-gx) <= sample.unit+.2*text_height(sample)]
+                        for char,gx in (recorded or [])]
+                    if (len(owners) >= 4 and all(len(indices) == 1 for indices in owners) and
+                            all(a[0] < b[0] for a,b in zip(owners,owners[1:]))):
+                        opts = [(owners[0][0],owners[-1][0])]
+                if len(opts) == 1:
+                    entrances.append((e, opts[0]))
+                    continue
+            if (delta and not flat and opaque_text_effect_state(e.state) and abs(py - y) <= sample.unit
+                and (cue.start_s - 0.011 <= e.start_s) and e.start_s < cue.end_s
+                and (e.end_s <= cue.end_s + window + 0.001)):
+                pulses.append((e,span_options(e,delta,True)))
+        # An earlier merge may already hold a whole phrase over a later
+        # syllable pulse. Its measured translated span proves that pulse too;
+        # do not require the held event to begin again at every word boundary.
+        covered_pulses = []
+        for e,options in pulses:
+            covered = [span for span in options if all(
+                any(a <= i <= b and p.start_s <= e.end_s+.001 and p.end_s > e.end_s+.011 and
+                    (a,b) in span_options(p,delta) for p,(a,b) in stable)
+                for i in range(span[0],span[1]+1))]
+            # Repeated words can have overlapping travel segments. Their
+            # exact occurrence is immaterial when the complete held caption
+            # already contains every candidate; ownership is still cue-wide.
+            if covered:
+                covered_pulses.append((e,covered[0]))
+        pulses = covered_pulses
+        if any((not any((a <= i <= b for e, (a, b) in stable)) for i in range(len(positions)))):
+            continue
+        # Static matching fragments alone do not prove an animation.
+        changed = {ab for e, ab in entrances if abs(get_pos(e.text)[1] - y) > e.unit or e.state.get('1a', 0) > 0}
+        if not seeds and len(changed) < 4:
+            continue
+        if seeds and len(seeds) < 2 and (len(pulses) < 3 or
+                sum(len(visible[e.source_index]) > 1 for e,span in pulses) < 2):
+            continue
+        # Every glyph needs completed held backing, not only an early fragment.
+        if any(not any(a <= i <= b and p.end_s >= cue.end_s-window and
+                       (a,b) in span_options(p,delta) for p,(a,b) in stable)
+               for i in range(len(positions))):
+            continue
+        members = [e for e, span in stable + entrances + pulses]
+        ids = {e.source_index for e in members}
+        if seeds:
+            ids.update((i for pi, new, e, before, d in seeds for i in pi))
+            members = [allids[i] for i in ids]
+        blockers = [e for e in pool.get(cue.style, []) if basic(e) == k and e.source_index not in ids
+            and (cue.start_s - 0.011 <= e.start_s < cue.end_s) and (min(e.end_s, cue.end_s) - max(e.start_s,
+            cue.start_s) >= 0.5 * min(e.duration, cue.duration)) and (e.duration >= window)
+            and (abs(get_pos(e.text)[1] - y) <= 0.25 * text_height(sample))
+            and (xs[0] - text_height(sample) <= get_pos(e.text)[0] <= xs[-1] + text_height(sample))]
+        if blockers:
+            continue
+        body = render_merged_caption([sample],[text],text,animated=False,
+            an=int(sample.state.get('an',5)),pos=(center+delta,y),
+            fscx=sample.state.get('fscx',100),fscy=sample.state.get('fscy',100),
+            fsp=sample.state.get('fsp',0))
+        if body is None:
+            continue
+        start = min((e.start_s for e in members))
+        end = max((e.end_s for e in members))
+        base = min(members, key=lambda e: e.source_index)
+        caption = (replace_event(base, layer=sample.layer, text=body, start=format_time(start), start_s=start,
+            end=format_time(end), end_s=end))
+        core = (cue.start_s,cue.end_s) if start < cue.start_s < cue.end_s < end else None
+        # Supply the verified glyph anchors even when an earlier pass already
+        # combined the held backing into one event. Its center alone is not
+        # the row's horizontal extent for the shared overlap pass.
+        pieces = [(replace_event(sample,text=aggressive_caption(
+            {**sample.state,'pos':(x+delta,y)},char)),char,(x+delta,y))
+            for (char,offset),x in zip(positions,xs)]
+        row = TextRow(caption,pieces,phase_core=core)
+        proposals.append((ids, row, text))
+    # Resolve ownership across complete cues, never greedily by event order.
+    claims = collections.Counter((i for ids, e, t in proposals for i in ids))
+    accepted = [p for p in proposals if all((claims[i] == 1 for i in p[0]))]
+    ids = set().union(*(p[0] for p in accepted)) if accepted else set()
+    out = [e for e in events if e.source_index not in ids]+[row.base for ids,row,t in accepted]
+    for ids,row,t in accepted:
+        visible[row.base.source_index] = t
+        metric.merged += 1
+    return sorted(out,key=lambda e:e.source_index),len(events)-len(out),[row for ids,row,t in accepted]
+
+
+
+
+def collapse_fragment_phase_rows(events: list[Event], visible_map: dict[int,str],
+                                  metric: FontSpacing | None
+                                  ) -> tuple[list[Event],int,list[TextRow]]:
+    """Assemble rows whose touching phases change fragment granularity.
+
+    Exact-font anchors connect smaller fragments to the same completed word
+    or syllable. Any number of same-anchor phases may follow. Ordered word
+    activation and a shared terminal paint prove a complete readable row;
+    event names, animation tags and particular colours are not evidence.
+    Missing, competing or multiply claimed phases reject the whole cue.
+    """
+    if metric is None or not getattr(metric,'available',False):
+        return events,0,[]
+    eligible, words, geometry, positions = [], {}, {}, {}
+    for e in events:
+        word = visible_map.get(e.source_index,'')
+        pos = get_pos(e.text)
+        if (e.kind != 'Dialogue' or not word or pos is None or e.duration <= 0 or
+                any(c.isspace() or unicodedata.combining(c) or
+                    unicodedata.bidirectional(c) in {'R','AL','AN'} for c in word) or
+                inline_layout_key(e) or not opaque_text_effect_state(e.state) or
+                not unrotated_text_state(e.state) or
+                static_object_key(e,e.styles) is None):
+            continue
+        # Vertical exit compression does not change horizontal glyph anchors.
+        # A matched earlier completed phase supplies its readable height.
+        key = (e.style,placement_key(e),tuple((k,v) for k,v in text_layout_key(e)
+                                             if k != 'fscy'),round(pos[1],4))
+        eligible.append(e)
+        words[e.source_index],geometry[e.source_index],positions[e.source_index] = word,key,pos
+    endings, anchored_starts, anchored_ends = {}, {}, {}
+    for e in eligible:
+        key = geometry[e.source_index]
+        endings.setdefault((key,round(e.end_s,2)),[]).append(e)
+        anchor = (key,positions[e.source_index],words[e.source_index])
+        anchored_starts.setdefault((*anchor,round(e.start_s,2)),[]).append(e)
+        anchored_ends.setdefault((*anchor,round(e.end_s,2)),[]).append(e)
+    for group in endings.values():
+        group.sort(key=lambda e:positions[e.source_index][0])
+    # Lookup is local to a centisecond phase boundary, rather than comparing
+    # every event with every other event in a font/row family.
+    def before(e):
+        key = (geometry[e.source_index],positions[e.source_index],words[e.source_index],round(e.start_s,2))
+        return [p for p in anchored_ends.get(key,[])
+                if abs(p.end_s-e.start_s) <= .001]
+
+    def profile(tail):
+        chain, current = [tail],tail
+        while True:
+            peers = before(current)
+            if not peers:
+                break
+            if len(peers) != 1:
+                return None
+            current = peers[0]
+            chain.append(current)
+        word = words[tail.source_index]
+        peers = (endings.get((geometry[tail.source_index],round(current.start_s,2)),[])
+                 if len(word) > 1 else [])
+        matches = []
+        for offset,p in enumerate(peers):
+            if not word.startswith(words[p.source_index]):
+                continue
+            pieces, text = [],''
+            for index in range(offset,len(peers)):
+                p = peers[index]
+                if abs(p.end_s-current.start_s) > .001:
+                    break
+                pieces.append(p)
+                text += words[p.source_index]
+                if not word.startswith(text):
+                    break
+                if text == word:
+                    xs = [positions[p.source_index][0] for p in pieces]
+                    if len(pieces) > 1 and (any(b <= a for a,b in zip(xs,xs[1:])) or
+                            len({state_key(p,{'pos'}) for p in pieces}) != 1):
+                        break
+                    anchor = metric.fragment_anchor(tail.state,xs,
+                        [words[p.source_index] for p in pieces],word,tail.unit,exact_size=True)
+                    if anchor is not None and abs(anchor-positions[tail.source_index][0]) <= .25*tail.unit:
+                        matches.append(pieces)
+                    break
+        if len(matches) != 1:
+            # Single-letter phases have already been traversed by before().
+            # They participate only alongside proven multi-fragment joins.
+            if matches or len(word) != 1 or len(chain) < 2:
+                return None
+            pieces = [chain.pop()]
+            current = chain[-1]
+        else:
+            pieces = matches[0]
+        members = pieces+chain
+        if (min(p.end_s for p in members)-max(p.start_s for p in pieces) <= .011 or
+                any(p.source_index == q.source_index for i,p in enumerate(members) for q in members[:i])):
+            return None
+        tail = replace_event(tail,text=aggressive_caption(
+            {**tail.state,'fscy':current.state.get('fscy',100)},word))
+        return (tail,members,min(p.start_s for p in pieces),current.start_s,
+                tail.start_s,len(pieces) > 1)
+
+    families = {}
+    for e in eligible:
+        paint = tuple(e.state.get(k,e.defaults.get(k,0)) for k in
+                      ('1c','3c','4c','1a','3a','4a','bord','xbord','ybord',
+                       'shad','xshad','yshad','blur','be'))
+        key = (geometry[e.source_index],e.layer,paint)
+        anchor = (geometry[e.source_index],positions[e.source_index],words[e.source_index],round(e.end_s,2))
+        successors = [p for p in anchored_starts.get(anchor,[])
+                      if abs(e.end_s-p.start_s) <= .001]
+        if not successors:
+            families.setdefault(key,[]).append((e,profile(e)))
+    proposals = []
+    for family in families.values():
+        if sum(p is not None and p[-1] for e,p in family) < 2:
+            continue
+        for direction in (1,-1):
+            sequence, cues = [],[]
+            for e,p in sorted(family,key=lambda pair:((pair[1][3] if pair[1] else pair[0].start_s),
+                                                    direction*positions[pair[0].source_index][0])):
+                start = p[2] if p else e.start_s
+                if sequence and (direction*(positions[e.source_index][0]-positions[sequence[-1][0].source_index][0]) <= e.unit or
+                                 start >= min(q.end_s for q,_ in sequence)-.011):
+                    cues.append(sequence);sequence=[]
+                sequence.append((e,p))
+            cues.append(sequence)
+            for cue in cues:
+                if len(cue) < 4 or any(p is None for e,p in cue) or sum(p[-1] for e,p in cue) < 2:
+                    continue
+                if (any(b[1][3] <= a[1][3]+.011 or b[1][4] < a[1][4]-.011
+                        for a,b in zip(cue,cue[1:])) or
+                        any(b[0].end_s < a[0].end_s-.011 for a,b in zip(cue,cue[1:]))):
+                    continue
+                held = sorted((p[0] for e,p in cue),key=lambda e:positions[e.source_index][0])
+                if len({state_key(e,{'pos'}) for e in held}) != 1:
+                    continue
+                fragments = [words[e.source_index] for e in held]
+                fit = metric.recover(held,fragments)
+                if fit is None:
+                    continue
+                text,x,sx,sy,an = fit
+                body = render_merged_caption(held,fragments,text,animated=False,an=an,
+                    pos=(x,statistics.median(positions[e.source_index][1] for e in held)),fscx=sx,fscy=sy)
+                if body is None:
+                    continue
+                ids = frozenset(m.source_index for e,p in cue for m in p[1])
+                if len(ids) != sum(len(p[1]) for e,p in cue):
+                    continue
+                start,end = min(p[2] for e,p in cue),max(e.end_s for e,p in cue)
+                core = (min(p[3] for e,p in cue),max(p[3] for e,p in cue))
+                if not start < core[0] < core[1] < end:
+                    continue
+                first = min(held,key=lambda e:e.source_index)
+                caption = replace_event(first,text=body,start=format_time(start),start_s=start,
+                    end=format_time(end),end_s=end,source_index=min(ids))
+                row = TextRow(caption,[(e,words[e.source_index],positions[e.source_index]) for e in held],
+                              phase_core=core)
+                proposals.append((ids,row,text))
+    # An unmatched nearby fragment may be a missing part of this cue. Do not
+    # turn a failed boundary or font match into a partial reconstructed line.
+    # Other complete proposals are known neighbouring cues, not missing text.
+    proposed_ids = set().union(*(ids for ids,row,text in proposals)) if proposals else set()
+    blockers = {}
+    for e in eligible:
+        if e.source_index not in proposed_ids:
+            key = (e.style,placement_key(e),round(positions[e.source_index][1],4))
+            blockers.setdefault(key,[]).append(e)
+    complete = []
+    for ids,row,text in proposals:
+        e = row.pieces[0][0]
+        key = (e.style,placement_key(e),round(row.pieces[0][2][1],4))
+        xs = [pos[0] for piece,word,pos in row.pieces]
+        start,end = row.phase_core
+        reach = 2*min(text_height(piece) for piece,word,pos in row.pieces)
+        if not any(min(xs)-reach <= positions[p.source_index][0] <= max(xs)+reach and
+                   min(end,p.end_s)-max(start,p.start_s) >= .5*min(end-start,p.duration)
+                   for p in blockers.get(key,[])):
+            complete.append((ids,row,text))
+    # A phase belongs to exactly one complete caption; no greedy ownership.
+    unique = {ids:(row,text) for ids,row,text in complete}
+    claims = {}
+    for ids in unique:
+        for index in ids:
+            claims[index] = claims.get(index,0)+1
+    accepted = [(ids,row,text) for ids,(row,text) in unique.items()
+                if all(claims[index] == 1 for index in ids)]
+    consumed = set().union(*(ids for ids,row,text in accepted)) if accepted else set()
+    rows = [row for ids,row,text in accepted]
+    for ids,row,text in accepted:
+        visible_map[row.base.source_index] = text
+        metric.merged += 1
+    output = [e for e in events if e.source_index not in consumed]+[row.base for row in rows]
+    return sorted(output,key=lambda e:e.source_index),len(events)-len(output),rows
+
+
 def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
                           space_map: dict[tuple,set[float]],
                           font_spacing: FontSpacing | None,
                           animated_sources: set[int],
                           source_rows: list[TextRow] | None = None,
                           source_only: bool = False, *,
-                          static_only: bool = False) -> tuple[list[Event],int,int,list[TextRow]]:
+                          static_only: bool = False,
+                          source_events: dict[int,Event] | None = None) -> tuple[list[Event],int,int,list[TextRow]]:
     """Reconstruct static and animated rows with shared evidence and rendering.
 
-    Static fragments must share their complete timing and effective styling.
-    Extending timings requires animation evidence for every fragment, monotonic
-    starts and ends, and overlapping visibility. A chain without a common
-    interval also requires exact-font spacing recovery. Spaces come from authored
+    Static rows share effective styling and equal timing. A timing fallback
+    also accepts equal-paint fragments sharing 80% of their complete interval,
+    with exact-font spacing evidence. Longer sweeps require animation evidence
+    for every fragment, monotonic starts and ends, and overlapping visibility.
+    A chain without a common interval also requires exact-font spacing recovery.
+    Spaces come from authored
     text, explicit blank positions, or measured advances in the exact font.
     Persistent matching row neighbors cannot occupy gaps between fragments.
     If spacing is unproven, preserve the original fragment positions and timing.
@@ -4703,6 +5786,7 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
     replacements: dict[int,Event] = {}
     row_evidence: dict[int,TextRow] = {}
     chain_families: set[tuple] = set()
+    coextensive_rows: set[int] = set()
     duplicate_count = merged_count = 0
 
     # Collapse paint copies only at the same position, with matching text,
@@ -4760,7 +5844,8 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
         if e.kind == "Comment":
             comments.setdefault(e.style,[]).append((e,simplify_text(e.text,visible_only=True)[1]))
 
-    def occupied_gap(ordered: list[Event], start: float, end: float) -> bool:
+    def occupied_gap(ordered: list[Event], start: float, end: float, *,
+                     complete_row: bool = False) -> bool:
         # Font advances cannot distinguish real spaces from omitted letters.
         # Persistent matching row neighbors must belong to the candidate row.
         xs = [get_pos(e.text)[0] for e in ordered]
@@ -4769,7 +5854,10 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
         height = min(text_height(e) for e in ordered)
         members = {e.source_index for e in ordered}
         (positions,spatial),(starts,temporal) = neighbors[base_key(ordered[0])]
-        left,right = bisect_right(positions,xs[0]+tolerance),bisect_left(positions,xs[-1]-tolerance)
+        reach = 2*height if complete_row else 0
+        left,right = ((bisect_left(positions,xs[0]-reach),bisect_right(positions,xs[-1]+reach))
+                      if complete_row else
+                      (bisect_right(positions,xs[0]+tolerance),bisect_left(positions,xs[-1]-tolerance)))
         # Mutual 50% overlap implies a nearby start. These broad bounds keep
         # past/future cues out before the exact lifetime and geometry checks.
         early,late = bisect_left(starts,start-(end-start)),bisect_left(starts,end)
@@ -4782,6 +5870,12 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
                 continue
             gap = bisect_left(xs,px)
             if 0 < gap < len(xs) and xs[gap-1]+tolerance < px < xs[gap]-tolerance:
+                return True
+            # Timing similarity can select only the middle of a longer row.
+            # Near-coextensive candidates need the nearby edge glyphs too;
+            # otherwise their partial model could falsely identify a new cue.
+            if complete_row and (xs[0]-2*min(height,peer_height) <= px <= xs[0]+tolerance or
+                                 xs[-1]-tolerance <= px <= xs[-1]+2*min(height,peer_height)):
                 return True
         return False
 
@@ -4884,7 +5978,7 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
                 merged_count += len(removed)-before
                 font_spacing.merged += 1
 
-    def join(run: list[Event], animated: bool) -> bool:
+    def join(run: list[Event], animated: bool, *, coextensive: bool = False) -> bool:
         nonlocal merged_count
         if len(run) < 2 or any(e.source_index in removed or
                               e.source_index in replacements for e in run):
@@ -4899,6 +5993,12 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
             return False
         start,end = min(e.start_s for e in run),max(e.end_s for e in run)
         shared_interval = min(e.end_s for e in run)-max(e.start_s for e in run) > quantum
+        if coextensive and (len(run) < 4 or
+                min(e.end_s for e in run)-max(e.start_s for e in run) < .8*(end-start)-1e-6 or
+                any(e.layer != run[0].layer or e.state.get('1a',0) != 0 or
+                    base_key(e) != base_key(run[0]) or
+                    state_key(e,{'pos'}) != state_key(run[0],{'pos'}) for e in run)):
+            return False
         if animated:
             # Span decoration can vary; font metrics and paragraph geometry
             # must agree even when a proven source row bypasses grouping.
@@ -4913,7 +6013,7 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
                             for direction in (1,-1))):
                 return False
         y = statistics.median(ys)
-        if occupied_gap(ordered,start,end):
+        if occupied_gap(ordered,start,end,complete_row=coextensive):
             return False
         fragments = [visible_map[e.source_index] for e in ordered]
         norm = lambda value: "".join(value.split())
@@ -4936,7 +6036,8 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
                     for a,b,part in zip(xs,xs[1:],fragments[1:]))
         measured = False
         tracking = None
-        if text is None and font_spacing is not None:
+        expected_text = text
+        if (text is None or coextensive) and font_spacing is not None:
             # Karaoke pulses can leave different sampled scales per glyph.
             # Animated rows share their median scale; static rows are exact.
             metric_row = [dataclass_replace(e,state={**e.state,"fscx":sx,"fscy":sy})
@@ -4960,6 +6061,9 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
                     text = "".join(fragments)
                     alignment = int(ordered[0].state.get("an",5))
                     measured = True
+        if coextensive and (not measured or expected_text is not None and
+                            expected_text.split() != text.split()):
+            return False
         if text is None or animated and not shared_interval and not measured:
             return False
         chosen = ordered[0]
@@ -4968,14 +6072,21 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
         if body is None:
             return False
         first = min(e.source_index for e in run)
+        # Preserve the visible shadow-painted foreground above independent
+        # decorative glyphs. Other animation reducers retain their established
+        # layer normalization; their phase/echo matching relies on that order.
+        layer = (chosen.layer if not animated or all(animated_shadow_painted_source(
+            e,source_events,animated_sources) for e in run) else '0')
         replacements[first] = replace_event(chosen,source_index=first,
             start=format_time(start),end=format_time(end),start_s=start,end_s=end,
-            text=body,effect="",layer="0" if animated else chosen.layer)
+            text=body,effect="",layer=layer)
         visible_map[first] = text
         row_evidence[first] = TextRow(replacements[first],
             [(e,text,(x,y)) for e,text,x,y in zip(ordered,fragments,xs,ys)])
         if animated and not shared_interval:
             chain_families.add(base_key(ordered[0]))
+        if coextensive:
+            coextensive_rows.add(first)
         removed.update(e.source_index for e in run if e.source_index != first)
         merged_count += len(run)-1
         if measured:
@@ -5027,6 +6138,43 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
     for run in sorted(candidates,key=lambda run:-len(run)):
         join(run,True)
 
+    # A centre-outward or irregular entrance need not be a directional sweep.
+    # Index near-coextensive equal-paint peers directly; never grow a cue by
+    # chaining pairwise overlaps. The 25% seed window is a search bound: the
+    # completed row must still share 80% of its entire union interval in join.
+    # Conflicting candidate memberships stay separate, and occupied_gap checks
+    # all original neighbors so a missing letter cannot become inferred space.
+    if font_spacing is not None and getattr(font_spacing,'available',False) and not static_only:
+        holds = {}
+        for e in eligible:
+            if (e.source_index not in protected and e.source_index not in removed and
+                    e.source_index not in replacements and e.state.get('1a',0) == 0):
+                holds.setdefault((base_key(e),e.layer,state_key(e,{'pos'})),[]).append(e)
+        proposals = {}
+        for bucket in holds.values():
+            bucket.sort(key=lambda e:e.start_s)
+            starts = [e.start_s for e in bucket]
+            seeds = {(e.start_s,e.end_s,get_pos(e.text)[1]):e for e in bucket}
+            for seed in seeds.values():
+                window = .25*seed.duration
+                row = [e for e in bucket[bisect_left(starts,seed.start_s-window):
+                                        bisect_right(starts,seed.start_s+window)]
+                       if abs(e.end_s-seed.end_s) <= window and
+                          abs(get_pos(e.text)[1]-get_pos(seed.text)[1]) <=
+                          .15*min(text_height(e),text_height(seed))]
+                if len(row) < 4 or len({(e.start,e.end) for e in row}) == 1:
+                    continue
+                start,end = min(e.start_s for e in row),max(e.end_s for e in row)
+                if min(e.end_s for e in row)-max(e.start_s for e in row) >= .8*(end-start)-1e-6:
+                    proposals.setdefault(frozenset(e.source_index for e in row),row)
+        owners = {}
+        for members in proposals:
+            for index in members:
+                owners[index] = owners.get(index,0)+1
+        for members,row in proposals.items():
+            if all(owners[index] == 1 for index in members):
+                join(row,False,coextensive=True)
+
     simultaneous: dict[tuple,list[Event]] = {}
     for e in eligible:
         if (e.source_index not in removed and e.source_index not in replacements and
@@ -5042,7 +6190,7 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
     sequences = {}
     for index,row in row_evidence.items():
         key = base_key(row.pieces[0][0])
-        if not row.virtual and key in chain_families:
+        if not row.virtual and (key in chain_families or index in coextensive_rows):
             xs = [pos[0] for piece,word,pos in row.pieces]
             sequences.setdefault(key,[]).append((index,row,min(xs),max(xs),
                 max(piece.start_s for piece,word,pos in row.pieces)))
@@ -5056,6 +6204,13 @@ def reconstruct_text_rows(events: list[Event], visible_map: dict[int,str],
                 overlap = min(right,peer_right)-max(left,peer_left)
                 if (peer.base.start_s > last_start+quantum and
                         overlap > .5*min(right-left,peer_right-peer_left)):
+                    # A near-coextensive row may have a staggered exit tail.
+                    # Trim only inside its same 20% boundary budget, after
+                    # every original fragment has appeared. Other rows retain
+                    # the established rolling-sweep timing rule.
+                    if (index in coextensive_rows and
+                            row.base.end_s-peer.base.start_s > .2*row.base.duration+quantum):
+                        continue
                     end = peer.base.start_s
                     row.base = replace_event(row.base,end=format_time(end),end_s=end)
                     replacements[index] = row.base
@@ -5703,10 +6858,129 @@ def matching_fragment_spans(index: tuple, target: str):
         offset = text.find(target,offset+1)
 
 
+def match_repeated_glyph_flashes(events: list[Event], words: dict[int,str],
+                                  positions: dict[int,tuple[float,float] | None],
+                                  metric: FontSpacing | None) -> set[int]:
+    """Prove complete repeated colour flashes over a held text row.
+
+    Use the retained fragment geometry and exact font, including the existing
+    font-size calibration for separately authored glyphs. A whole family must
+    repeat every glyph, vary its paint, and stay within the foreground cue.
+    Fixed same-layer flashes also qualify after their fades have been stripped.
+    Return membership only; the held text, paint and timing remain untouched.
+    """
+    if metric is None or not metric.available:
+        return set()
+    paint = {'c','1c','2c','3c','4c','bord','xbord','ybord','blur','be'}
+    parents, flashes = {}, {}
+    for e in events:
+        text,pos = words.get(e.source_index,''),positions.get(e.source_index)
+        if (e.kind != 'Dialogue' or not text or pos is None or e.duration <= 0 or
+                e.effect.split(';',1)[0].strip().casefold() in {'banner','scroll up','scroll down'} or
+                not e.layer.lstrip('-').isdigit() or
+                any(not math.isfinite(v) for v in (*pos,e.start_s,e.end_s))):
+            continue
+        state = e.state or effective_state(e.text,e.defaults,e.styles)
+        sample = dataclass_replace(e,state=state)
+        inline = inline_layout_key(sample)
+        profile = static_text_paint_geometry(sample,paint) if inline else None
+        if (state.get('p',0) or state.get('borderstyle',1) != 1 or
+                inline and (profile is None or len(profile[0]) != 1) or
+                not unrotated_text_state(state) or
+                any(k in state for k in ('clip','iclip','org')) or
+                any(abs(state.get(k,0)) > .001 for k in ('fax','fay'))):
+            continue
+        tokens = event_override_tokens(e)
+        if any(tag in {'move','fade','k','kf','ko','kt'} for tag,value in tokens):
+            continue
+        transforms = [value for tag,value in tokens if tag == 't']
+        if any(parse_effect_transform(value,e.duration,paint,allow_after_end=True) is None
+               for value in transforms):
+            continue
+        layout = tuple((k,str(v).casefold() if k == 'fn' else v)
+                       for k,v in text_layout_key(sample) if k != 'q')
+        key = (e.style,e.name,placement_key(sample)[0],layout)
+        border = max(state.get(k,state.get('bord',0)) for k in ('xbord','ybord'))
+        if (len(text) == 1 and not text.isspace() and border == 0 and
+                not transforms and not unicodedata.combining(text) and
+                unicodedata.bidirectional(text) not in {'R','AL','AN'}):
+            flashes.setdefault(key,{}).setdefault(e.layer,[]).append(sample)
+        elif border > 0 and state.get('1a',0) == 0:
+            parents.setdefault((key,e.layer,e.start,e.end,pos[1]),[]).append(sample)
+    indexes = {}
+    for key,layers in flashes.items():
+        indexes[key] = []
+        for peers in layers.values():
+            peers.sort(key=lambda e:e.start_s)
+            indexes[key].append(([e.start_s for e in peers],peers))
+    proposals = []
+    for (key,layer,start,end,y),row in parents.items():
+        if key not in indexes or sum(len(''.join(words[e.source_index].split())) for e in row) < 3:
+            continue
+        row.sort(key=lambda e:positions[e.source_index][0])
+        if len({positions[e.source_index][0] for e in row}) != len(row):
+            continue
+        first = row[0]
+        for starts,peers in indexes[key]:
+            candidates = [e for e in peers[bisect_left(starts,first.start_s-1e-6):
+                                           bisect_right(starts,first.end_s)]
+                          if e.end_s <= first.end_s+1e-6 and e.duration <= .25*first.duration and
+                             abs(positions[e.source_index][1]-y) <= first.unit]
+            slots = {}
+            for e in candidates:
+                slots.setdefault((positions[e.source_index][0],words[e.source_index]),[]).append(e)
+            if not slots or any(len(group) < 3 or
+                    len({e.state.get('1c') for e in group}) < 3 or
+                    max(e.end_s for e in group)-min(e.start_s for e in group) < .5*first.duration
+                    for group in slots.values()):
+                continue
+            ordered = sorted(slots)
+            ownership = [0]*len(ordered)
+            complete = True
+            for parent in row:
+                text = words[parent.source_index]
+                target = ''.join(text.split())
+                px,py = positions[parent.source_index]
+                options = []
+                for i in range(len(ordered)-len(target)+1):
+                    span = ordered[i:i+len(target)]
+                    if ''.join(c for x,c in span) != target:
+                        continue
+                    xs = [x for x,c in span]
+                    if any(b-a <= first.unit for a,b in zip(xs,xs[1:])):
+                        continue
+                    if not any(c.isspace() for c in text):
+                        anchor = metric.fragment_anchor(parent.state,xs,list(target),text,
+                                                        parent.unit,allow_tracking=True,separate_glyphs=True,
+                                                        max_size_error=.1)
+                        fits = anchor is not None and abs(anchor-px) <= 1.5*parent.unit
+                    else:
+                        glyphs = [slots[slot][0] for slot in span]
+                        fit = metric.recover(glyphs,list(target),max_size_error=.1)
+                        fits = (fit is not None and ' '.join(fit[0].split()) == ' '.join(text.split()) and
+                                (int(parent.state.get('an',5))-1)%3 == 1 and
+                                abs(fit[1]-px) <= max(1.5*parent.unit,.1*text_height(parent)))
+                    if fits:
+                        options.append(i)
+                if len(options) != 1:
+                    complete = False; break
+                for i in range(options[0],options[0]+len(target)):
+                    ownership[i] += 1
+            if complete and all(n == 1 for n in ownership):
+                proposals.append({e.source_index for group in slots.values() for e in group})
+    owners = {}
+    for members in proposals:
+        for index in members:
+            owners[index] = owners.get(index,0)+1
+    return {index for members in proposals if all(owners[i] == 1 for i in members)
+            for index in members}
+
+
 def remove_source_fragment_effects(events: list[Event], row_evidence: list[TextRow],
                                    words: dict[int,str],
                                    positions: dict[int,tuple[float,float] | None],
-                                   animated_sources: set[int] | None = None) -> tuple[list[Event],int]:
+                                   animated_sources: set[int] | None = None, *,
+                                   font_spacing: FontSpacing | None = None) -> tuple[list[Event],int]:
     """Remove effects proven by original source rows and visibility phases.
 
     Use source text and anchors before freezing or coalescing glyph lifetimes.
@@ -5720,6 +6994,7 @@ def remove_source_fragment_effects(events: list[Event], row_evidence: list[TextR
         if positions.get(e.source_index) is not None and words.get(e.source_index):
             indexed.setdefault((e.style,e.name,e.margin_l,e.margin_r,e.margin_v),[]).append(e)
     removed = match_translucent_glyph_particles(events,row_evidence,words,animated_sources)
+    removed.update(match_repeated_glyph_flashes(events,words,positions,font_spacing))
     for row in row_evidence:
         # Short rows may prove complete particle phases, but retain the older
         # minimum for the broader layered-effect and foreground-paint rules.
@@ -6278,6 +7553,15 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
         if shadow_only:
             target = target.casefold()
         yield from matching_fragment_spans(span_indexes[key],target)
+    shadow_sources = {}
+
+    def animated_shadow_source(e: Event) -> bool:
+        # Copy reduction can transfer animated shadow paint into the primary
+        # channel. Retain the original evidence when checking its highlight
+        # fragments; actor labels need not identify the same effect phase.
+        if e.source_index not in shadow_sources:
+            shadow_sources[e.source_index] = animated_shadow_painted_source(e,source_events,animated_sources)
+        return shadow_sources[e.source_index]
     layouts = {row.base.source_index: tuple(
         (key,str(value).casefold() if key == "fn" else value)
         for key,value in text_layout_key(row.pieces[0][0])
@@ -6380,10 +7664,107 @@ def remove_covered_fragment_effects(events: list[Event], visible_map: dict[int,s
     if source_events is not None:
         removed.update(match_boundary_glyph_effects(events,visible_map,source_events,font_spacing))
         removed.update(match_staggered_row_effects(events,row_evidence,source_events,animated_sources,font_spacing))
+    # A shadow-painted highlight may already have become a partial caption.
+    # Prove ownership using its recorded source fragments, before inferred
+    # tracking or its new paragraph anchor obscures the original glyph row.
+    shadow_rows = {index for index,row in models.items() if not row.virtual and
+                   row.pieces and all(animated_shadow_source(piece) for piece,_,_ in row.pieces)}
+    shadow_layers = {index:max(int(piece.layer) if piece.layer.lstrip('-').isdigit() else 0
+                             for piece,_,_ in models[index].pieces) for index in shadow_rows}
+    # Authored cue intervals protect the completed lyric while the shared
+    # overlap pass trims only the surrounding reconstructed entrance/tail.
+    # Require a complete, equally timed source glyph row and one exact cue.
+    cue_comments = {}
+    if shadow_rows:
+        for e in events:
+            if e.kind == 'Comment':
+                words = simplify_text(e.text,visible_only=True)[1]
+                cue_comments.setdefault((e.style,words),[]).append(e)
+    for index in shadow_rows:
+        row = models[index]
+        base = row.base
+        if row.phase_core is not None or not all(
+                round((source_events or {})[piece.source_index].start_s,2) == round(base.start_s,2) and
+                round((source_events or {})[piece.source_index].end_s,2) == round(base.end_s,2)
+                for piece,_,_ in row.pieces):
+            continue
+        cues = {(cue.start_s,cue.end_s) for cue in
+                cue_comments.get((base.style,visible_map.get(index,'')),[]) if
+                base.start_s < cue.start_s < cue.end_s < base.end_s}
+        if len(cues) == 1:
+            row.phase_core = next(iter(cues))
+        elif not cue_comments.get((base.style,visible_map.get(index,''))):
+            # Remuxed tracks often omit the authored Comment lines. A complete
+            # coextensive shadow row can still prove its entrance/tail from one
+            # shared fade. Animation/paint ownership was checked above; these
+            # fades supply timing only, never permission to remove other rows.
+            fades = set()
+            for piece,_,_ in row.pieces:
+                original = (source_events or {})[piece.source_index]
+                values = [value for tag,value in event_override_tokens(original) if tag == 'fad']
+                try:
+                    pair = tuple(float(v)/1000 for v in values[0].strip('()').split(','))
+                except (IndexError,ValueError):
+                    break
+                if (len(values) != 1 or len(pair) != 2 or
+                        not all(math.isfinite(v) and v > 0 for v in pair) or
+                        sum(pair) >= original.duration):
+                    break
+                fades.add(pair)
+            else:
+                if len(fades) == 1:
+                    entrance,tail = next(iter(fades))
+                    row.phase_core = (round(base.start_s+entrance,2),round(base.end_s-tail,2))
+    shadow_poses = {}
+
+    def shadow_fragment_copy(piece: Event, text: str, pos: tuple, base: Event) -> bool:
+        if (not animated_shadow_source(piece) or base.source_index not in shadow_rows or
+                piece.state.get('p',0) or inline_layout_key(piece) or
+                any(k in piece.state for k in ('clip','iclip','org')) or
+                piece.duration >= base.duration-.011 or
+                piece.start_s < base.start_s-.15 or piece.end_s > base.end_s+.15 or
+                piece.state.get('1a',0) != 0 or base.state.get('1a',0) != 0 or
+                piece.state.get('1c') != base.state.get('1c') or
+                not piece.layer.lstrip('-').isdigit() or
+                int(piece.layer) <= shadow_layers[base.source_index] or
+                placement_key(piece)[0] != placement_key(base)[0] or
+                abs(pos[1]-get_pos(base.text)[1]) > .06*min(text_height(piece),text_height(base))):
+            return False
+        if piece.source_index not in shadow_poses:
+            # The final rotation cleanup would select this same authored
+            # upright pose. Use that helper here too, so a late pulse is not
+            # mistaken for an independent angled letter merely because the
+            # initial frozen sample preceded its readable pose.
+            shadow_poses[piece.source_index] = prefer_surviving_upright_poses(
+                [piece],source_events or {})[0]
+        pose = shadow_poses[piece.source_index]
+        layout = tuple((key,str(value).casefold() if key == 'fn' else value)
+                       for key,value in text_layout_key(pose) if key not in {'fscx','fscy'})
+        if layout != layouts[base.source_index]:
+            return False
+        glyphs = anchors[base.source_index]
+        matches = [(first,last) for first,last in matching_spans(base,text,False) if
+                   abs(pos[0]-(glyphs[first][1]+glyphs[last][1])/2) <=
+                   .12*min(text_height(piece),text_height(base))]
+        return len(matches) == 1
+
+    for e in events:
+        pos = get_pos(e.text)
+        text = visible_map.get(e.source_index,'')
+        if e.kind != 'Dialogue' or not text or pos is None or e.source_index in removed:
+            continue
+        model = models.get(e.source_index)
+        pieces = model.pieces if model is not None and not model.virtual else [(e,text,pos)]
+        if not pieces or not all(animated_shadow_source(piece) for piece,_,_ in pieces):
+            continue
+        owners = [base for base in timed_rows(e.style,e) if base.source_index != e.source_index and
+                  all(shadow_fragment_copy(piece,word,point,base) for piece,word,point in pieces)]
+        if len(owners) == 1:
+            removed.add(e.source_index)
     for e in events:
         pos = get_pos(e.text)
         visible = visible_map.get(e.source_index,"")
-        if (e.kind != "Dialogue" or e.source_index in anchors or pos is None or
+        if (e.kind != "Dialogue" or e.source_index in removed or e.source_index in anchors or pos is None or
                 not visible or e.state.get("p",0) or
                 inline_layout_key(e) or "clip" in e.state or "iclip" in e.state):
             continue
@@ -6649,8 +8030,9 @@ def trim_faded_cue_overlaps(events: list[Event], rows: list[TextRow],
 
     Reconstructed rows supply their original fragment anchors. Every retained
     fragment, including separate font spans, must match complete source fade
-    entrances and tails at the cue's boundaries. Only colliding rows whose
-    non-fading cores are disjoint qualify. Ambiguous or incomplete cue groups,
+    entrances and tails at the cue's boundaries. Matched fragment phases can
+    instead supply their complete ordered word-activation interval. Only rows
+    whose protected cores are disjoint qualify. Ambiguous or incomplete groups,
     simultaneous cores and independent positions keep their original timing.
     """
     def lane(e: Event, pos: tuple[float,float], state: dict) -> tuple:
@@ -6751,6 +8133,17 @@ def trim_faded_cue_overlaps(events: list[Event], rows: list[TextRow],
     candidates = {(key,timing) for key,left,right in pairs for timing in (left,right)}
     for key,timing in candidates:
         members = groups[key][timing]
+        if len(members) == 1:
+            e = members[0]
+            evidence = provenance.get(e.source_index,[])
+            if (len(evidence) == 1 and evidence[0].phase_core is not None and
+                    evidence[0].base.text == e.text):
+                row = evidence[0]
+                start,end = row.phase_core
+                xs = [pos[0] for piece,text,pos in row.pieces]
+                proven[key,timing] = ((start,end,min(xs),max(xs))
+                    if timing[0] < start < end < timing[1] else None)
+                continue
         identities = []
         for e in members:
             evidence = provenance.get(e.source_index,[])
@@ -6896,6 +8289,324 @@ def prefer_surviving_upright_poses(events: list[Event], sources: dict[int,Event]
     return output
 
 
+def infer_vector_text_cues(runs: dict, parsed: dict[int,Event], metric: FontSpacing,
+                           authored_styles: set[str]) -> list[tuple[Event,str]]:
+    """Recover missing cue evidence only from decoded complete animation rows.
+
+    Ordered instantaneous opacity switches prove syllable activation intervals.
+    A synchronized full line may share that interval when its font, layer,
+    placement margins, frame boundaries and entrance/exit fades agree. Neither
+    guessed words nor a renderer-dependent frame rounding offset supplies timing.
+    """
+    alphabet = set()
+    for e in parsed.values():
+        if e.kind == 'Dialogue' and not re.search(r'\\p[1-9]',e.text,re.I):
+            alphabet.update(simplify_text(e.text,visible_only=True)[1])
+    families = {}
+    for style,group in runs.items():
+        if style in authored_styles:
+            continue
+        for key,items in group:
+            if len(items) < 3:
+                continue
+            lane = key[:6]+(key[6][1],key[7],round(items[0][0].start_s,2),round(items[-1][0].end_s,2))
+            families.setdefault(lane,[]).append((key,items))
+    decoded = []
+    for family in families.values():
+        family.sort(key=lambda run:run[0][6][0])
+        activations = []
+        for key,items in family:
+            first = items[0][0]
+            switches = []
+            for tag,value in event_override_tokens(first):
+                if tag != 't':
+                    continue
+                transform = parse_effect_transform(value,first.duration,{'1a','3a'},
+                    allow_instant=True,allow_after_end=True)
+                if transform is None or transform[0] != transform[1]:
+                    continue
+                target = first.defaults.copy()
+                for name,arg in transform[2]:
+                    apply_tag(target,name,arg,first.styles,first.defaults)
+                if any(name == '1a' for name,arg in transform[2]):
+                    switches.append((first.start_s+transform[0]/1000,target.get('1a',0)))
+            if (len(switches) != 2 or switches[0][1] != 255 or switches[1][1] != 0 or
+                    switches[0][0] >= switches[1][0]):
+                break
+            activation = (switches[0][0],switches[1][0])
+            # Generated frames may retain transforms scheduled beyond their
+            # own end. Those annotations alone are not timing evidence: the
+            # subsequent frames must actually hide/show this backing glyph.
+            starts = [e.start_s for e,p,s in items]
+            def opacity_at(at):
+                offset = bisect_right(starts,at)-1
+                if offset < 0 or at >= items[offset][0].end_s:
+                    return None
+                event,_,base = items[offset]
+                transforms = []
+                for tag,value in event_override_tokens(event):
+                    if tag == 't':
+                        t = parse_effect_transform(value,event.duration,{'1a','3a','alpha'},
+                            allow_instant=True,allow_after_end=True)
+                        if t is not None:
+                            transforms.append((t[0],t[1],1,t[2]))
+                return sample_transform_state(base,transforms,1000*(at-event.start_s),
+                                              event.styles,event.defaults).get('1a',0)
+            inside = [activation[0]+fraction*(activation[1]-activation[0]) for fraction in (.25,.75)]
+            outside = [(a+b)/2 for a,b in ((items[0][0].end_s,activation[0]),
+                        (activation[1],items[-1][0].start_s)) if a < b]
+            if (not outside or any((opacity_at(at) or 0) < 254 for at in inside) or
+                    not any((value := opacity_at(at)) is not None and value < 16 for at in outside)):
+                break
+            activations.append(tuple(round(v,2) for v in activation))
+        core = None
+        if (len(activations) == len(family) and all(a[0] <= b[0] and a[1] <= b[1]
+                for a,b in zip(activations,activations[1:]))):
+            core = (activations[0][0],activations[-1][1])
+        first,last = family[0][1][0][0],family[0][1][-1][0]
+        state = family[0][1][0][2]
+        sync = (first.layer,first.name,first.margin_l,first.margin_r,first.margin_v,
+                tuple(state.get(k) for k in ('fn','fs','fscx','fscy','b','i')),
+                round(first.start_s,2),round(last.end_s,2))
+        # Require whole-frame alpha entrances and exits for cross-row timing.
+        def edge_fade(e,alpha):
+            return any(tag == 't' and not re.match(r'\(\s*'+NUMBER,value) and
+                (t := parse_effect_transform(value,e.duration,{'1a','3a'})) is not None and
+                any(k == '1a' and v.upper().removeprefix('&H').rstrip('&') == alpha
+                    for k,v in t[2]) for tag,value in event_override_tokens(e))
+        synchronized = all(edge_fade(items[0][0],'00') and edge_fade(items[-1][0],'FF')
+                           for key,items in family)
+        if core is None and not synchronized:
+            continue
+        row,words = [],[]
+        for key,items in family:
+            sample,state = items[0][0],items[0][2]
+            face = metric.matching_face(str(state.get('fn','')),bool(state.get('b',0)),False)
+            if face is None:
+                break
+            path = tuple(v if isinstance(v,str) else statistics.median(item[1][i] for item in items)
+                         for i,v in enumerate(items[0][1]))
+            try:
+                text = metric.decode_cubic_outline(face,path,state.get('fs',20),sample.unit,alphabet)
+            except (OSError,ValueError,RuntimeError):
+                text = None
+            if text is None:
+                break
+            row.append(replace_event(sample,text=aggressive_caption(state,text,p=0,fsp=0)))
+            words.append(text)
+        else:
+            if sum(c.isalnum() for text in words for c in text) < 3:
+                continue
+            text = words[0]
+            if len(row) > 1:
+                fit = metric.recover(row,words,max_size_error=.2)
+                if fit is not None:
+                    text = fit[0]
+                elif all(not any(c.isspace() for c in word) for word in words):
+                    text = ''.join(words)
+                    if metric.fragment_anchor(row[0].state,[get_pos(e.text)[0] for e in row],
+                            words,text,row[0].unit,max_size_error=.2) is None:
+                        continue
+                else:
+                    continue
+            decoded.append((family,row,words,text,core,sync,synchronized))
+    shared = {}
+    for family,row,words,text,core,sync,synchronized in decoded:
+        if core is not None and synchronized:
+            shared.setdefault(sync,set()).add(core)
+    cues = []
+    for family,row,words,text,core,sync,synchronized in decoded:
+        if core is None and synchronized and len(shared.get(sync,())) == 1:
+            core = next(iter(shared[sync]))
+        sample = family[0][1][0][0]
+        if core is None or not sample.start_s < core[0] < core[1] < family[0][1][-1][0].end_s:
+            continue
+        # Internal cue evidence only; no inferred Comment is written to output.
+        body = text if len(words) == 1 else ''.join(r'{\k0}'+word for word in words)
+        # Keep measured spaces for the caption, while fragments identify paths.
+        cues.append((replace_event(sample,kind='Comment',text=body,start=format_time(core[0]),
+            start_s=core[0],end=format_time(core[1]),end_s=core[1]),text))
+    return cues
+
+
+def recover_vector_text_cues(parsed: dict[int,Event], metric: FontSpacing | None,
+                             max_blur: float = 0.0) -> tuple[dict[int,Event],int]:
+    """Recover authored captions proven by complete exact-font drawing rows.
+
+    A comment is only a text candidate. Each whole line or karaoke fragment
+    must match the font's contour commands and control points at a plausible
+    common size, across a time-connected drawing run covering its cue. Existing
+    font spacing checks prove fragment order and authored spaces. Clipped,
+    moving, rotated, incomplete, competing and already text-backed cues reject.
+    No effect names, source-line annotations or subtitle-specific values matter.
+    """
+    if metric is None or not metric.available:
+        return parsed,0
+    cues = {}
+    for e in parsed.values():
+        if e.kind != 'Comment' or e.duration <= 0:
+            continue
+        text = simplify_text(e.text,visible_only=True)[1]
+        if (not text.strip() or re.search(r'\\[Nn]|[\r\n]',text) or
+                any(tag not in {'k','kf','ko','kt'} for tag,value in event_override_tokens(e))):
+            continue
+        cues.setdefault((e.style,e.start_s,e.end_s,text),e)
+    authored_styles = {cue.style for cue in cues.values()}
+    styles = authored_styles|{e.style for e in parsed.values() if e.kind == 'Dialogue' and
+                             re.search(r'\\p1(?![\dA-Za-z])',e.text,re.I)}
+    if not styles:
+        return parsed,0
+    groups, backing = {}, {}
+    geometry = {'fn','fs','fsp','fscx','fscy','an','b','i','u','s','pbo','encoding'}
+    transform_paint = {'alpha','1a','2a','3a','4a','c','1c','2c','3c','4c',
+                       'bord','xbord','ybord','blur','be'}
+    for e in parsed.values():
+        if e.kind != 'Dialogue' or e.style not in styles or e.duration <= 0:
+            continue
+        if not re.search(r'\\p1(?![\dA-Za-z])',e.text,re.I):
+            if simplify_text(e.text,visible_only=True)[1].strip():
+                backing.setdefault(e.style,[]).append(e)
+            continue
+        tokens = event_override_tokens(e)
+        if (inline_layout_key(e) or any(tag in {'move','clip','iclip','org','r'} or
+                tag == 't' and any(k not in transform_paint for k,v in
+                    tokenize_override(value.strip('()'))) for tag,value in tokens)):
+            continue
+        state = effective_state(e.text,e.defaults,e.styles)
+        pos = get_pos(e.text)
+        if (pos is None or state.get('p',0) != 1 or int(state.get('an',5)) != 5 or
+                state.get('pbo',0) or state.get('borderstyle',1) != 1 or
+                not unrotated_text_state(state) or any(abs(state.get(k,0)) > .001
+                    for k in ('fax','fay','u','s','i')) or
+                any(state.get(k,100) != 100 for k in ('fscx','fscy')) or
+                not all(math.isfinite(v) for v in (*pos,state.get('fs',20)))):
+            continue
+        path = geometry_key(e.text)
+        skeleton = tuple(v if isinstance(v,str) else None for v in path)
+        if not path or any(v not in {'m','l','b'} for v in path if isinstance(v,str)):
+            continue
+        key = (e.style,e.layer,e.name,e.margin_l,e.margin_r,e.margin_v,pos,
+               tuple(state.get(k,DEFAULT_STATE.get(k)) for k in sorted(geometry)),skeleton)
+        groups.setdefault(key,[]).append((e,path,state))
+    runs = {}
+    for key,items in groups.items():
+        items.sort(key=lambda item:(item[0].start_s,item[0].end_s))
+        components = []
+        latest = float('-inf')
+        for item in items:
+            if not components or item[0].start_s > latest+.011:
+                components.append([])
+            components[-1].append(item)
+            latest = max(latest,item[0].end_s)
+        for component in components:
+            if any(b[0].start_s < a[0].end_s-.001 for a,b in zip(component,component[1:])):
+                continue
+            runs.setdefault(key[0],[]).append((key,component))
+    for cue,text in infer_vector_text_cues(runs,parsed,metric,authored_styles):
+        cues.setdefault((cue.style,cue.start_s,cue.end_s,text),cue)
+    fit_cache = {}
+    def outline_fit(run, text):
+        key,items = run
+        cache_key = (items[0][0].source_index,text)
+        if cache_key in fit_cache:
+            return fit_cache[cache_key]
+        fit_cache[cache_key] = None
+        state = items[0][2]
+        face = metric.matching_face(str(state.get('fn','')),bool(state.get('b',0)),False)
+        if face is None:
+            metric.missing.add(str(state.get('fn','')))
+            return None
+        outline = metric.cubic_outline(face,text)
+        if outline is None or tuple(v if isinstance(v,str) else None for v in outline[0]) != key[-1]:
+            return None
+        sample = [items[i] for i in sorted({round(j*(len(items)-1)/4) for j in range(5)})]
+        measured = tuple(v if isinstance(v,str) else statistics.median(item[1][i] for item in sample)
+                         for i,v in enumerate(outline[0]))
+        fitted = fit_cubic_points(outline[0],measured)
+        if fitted is None:
+            return None
+        scale,_,_,error = fitted
+        nominal = metric.ass_em_scale(face)
+        if nominal is None:
+            return None
+        nominal *= state.get('fs',20)/outline[1]
+        # Font drawing exporters and renderers use different line metrics.
+        # Permit the same modest sizing variance, never arbitrary path fits.
+        tolerance = max(items[0][0].unit,.05*state.get('fs',20))
+        if nominal <= 0 or abs(scale-nominal) > .2*nominal or error > tolerance:
+            return None
+        visible = []
+        for e,path,state in sample:
+            body,_,_ = simplify_visual_text(e.text,max_blur,e.duration,e.defaults,e.styles,2)
+            frozen = replace_event(e,text=body)
+            if frozen.state.get('1a',0) < 16:
+                visible.append(frozen)
+        if not visible:
+            return None
+        chosen = max(visible,key=lambda e:e.duration)
+        result = replace_event(chosen,text=aggressive_caption(chosen.state,text,p=0))
+        fit_cache[cache_key] = result
+        return result
+    proposals = []
+    for (_,start,end,text),cue in cues.items():
+        if any(min(e.end_s,end)-max(e.start_s,start) >= .5*cue.duration
+               for e in backing.get(cue.style,())):
+            continue
+        candidates = {}
+        for run in runs.get(cue.style,()):
+            key,items = run
+            allowance = max(.25*cue.duration,2*statistics.median(e.duration for e,p,s in items))
+            if (items[0][0].start_s > start+.011 or items[-1][0].end_s < end-.011 or
+                    items[0][0].start_s < start-allowance or items[-1][0].end_s > end+allowance):
+                continue
+            lane = key[:6]+(key[6][1],key[7])
+            candidates.setdefault(lane,[]).append(run)
+        fragments = [part.strip() for part in re.split(
+            r'\{[^}]*\\[kK](?:f|o|t)?\d+[^}]*\}',cue.text) if part.strip()]
+        options = []
+        for family in candidates.values():
+            family.sort(key=lambda run:run[0][6][0])
+            words = [text] if len(family) == 1 else fragments
+            if (len(words) != len(family) or ''.join(''.join(w.split()) for w in words) !=
+                    ''.join(text.split())):
+                continue
+            row = [outline_fit(run,word) for run,word in zip(family,words)]
+            if any(e is None for e in row):
+                continue
+            x,y = get_pos(row[0].text)
+            if len(row) > 1:
+                measured = [dataclass_replace(e,state={**e.state,'fsp':0}) for e in row]
+                recovered = metric.recover(measured,words,max_size_error=.2)
+                if recovered is not None and recovered[0] == text:
+                    x = recovered[1]
+                elif not any(c.isspace() for c in text):
+                    x = metric.fragment_anchor(measured[0].state,
+                        [get_pos(e.text)[0] for e in row],words,text,row[0].unit,max_size_error=.2)
+                    if x is None:
+                        continue
+                else:
+                    continue
+            body = render_merged_caption(row,words,text,animated=True,an=5,pos=(x,y),fscx=100,fscy=100)
+            if body is None:
+                continue
+            members = {e.source_index for run in family for e,p,s in run[1]}
+            first = min(members)
+            caption = replace_event(row[0],source_index=first,text=body,start=cue.start,
+                start_s=start,end=cue.end,end_s=end,effect='')
+            options.append((members,caption))
+        if len(options) == 1:
+            proposals.append(options[0])
+    claims = collections.Counter(index for members,caption in proposals for index in members)
+    accepted = [(members,caption) for members,caption in proposals
+                if all(claims[index] == 1 for index in members)]
+    if not accepted:
+        return parsed,0
+    consumed = set().union(*(members for members,caption in accepted))
+    result = {index:e for index,e in parsed.items() if index not in consumed}
+    result.update((caption.source_index,caption) for members,caption in accepted)
+    return result,len(accepted)
+
+
 def simplify_ass(path: Path, output: Path, config: SimplifyConfig, *,
                  font_spacing: FontSpacing | None = None) -> dict[str, int]:
     if path.resolve() == output.resolve():
@@ -6943,17 +8654,24 @@ def simplify_ass(path: Path, output: Path, config: SimplifyConfig, *,
                         if re.search(r"\\(?:t\s*\(|[kK](?:f|o)?\d|fad(?:e)?\s*\(|move\s*\()", e.text)}
     source_rows = []
     source_effects = 0
+    vector_text_recovered = 0
     working_by_line = parsed_by_line
     if config.level == 1:
+        working_by_line, vector_text_recovered = recover_vector_text_cues(
+            working_by_line,font_spacing,config.max_blur)
         # Identify original cue geometry once. Existing stages consume that
         # evidence before transformations can extend a lyric through its tail.
-        working_by_line = normalize_animated_rotations(parsed_by_line)
+        working_by_line = normalize_animated_rotations(working_by_line)
+        working_by_line, shrinking_effects = collapse_shrinking_glyph_rows(
+            working_by_line,font_spacing,config.max_blur)
         source_data = collect_source_text_rows(working_by_line,animated_sources)
         source_events, source_effects = remove_source_fragment_effects(
-            list(working_by_line.values()),source_data[0],source_data[1],source_data[2],animated_sources)
+            list(working_by_line.values()),source_data[0],source_data[1],source_data[2],animated_sources,
+            font_spacing=font_spacing)
         source_events, _, _, source_rows = reconstruct_text_rows(
             source_events,source_data[1],{},None,animated_sources,
             source_rows=source_data[0],source_only=True)
+        source_effects += shrinking_effects
         working_by_line = {e.source_index:e for e in source_events}
     simplified_events: list[Event] = []
     vector_events: list[Event] = []
@@ -7101,7 +8819,7 @@ def simplify_ass(path: Path, output: Path, config: SimplifyConfig, *,
             simplified_events, visible_map,parsed_by_line,authored_rows,font_spacing=font_spacing)
         simplified_events, lyric_merged, row_duplicates, row_evidence = reconstruct_text_rows(
             simplified_events, visible_map, space_map, font_spacing, animated_sources,
-            source_rows=source_rows)
+            source_rows=source_rows,source_events=parsed_by_line)
         deduped += row_duplicates
         simplified_events, covered_fragments = remove_covered_fragment_effects(
             simplified_events, visible_map, row_evidence+authored_rows, animated_sources,parsed_by_line,font_spacing)
@@ -7159,6 +8877,20 @@ def simplify_ass(path: Path, output: Path, config: SimplifyConfig, *,
         simplified_events = compact_static_overrides(simplified_events,config.max_blur)
         simplified_events, final_duplicates = deduplicate_layers(simplified_events,visible_map)
         deduped += final_duplicates
+        # Finished geometry can connect differently divided animation phases.
+        # Run after rotation/origin cleanup, without disturbing earlier source
+        # effect proofs. The shared overlap pass owns the proven cue handoffs.
+        simplified_events, translated_merged, translated_rows = collapse_translated_phase_rows(
+            simplified_events,visible_map,font_spacing)
+        simplified_events, phase_rows_merged, phase_rows = collapse_fragment_phase_rows(
+            simplified_events,visible_map,font_spacing)
+        phase_rows = translated_rows+phase_rows
+        aggressive_sequences += translated_merged+phase_rows_merged
+        if phase_rows:
+            simplified_events, phase_overlaps = trim_faded_cue_overlaps(
+                simplified_events,phase_rows,{})
+            cue_overlaps_trimmed += phase_overlaps
+            simplified_events = compact_static_overrides(simplified_events,config.max_blur)
         # Effect removal and timing cleanup can uncover complete static rows.
         # Reuse the same source comments, spacing and neighbor checks without
         # extending lifetimes or selecting new animation/foreground paint.
@@ -7182,7 +8914,7 @@ def simplify_ass(path: Path, output: Path, config: SimplifyConfig, *,
                           ("\n" if raw.endswith(("\n", "\r")) else ""), encoding="utf-8-sig")
         return {key: 0 for key in ("original", "output", "max_concurrent_in", "max_concurrent_out",
                 "deduped", "lyric_merged",
-                "merged", "dropped", "overlap_removed", "cue_overlaps_trimmed", "full_copies_removed", "phase_merged",
+                "merged", "dropped", "overlap_removed", "cue_overlaps_trimmed", "vector_text_recovered", "full_copies_removed", "phase_merged",
                 "text_copies_removed", "vector_copies_removed", "vector_glows_removed",
                 "vector_frames_removed", "vector_output", "excess_vectors", "static_merged", "covered_vectors", "tiles_joined", "aggressive_copies", "aggressive_sequences", "staggered_rows", "overlaid_letters", "covered_fragments", "fullwidth_merged", "progressive_rows", "masked_decorations", "backdrops_retained")}
 
@@ -7208,6 +8940,7 @@ def simplify_ass(path: Path, output: Path, config: SimplifyConfig, *,
         "max_concurrent_in": max_concurrent_in,
         "max_concurrent_out": peak_concurrent_events(simplified_events),
         "backdrops_retained": backdrops_retained,
+        "vector_text_recovered": vector_text_recovered,
         "static_merged": static_merged,
         "covered_vectors": covered_vectors,
         "tiles_joined": tiles_joined,
@@ -7425,6 +9158,7 @@ def main() -> int:
                 f"drawing animation frames: {stats['vector_frames_removed']}, "
                 f"vectors retained: {stats['vector_output']}, "
                 f"caption backdrops retained: {stats['backdrops_retained']}, "
+                f"vector captions recovered: {stats['vector_text_recovered']}, "
                 f"excess vector details removed: {stats['excess_vectors']}, "
                 f"drawings/effects dropped: {stats['dropped']})"
             )
