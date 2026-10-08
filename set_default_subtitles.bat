@@ -14,26 +14,26 @@ powershell.exe -NoProfile -Command ^
     "    $items += [pscustomobject]@{ File = $file; Info = $info };" ^
     "  } catch { Write-Host ('ERROR reading ' + $file.Name + ': ' + $_.Exception.Message); $failures++ }" ^
     "};" ^
-    "$names = @($items | ForEach-Object { $_.Info.tracks } | Where-Object { $_.type -eq 'subtitles' } | ForEach-Object { [string]$_.properties.track_name } | Sort-Object -Unique);" ^
-    "if ($names.Count -eq 0) { Write-Host 'No subtitle tracks found.'; if ($failures) { exit 1 } else { exit 0 } };" ^
-    "Write-Host ''; Write-Host 'Subtitle names (across all MKVs):';" ^
-    "for ($i = 0; $i -lt $names.Count; $i++) {" ^
-    "  $label = if ($names[$i] -eq '') { '(unnamed)' } else { $names[$i] };" ^
-    "  Write-Host ('  ' + ($i + 1) + '. ' + $label);" ^
+    "$options = @($items | ForEach-Object { $_.Info.tracks } | Where-Object { $_.type -eq 'subtitles' } | Group-Object -Property { ([string]$_.properties.track_name) + [char]31 + ([string]$_.properties.language) } | ForEach-Object { $_.Group[0] } | Sort-Object @{Expression={$_.properties.track_name}}, @{Expression={$_.properties.language}});" ^
+    "if ($options.Count -eq 0) { Write-Host 'No subtitle tracks found.'; if ($failures) { exit 1 } else { exit 0 } };" ^
+    "Write-Host ''; Write-Host 'Subtitle names and languages (across all MKVs):';" ^
+    "for ($i = 0; $i -lt $options.Count; $i++) {" ^
+    "  $name = [string]$options[$i].properties.track_name; $lang = [string]$options[$i].properties.language; $label = if ($name -eq '') { '(unnamed)' } else { $name }; if ($lang -eq '') { $lang = 'und' };" ^
+    "  Write-Host ('  ' + ($i + 1) + '. [' + $lang + '] ' + $label);" ^
     "};" ^
     "Write-Host ''; $answer = Read-Host 'Enter numbers separated by commas or spaces (blank to cancel)';" ^
     "if ([string]::IsNullOrWhiteSpace($answer)) { Write-Host 'Cancelled.'; exit 0 };" ^
     "if ($answer -notmatch '^\s*[1-9][0-9]*(?:[\s,]+[1-9][0-9]*)*\s*$') { Write-Host 'Invalid selection.'; exit 1 };" ^
     "$numbers = @($answer.Trim() -split '[\s,]+' | ForEach-Object { [int]::Parse($_) } | Sort-Object -Unique);" ^
-    "if (@($numbers | Where-Object { $_ -gt $names.Count }).Count) { Write-Host 'Number outside the list.'; exit 1 };" ^
-    "$chosen = @($numbers | ForEach-Object { $names[$_ - 1] });" ^
+    "if (@($numbers | Where-Object { $_ -gt $options.Count }).Count) { Write-Host 'Number outside the list.'; exit 1 };" ^
+    "$chosen = @($numbers | ForEach-Object { $t = $options[$_ - 1]; ([string]$t.properties.track_name) + [char]31 + ([string]$t.properties.language) });" ^
     "Write-Host ''; Write-Host 'Setting default flags for:';" ^
-    "foreach ($name in $chosen) { if ($name -eq '') { Write-Host '  (unnamed)' } else { Write-Host ('  ' + $name) } };" ^
+    "foreach ($number in $numbers) { $t = $options[$number - 1]; $label = if ([string]$t.properties.track_name -eq '') { '(unnamed)' } else { [string]$t.properties.track_name }; Write-Host ('  [' + $t.properties.language + '] ' + $label) };" ^
     "$answer = Read-Host 'Proceed? (Y/N)';" ^
     "if ($answer -notmatch '^(?i:y(?:es)?)$') { Write-Host 'Cancelled.'; exit 0 };" ^
     "$updated = 0;" ^
     "foreach ($item in $items) {" ^
-    "  $matching = @($item.Info.tracks | Where-Object { $_.type -eq 'subtitles' -and $chosen -contains [string]$_.properties.track_name });" ^
+    "  $matching = @($item.Info.tracks | Where-Object { $_.type -eq 'subtitles' -and $chosen -contains (([string]$_.properties.track_name) + [char]31 + ([string]$_.properties.language)) });" ^
     "  if ($matching.Count -eq 0) { continue };" ^
     "  $editArgs = @($item.File.FullName); $changed = 0;" ^
     "  try {" ^
@@ -50,7 +50,7 @@ powershell.exe -NoProfile -Command ^
     "    $json = & mkvmerge -J $item.File.FullName;" ^
     "    if ($LASTEXITCODE -ne 0) { throw 'Could not verify edited file' };" ^
     "    $after = ($json -join [Environment]::NewLine) | ConvertFrom-Json -ErrorAction Stop;" ^
-    "    $missing = @($after.tracks | Where-Object { $_.type -eq 'subtitles' -and $chosen -contains [string]$_.properties.track_name -and $_.properties.default_track -ne $true });" ^
+    "    $missing = @($after.tracks | Where-Object { $_.type -eq 'subtitles' -and $chosen -contains (([string]$_.properties.track_name) + [char]31 + ([string]$_.properties.language)) -and $_.properties.default_track -ne $true });" ^
     "    if ($missing.Count) { throw ($missing.Count.ToString() + ' selected track(s) still lack the default flag') };" ^
     "    $updated++; Write-Host '  Verified.';" ^
     "  } catch { Write-Host ('ERROR editing ' + $item.File.Name + ': ' + $_.Exception.Message); $failures++ }" ^
