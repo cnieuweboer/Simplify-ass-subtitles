@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Simplify ASS/SSA subtitles at two levels for limited renderers.
+"""Simplify ASS/SSA subtitles for limited renderers.
 
 Requires Python 3.10 or newer.
 
 Level 1 favors maximum reduction, retaining simple opaque caption backdrops;
-level 2 retains static sign styling and
-static vector shapes. Basic simplification requires only the standard library.
+Level 2 is deprecated; its static-sign/vector pipeline remains for reference
+and compatibility. Basic simplification requires only the standard library.
 Optional font-based word spacing uses Pillow and fonttools. If RAQM is absent
 (for example on Windows), uharfbuzz supplies the same shaping measurements:
     python -m pip install Pillow fonttools uharfbuzz
@@ -41,12 +41,14 @@ from itertools import islice
 from pathlib import Path
 from typing import Iterable
 
-__version__ = "2026.10.07.100"
+__version__ = "2026.10.09.102"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
 def mark_generated(lines: list[str]) -> list[str]:
     """Place one output marker inside Script Info, relocating legacy markers."""
+    lines = [line for line in lines if not line.strip().casefold().startswith(
+        "; static vector support prototype ")]
     if not any(line.strip().casefold() == "[script info]" for line in lines):
         return lines
     marked = [line for line in lines if line.strip() != GENERATED_MARKER]
@@ -90,7 +92,10 @@ SAFE_SIMPLE_TAGS = {
 
 @dataclass(frozen=True, kw_only=True)
 class SimplifyConfig:
-    """Named, immutable settings shared by a subtitle simplification batch."""
+    """Named, immutable settings shared by a subtitle simplification batch.
+
+    Level 2 is deprecated and retained for compatibility.
+    """
     level: int = 1
     max_blur: float = 0.0
     short_duration: float = 0.16
@@ -98,6 +103,7 @@ class SimplifyConfig:
     max_drawing_chars: int = 0
     max_vectors_per_cue: int = 0
     encoding: str | None = None
+    scroll_concurrency_limit: int = 32
 
 
 @dataclass
@@ -1226,7 +1232,7 @@ def deduplicate_layers(events: list[Event], visible_map: dict[int, str]) -> tupl
 
 
 def reduce_static_sign_copies(events: list[Event], visible_map: dict[int, str]) -> tuple[list[Event], int]:
-    """In aggressive mode, fold slightly offset effect copies into their fill."""
+    """In level 1, fold slightly offset effect copies into their fill."""
     groups: dict[tuple, list[Event]] = {}
     for e in events:
         if e.kind != "Dialogue" or e.lyric or get_pos(e.text) is None:
@@ -1660,7 +1666,9 @@ def reduce_vector_layers(events: list[Event]) -> tuple[list[Event], int]:
 
 
 def remove_covered_vector_glows(events: list[Event]) -> tuple[list[Event], int]:
-    """Remove a lower shape only when the same footprint is painted opaquely.
+    """Deprecated: legacy level 2 only; retained for reference.
+
+    Remove a lower shape only when the same footprint is painted opaquely.
 
     Partial transparency is not evidence of coverage. Different stroke widths,
     transforms, offsets, or drawing modes are retained.
@@ -1774,6 +1782,7 @@ def polygon_covers_box(points, box) -> bool:
 
 
 def remove_fully_covered_vectors(events: list[Event], scaled_borders: bool = True):
+    """Deprecated: legacy level 2 only; retained for reference."""
     geometry = {e.source_index: g for e in events
                 if (g := coverage_geometry(e, scaled_borders)) is not None}
     covers = [e for e in events if e.source_index in geometry and geometry[e.source_index][2]]
@@ -1831,7 +1840,9 @@ def rectangle_clip(e: Event):
 
 
 def join_text_clip_tiles(events: list[Event]) -> tuple[list[Event], int]:
-    """Join adjacent rectangular clips with identical text and paint.
+    """Deprecated: legacy level 2 only; retained for reference.
+
+    Join adjacent rectangular clips with identical text and paint.
 
     Rectangles must exactly tile a larger rectangle. No gaps, overlaps,
     color approximation or transparency changes are allowed.
@@ -1885,7 +1896,9 @@ def join_text_clip_tiles(events: list[Event]) -> tuple[list[Event], int]:
 
 def reduce_text_layers(events: list[Event], visible_map: dict[int, str],
                        blockers: list[Event] | None = None) -> tuple[list[Event], int]:
-    """Flatten identical opaque text into its foreground and one outline.
+    """Deprecated: legacy level 2 only; retained for reference.
+
+    Flatten identical opaque text into its foreground and one outline.
 
     Layout, clipping and literal line breaks must match. Translucent paints,
     mixed spans and differing outline colors remain separate.
@@ -2294,6 +2307,10 @@ def flatten_aggressive_text_copies(events: list[Event],
     """
     events, echo_removed = collapse_frame_text_echoes(
         events,max_piece_duration,source_events=source_events)
+    events = [without_inert_spacing_tail(e)
+              if e.source_index in (animated_sources or set()) and
+                 e.state.get('1a',0) >= 254 and e.state.get('3a',0) >= 254
+              else e for e in events]
     groups = {}
     kept = []
     collision_peers = {}
@@ -2315,7 +2332,23 @@ def flatten_aggressive_text_copies(events: list[Event],
                e.margin_v, pos, visible)
         groups.setdefault(key, []).append(e)
     removed = echo_removed
+    paint_groups = []
     for key, group in groups.items():
+        # A differently scaled glow must not block an otherwise matching
+        # shadow fill/contour stack. Partition only complete animated,
+        # unclipped shadow families; keep every other geometry as its own
+        # object for the existing later effect proofs.
+        if (len(group) > 2 and all(e.source_index in (animated_sources or set()) and
+                e.state.get('1a',0) >= 254 and e.state.get('3a',0) >= 254 and
+                not inline_layout_key(e) and
+                not any(k in e.state for k in ('clip','iclip')) for e in group)):
+            layouts = {}
+            for e in group:
+                layouts.setdefault(text_layout_key(e),[]).append(e)
+            paint_groups.extend((key,peers) for peers in layouts.values())
+        else:
+            paint_groups.append((key,group))
+    for key, group in paint_groups:
         if len(group) < 2:
             kept.extend(group)
             continue
@@ -2423,9 +2456,16 @@ def flatten_aggressive_text_copies(events: list[Event],
             # shadow jitter; use the top visible contour below the fill rather
             # than conflicting lower glow colours. Effects become opaque.
             state = {**state,'1c':state.get('4c','FFFFFF'),'1a':0}
+            fill_order = (int(chosen.layer), chosen.source_index)
+            fill_border = max(chosen.state.get(k,chosen.state.get('bord',0))
+                              for k in ('xbord','ybord'))
+            # The selected fill may itself have a thin same-colour stroke.
+            # That stroke is not its surrounding contour: use a wider visible
+            # shadow-painted layer below the fill, in actual paint order.
             contours = [e for e in group if e.state.get('4a',0) < 254 and
+                        (int(e.layer),e.source_index) < fill_order and
                         max(e.state.get(k,e.state.get('bord',0))
-                            for k in ('xbord','ybord')) > 0]
+                            for k in ('xbord','ybord')) > max(0,fill_border)]
             contour = max(contours,key=lambda e:(
                 int(e.layer) if e.layer.lstrip('-').isdigit() else 0,e.source_index)) if contours else None
             outlines = ([{**contour.state,'3c':contour.state.get('4c','000000'),'3a':0}]
@@ -2537,7 +2577,7 @@ def remove_masked_glyph_effects(events: list[Event],
     point. Shadow-only texture stacks can also be identified by their shared
     mask over a retained caption. Other unavailable-font or unsupported masks
     stay intact.
-    This is an aggressive-mode substitution, not an assertion of occlusion.
+    This is a level 1 effect substitution, not an assertion of occlusion.
     """
     def closed_contours(commands, points):
         # ASS clips may explicitly return to a contour's first point, whereas
@@ -2957,6 +2997,26 @@ def upright_text_holds(candidates: list[Event], source_events: dict[int,Event]) 
 def event_override_tokens(e: Event) -> list[tuple[str,str]]:
     return [token for block in OVERRIDE_RE.findall(e.text)
             for token in tokenize_override(block)]
+
+
+def without_inert_spacing_tail(e: Event) -> Event:
+    """Ignore a tracking reset after the last literal glyph, with no ink.
+
+    Generated punctuation can reset tracking after its sole character. The
+    reset cannot move that character, but a final-state layout key mistakes
+    it for the character's tracking. Keep all painted inline changes intact.
+    """
+    tail = re.search(r'(?:\{[^}]*\})+$',e.text)
+    if tail is None or not simplify_text(e.text[:tail.start()],visible_only=True)[1]:
+        return e
+    tokens = [token for block in OVERRIDE_RE.findall(tail.group())
+              for token in tokenize_override(block)]
+    if not tokens or any(k != 'fsp' or not re.fullmatch(NUM,v) or
+                         not math.isfinite(float(v)) for k,v in tokens):
+        return e
+    text = e.text[:tail.start()]
+    tracking = effective_state(text,e.defaults,e.styles).get('fsp',0)
+    return replace_event(e,text=text,state={**e.state,'fsp':tracking})
 
 
 def literal_font_spans(e: Event) -> tuple[tuple[str,str],...] | None:
@@ -4405,15 +4465,47 @@ def remove_letters_over_full_lines(events: list[Event],
             # The author's complete, spaced text is the canonical caption.
             # Level 1 gives it one opaque fill and contour instead of retaining
             # translucent backing paint plus dozens of animated letters.
-            if shadow_only:
-                ordered = [max(col,key=lambda e:int(e.layer) if e.layer.lstrip('-').isdigit() else 0)
-                           for col in columns]
+            ordered = [max(col,key=lambda e:(int(e.layer) if e.layer.lstrip('-').isdigit() else 0,
+                                             e.source_index)) for col in columns]
+            prefix_end = re.match(r'(?:\{[^}]*\})*',full.text).end()
+            tracking_tokens = [token for block in OVERRIDE_RE.findall(full.text[prefix_end:])
+                               for token in tokenize_override(block)]
+            tracking_only = (bool(tracking_tokens) and
+                all(k == 'fsp' and re.fullmatch(NUM,v) and math.isfinite(float(v))
+                    for k,v in tracking_tokens) and
+                len({tuple(e.state.get(k,DEFAULT_STATE.get(k)) for k in
+                    ('1c','3c','b','i','u','s')) for e in ordered}) == 1)
+            def paint_layout(e):
+                return tuple((k,v) for k,v in text_layout_key(e)
+                             if not tracking_only or k != 'fsp')
+            # A nearly invisible full-line scaffold can carry the literal text
+            # while its already-matched opaque letters carry the actual paint.
+            # Reuse those colours only after the existing ownership proof, with
+            # identical literal characters and font/layout/placement evidence.
+            fragment_paint = shadow_only or (
+                full.state.get('1a',0) >= 254 and full.state.get('3a',0) >= 254 and
+                (not inline_layout_key(full) or tracking_only) and
+                not any(k in full.state for k in ('clip','iclip','org')) and
+                unrotated_text_state(full.state) and
+                ''.join(assembled.split()) == ''.join(visible_map[full.source_index].split()) and
+                all(e.state.get('1a',0) == 0 and
+                    paint_layout(e) == paint_layout(full) and
+                    (placement_key(e)[:3] == placement_key(full)[:3] if tracking_only else
+                     placement_key(e) == placement_key(full)) and
+                    not inline_layout_key(e) and
+                    not any(k in e.state for k in ('clip','iclip','org')) for e in ordered))
+            if fragment_paint:
                 body = render_merged_caption(ordered,
                     [visible_map[e.source_index] for e in ordered],visible_map[full.source_index],
                     animated=True,an=int(full.state.get('an',5)),pos=get_pos(full.text),
                     fscx=full.state.get('fscx',100),fscy=full.state.get('fscy',100))
                 if body is None:
                     continue
+                if tracking_only:
+                    # Authored spacing remains authoritative. Uniform proved
+                    # foreground paint can replace the scaffold header while
+                    # retaining its literal text and tracking spans exactly.
+                    body = body[:body.index('}')+1]+full.text[prefix_end:]
                 if 'q' in full.state:
                     body = '{'+render_tag('q',full.state['q'])+'}'+body
             else:
@@ -4421,6 +4513,9 @@ def remove_letters_over_full_lines(events: list[Event],
             replacements[full.source_index] = replace_event(
                 full, text=body,
                 layer="0", effect="")
+            if row_evidence is not None:
+                row_evidence.append(TextRow(replacements[full.source_index],
+                    [(e,visible_map[e.source_index],get_pos(e.text)) for e in ordered]))
             removed.update(e.source_index for e in fx)
     return [replacements.get(e.source_index,e) for e in events
             if e.source_index not in removed], len(removed)
@@ -8024,6 +8119,67 @@ def collect_source_text_rows(parsed: dict[int, Event], animated: set[int]) -> tu
     return evidence, words, positions
 
 
+def shadow_lyric_fade_core(e: Event) -> tuple[dict,float,float] | None:
+    """Prove one shadow glyph's opaque hold between entrance and fade tail.
+
+    Only a short, one-way shadow-opacity entrance and stationary literal
+    geometry qualify. Shadow offsets and colour may animate; other geometry,
+    alpha pulses, clips, inline state and unsupported fade forms cannot prove
+    a handoff. This supplies timing evidence, never a replacement caption.
+    """
+    e = without_inert_spacing_tail(e)
+    state = effective_state(e.text,e.defaults,e.styles)
+    if (e.duration <= 0 or get_pos(e.text) is None or inline_layout_key(e) or
+            state.get('1a',0) < 254 or state.get('3a',0) < 254 or
+            state.get('borderstyle',1) != 1 or state.get('p',0) or
+            not unrotated_text_state(state) or
+            not any(abs(state.get(k,state.get('shad',0))) > 0
+                    for k in ('xshad','yshad')) or
+            any(k in state for k in ('clip','iclip','org'))):
+        return None
+    tokens = event_override_tokens(e)
+    fades = [v for k,v in tokens if k == 'fad']
+    if len(fades) != 1 or any(k in {'move','fade','r','alpha','k','kf','ko','kt'} for k,v in tokens):
+        return None
+    try:
+        fade_in,fade_out = [float(v)/1000 for v in fades[0].strip('()').split(',')]
+    except ValueError:
+        return None
+    if (not fades[0].startswith('(') or not fades[0].endswith(')') or
+            not all(math.isfinite(v) and v >= 0 for v in (fade_in,fade_out)) or
+            fade_out <= 0):
+        return None
+    entrance = fade_in
+    reveals = []
+    allowed = {'4a','4c','shad','xshad','yshad'}
+    for tag,value in tokens:
+        if tag != 't':
+            continue
+        transform = parse_effect_transform(value,e.duration,allowed,
+            allow_instant=True,allow_after_end=True)
+        if transform is None:
+            return None
+        begin,end,changes = transform
+        if any(k == '4a' for k,v in changes):
+            target = state.copy()
+            for k,v in changes:
+                apply_tag(target,k,v,e.styles,e.defaults)
+            if (target.get('4a') != 0 or end > 500*e.duration or
+                    len([1 for k,v in changes if k == '4a']) != 1):
+                return None
+            reveals.append(end/1000)
+    if state.get('4a',0) != 0:
+        if state.get('4a',0) < 254 or len(reveals) != 1:
+            return None
+    elif reveals:
+        return None
+    entrance = max([entrance]+reveals)
+    start,end = e.start_s+entrance,e.end_s-fade_out
+    if not e.start_s <= start < end < e.end_s:
+        return None
+    return {**state,'1a':0,'3a':0,'shad':0,'xshad':0,'yshad':0},start,end
+
+
 def trim_faded_cue_overlaps(events: list[Event], rows: list[TextRow],
                             source_events: dict[int,Event]) -> tuple[list[Event],int]:
     """Give consecutive static rows a clean handoff within their source fades.
@@ -8043,6 +8199,7 @@ def trim_faded_cue_overlaps(events: list[Event], rows: list[TextRow],
         return e.effect.split(';',1)[0].strip().casefold() in {'banner','scroll up','scroll down'}
 
     def slot(e: Event, pos: tuple[float,float]) -> tuple | None:
+        e = without_inert_spacing_tail(e)
         spans = literal_font_spans(e)
         if not spans or any(re.search(r'\\[Nn]|[\r\n]',text) for text,font in spans):
             return None
@@ -8090,6 +8247,7 @@ def trim_faded_cue_overlaps(events: list[Event], rows: list[TextRow],
         return events,0
 
     phase_slots: dict[tuple,dict[tuple,set[float]]] = {}
+    shadow_phases = set()
     families = {key[:5] for key,phase,time in wanted}
     boundaries = {(key[:5],phase,time) for key,phase,time in wanted}
     forbidden = {'t','move','clip','iclip','org','fade','k','kf','ko','kt'}
@@ -8099,6 +8257,19 @@ def trim_faded_cue_overlaps(events: list[Event], rows: list[TextRow],
         if (e.kind != 'Dialogue' or scrolling(e) or family not in families or
                 r'\fad(' not in e.text.lower() or
                 (family,0,start) not in boundaries and (family,1,end) not in boundaries):
+            continue
+        shadow_core = shadow_lyric_fade_core(e)
+        if shadow_core is not None:
+            state,core_start,core_end = shadow_core
+            pos = get_pos(e.text)
+            key = lane(e,pos,state)
+            identity = slot(dataclass_replace(e,state=state),pos)
+            if identity is not None:
+                for phase,time,core in ((0,start,core_start),(1,end,core_end)):
+                    phase_key = (key,phase,time)
+                    if phase_key in wanted:
+                        phase_slots.setdefault(phase_key,{}).setdefault(identity,set()).add(round(core,2))
+                        shadow_phases.add(phase_key)
             continue
         tokens = event_override_tokens(e)
         fades = [value for tag,value in tokens if tag == 'fad']
@@ -8162,10 +8333,19 @@ def trim_faded_cue_overlaps(events: list[Event], rows: list[TextRow],
             continue
         starts = set().union(*entrance.values())
         ends = set().union(*tail.values())
-        if len(starts) != 1 or len(ends) != 1:
+        shadow_pair = ((key,0,timing[0]) in shadow_phases and
+                       (key,1,timing[1]) in shadow_phases)
+        if shadow_pair:
+            # Staggered reveal endpoints can differ between letters. Every
+            # glyph still needs one unambiguous entrance and tail; protect the
+            # interval during which the complete row is fully visible.
+            if any(len(v) != 1 for v in (*entrance.values(),*tail.values())):
+                proven[key,timing] = None
+                continue
+        elif len(starts) != 1 or len(ends) != 1:
             proven[key,timing] = None
             continue
-        core_start,core_end = next(iter(starts)),next(iter(ends))
+        core_start,core_end = (max(starts),min(ends)) if shadow_pair else (next(iter(starts)),next(iter(ends)))
         xs = [identity[0][0] for identity in identities]
         proven[key,timing] = ((core_start,core_end,min(xs),max(xs))
                               if timing[0] < core_start < core_end < timing[1] else None)
@@ -8780,12 +8960,14 @@ def simplify_ass(path: Path, output: Path, config: SimplifyConfig, *,
         space_map.setdefault(key, set()).add(round(pos[0] / e.unit, 1) * e.unit)
 
     tiles_joined = 0
+    # Deprecated level 2 path; retain for reference and compatibility.
     if config.level == 2:
         simplified_events, tiles_joined = join_text_clip_tiles(simplified_events)
 
     # For visual signs, choose their visible fill before same-layer dedup can
     # discard a brighter effect copy merely because it appeared later.
     text_copies_removed = 0
+    # Deprecated level 2 path; retain for reference and compatibility.
     if config.level == 2:
         simplified_events, text_copies_removed = reduce_text_layers(
             simplified_events, visible_map, vector_events)
@@ -8828,6 +9010,7 @@ def simplify_ass(path: Path, output: Path, config: SimplifyConfig, *,
             simplified_events,row_evidence+authored_rows,parsed_by_line)
     covered_vectors = 0
     vector_copies_removed = vector_glows_removed = vector_frames_removed = excess_vectors = 0
+    # Deprecated level 2 path; retain for reference and compatibility.
     if config.level == 2:
         simplified_events, remaining_copies = reduce_text_layers(simplified_events, visible_map, vector_events)
         text_copies_removed += remaining_copies
@@ -9044,16 +9227,59 @@ def extract_mkv_fonts(mkv: Path, destination: Path) -> None:
     print(f'Loaded {len(targets)} attached font files from {mkv.name}')
 
 
+def text_drop_warnings(stats):
+    """Stable per-track warning records; ordinary effect merging is not a loss."""
+    count = stats.get('prototype_scrolling_events_removed', 0)
+    if not count:
+        return []
+    limit = stats['prototype_scrolling_concurrency_limit']
+    return [{'code': 'scrolling_text_dropped', 'severity': 'warning',
+             'events': count, 'concurrency_limit': limit,
+             'blocks': stats['prototype_scrolling_blocks_removed'],
+             'peak_concurrent': stats['prototype_scrolling_peak_after_reduction'],
+             'message': f'Dropped {count} events due to exceeding concurrent event limit '
+                        f'{limit} for scrolling text blocks.'}]
+
+
+def print_text_drop_warning(warning, context, stream=None):
+    """Readable redirected logs, and a bold red banner on supported consoles."""
+    import os
+    stream = sys.stderr if stream is None else stream
+    color = bool(getattr(stream, 'isatty', lambda: False)())
+    if color and os.name == 'nt':
+        # Enable virtual-terminal colours on Windows consoles, restoring the
+        # previous mode afterward. A redirected stream gets plain text.
+        import ctypes
+        import msvcrt
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.GetConsoleMode.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        kernel.SetConsoleMode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        mode = ctypes.c_ulong()
+        try:
+            handle = msvcrt.get_osfhandle(stream.fileno())
+            color = bool(kernel.GetConsoleMode(handle, ctypes.byref(mode)) and
+                         kernel.SetConsoleMode(handle, mode.value | 4))
+        except (AttributeError, OSError, ValueError):
+            color = False
+    prefix, suffix = ('\033[1;31m', '\033[0m') if color else ('', '')
+    try:
+        print(f'{prefix}{"="*78}\nWARNING: {warning["message"]}\n{context}\n{"="*78}{suffix}',
+              file=stream)
+    finally:
+        if color and os.name == 'nt':
+            kernel.SetConsoleMode(handle, mode.value)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Simplify ASS/SSA subtitles at level 1 (aggressive) or 2 (retain static visuals)."
+        description="Simplify ASS/SSA subtitles for limited renderers. Level 1 reduces effects and retains supporting backdrops; level 2 is deprecated and retained for compatibility."
     )
     ap.add_argument("--version", action="version", version=__version__)
     ap.add_argument("inputs", nargs="+", help="ASS/SSA file(s) or folder(s)")
     ap.add_argument("-r", "--recursive", action="store_true", help="scan folders recursively")
     ap.add_argument("--level", type=int, choices=(1, 2), default=1,
-                    help="1: maximum reduction (default); 2: preserve static visual elements")
-    ap.add_argument("--suffix", default=".simple", help="output suffix before extension (default: .simple; compatible with the MKV wrapper); scans skip marked outputs (and legacy *.simple files with the default suffix)")
+                    help="1: maximum reduction (default); 2: deprecated legacy static-visual pipeline")
+    ap.add_argument("--suffix", default=".simple", help="output suffix before extension (default: .simple); scans skip marked outputs")
     ap.add_argument("--encoding", help="input encoding override for legacy or BOM-less files; "
                     "default: UTF-8 or BOM-marked UTF-16/UTF-32, decoded strictly")
     ap.add_argument("--max-blur", type=float, default=0.0,
@@ -9066,6 +9292,10 @@ def main() -> int:
                     help="optional vector path character budget; 0 retains all paths (default)")
     ap.add_argument("--max-vectors-per-cue", type=int, default=0,
                     help="optional vector count budget per cue; 0 retains all paths (default)")
+    ap.add_argument("--scroll-concurrency-limit", type=int, default=32,
+                    help="level 1 scrolling-text fallback: drop a proved block only when its "
+                    "remaining peak exceeds this count after ordinary reduction "
+                    "(default 32; 0 disables text dropping)")
     ap.add_argument("--fonts-dir", action="append", default=[], metavar="FOLDER",
                     help="extra font folder (repeatable); exact fonts enable measured word spacing")
     ap.add_argument("--font-mkv", type=Path, metavar="FILE",
@@ -9076,6 +9306,9 @@ def main() -> int:
                     help="also write per-input event counts as JSON for batch reports")
     args = ap.parse_args()
 
+    if args.scroll_concurrency_limit < 0:
+        ap.error("--scroll-concurrency-limit must be nonnegative")
+
     if not args.suffix.strip() or any(c in args.suffix for c in '/\\:*?"<>|'):
         ap.error("--suffix must be nonempty and contain no filename separators or reserved characters")
     if args.encoding:
@@ -9083,6 +9316,9 @@ def main() -> int:
             codecs.lookup(args.encoding)
         except LookupError:
             ap.error(f"Unknown input encoding: {args.encoding}")
+    if args.level == 2:
+        print("WARNING: Level 2 is deprecated; use level 1 for current simplification.",
+              file=sys.stderr)
     inputs = iter_inputs(args.inputs, args.recursive, args.suffix)
     if not inputs:
         ap.error("No .ass/.ssa files found")
@@ -9090,7 +9326,8 @@ def main() -> int:
     config = SimplifyConfig(level=args.level, max_blur=args.max_blur,
         short_duration=args.short_duration, short_gap=args.short_gap,
         max_drawing_chars=args.max_drawing_chars,
-        max_vectors_per_cue=args.max_vectors_per_cue, encoding=args.encoding)
+        max_vectors_per_cue=args.max_vectors_per_cue, encoding=args.encoding,
+        scroll_concurrency_limit=args.scroll_concurrency_limit)
     font_temp = None
     try:
         metric = None
@@ -9129,9 +9366,13 @@ def main() -> int:
                 continue
             total_in += stats["original"]
             total_out += stats["output"]
+            warnings = text_drop_warnings(stats)
             records.append({"input": str(src.resolve()),
                             "output": str(dst.resolve()), "stats": stats,
+                            "warnings": warnings,
                             "processing_seconds": time.perf_counter() - track_started})
+            for warning in warnings:
+                print_text_drop_warning(warning, src.name)
             print(f"{src.name} -> {dst.name} (level {args.level})")
             print(f"  Processing time: {records[-1]['processing_seconds']:.3f} seconds")
             print(f"  Peak simultaneous events: {stats['max_concurrent_in']} -> "
@@ -9149,7 +9390,7 @@ def main() -> int:
                 f"duplicate sign text: {stats['text_copies_removed']}, "
                 f"masked texture copies removed: {stats['masked_decorations']}, "
                 f"identical text strips joined: {stats['tiles_joined']}, "
-                f"aggressive text copies flattened: {stats['aggressive_copies']}, "
+                f"stacked text copies flattened: {stats['aggressive_copies']}, "
                 f"text effect sequences frozen: {stats['aggressive_sequences']}, "
                 f"covered fragment effects removed: {stats['covered_fragments']}, "
                 f"vector copies: {stats['vector_copies_removed']}, "
@@ -9160,7 +9401,7 @@ def main() -> int:
                 f"caption backdrops retained: {stats['backdrops_retained']}, "
                 f"vector captions recovered: {stats['vector_text_recovered']}, "
                 f"excess vector details removed: {stats['excess_vectors']}, "
-                f"drawings/effects dropped: {stats['dropped']})"
+                f"drawings/effects dropped before reconstruction: {stats['dropped']})"
             )
     
         if metric is not None and metric.available:
@@ -9186,5 +9427,1550 @@ def main() -> int:
             font_temp.cleanup()
 
 
-if __name__ == "__main__":
+
+# Experimental post-pass. The v100 pipeline above remains the text engine.
+# Geometry and font-based decisions are local to this pass; no persistent
+# foreground/background classification is added to Event or FontSpacing.
+
+def prototype_text_box(event, metric, *, adjacency=False):
+    """Conservative positioned line box, using the exact ASS font metrics.
+
+    Missing fonts, inline layout and projective text are deliberately unknown.
+    A box is used to prove containment, never inferred from an anchor alone.
+    """
+    st = event.state
+    pos = get_pos(event.text)
+    if (metric is None or not metric.available or pos is None or
+            inline_layout_key(event) or st.get('p', 0) or
+            st.get('pbo', 0) or
+            (not adjacency and any(st.get(k, 0) for k in ('frx', 'fry'))) or
+            (adjacency and any(abs(math.remainder(st.get(k, 0), 360)) > 5
+                               for k in ('frx', 'fry'))) or
+            'clip' in st or 'iclip' in st):
+        return None
+    # Some captions are painted by their opaque shadow, with an effectively
+    # invisible primary and no outline. Measure that visible ink at its screen
+    # offset; counting the offset again as padding would invent extra bounds.
+    if (st.get('1a', 0) >= 254 and st.get('4a', 0) < 254 and
+            st.get('borderstyle', 1) == 1 and
+            max(abs(st.get(k, st.get('bord', 0))) for k in ('xbord', 'ybord')) == 0 and
+            all(abs(st.get(k, 0)) <= .001 for k in ('frz', 'frx', 'fry', 'fax', 'fay'))):
+        dx, dy = (st.get(k, st.get('shad', 0)) for k in ('xshad', 'yshad'))
+        if dx or dy:
+            pos = (pos[0]+dx, pos[1]+dy)
+            st = {**st, 'shad': 0, 'xshad': 0, 'yshad': 0}
+    visible = OVERRIDE_RE.sub('', event.text).replace(r'\h', ' ')
+    # A soft break only creates a new line under wrap mode 2. Under other
+    # modes it is a space; treating it as a line would underestimate width.
+    if st.get('q', st.get('_prototype_wrap_mode', 0)) != 2:
+        visible = visible.replace(r'\n', ' ')
+    lines = re.split(r'\\[Nn]', visible)
+    face = metric.matching_face(str(st.get('fn', '')), bool(st.get('b', 0)),
+                                bool(st.get('i', 0)))
+    if face is None or any(ord(c) not in face[2] for line in lines for c in line):
+        return None
+    factor = metric.ass_em_scale(face)
+    fs, sx, sy = (st.get('fs', 20), st.get('fscx', 100), st.get('fscy', 100))
+    if factor is None or min(fs, sx, sy) <= 0:
+        return None
+    try:
+        widths = [metric.measure(face, line, bool(st.get('kerning', False))) *
+                  fs * sx / 102400 * factor +
+                  len(line) * st.get('fsp', 0) * sx / 100 for line in lines]
+    except (OSError, ValueError, RuntimeError):
+        return None
+    width, height = max(widths), fs * sy / 100 * len(lines)
+    if width <= 0 or height <= 0:
+        return None
+    an = int(st.get('an', 2))
+    if an not in range(1, 10):
+        return None
+    x0 = pos[0] - ((an-1) % 3) / 2 * width
+    y0 = pos[1] - (1-(an-1)//3/2) * height
+    x1, y1 = x0+width, y0+height
+    font = metric.loaded.get(face[:2])
+    if (font is not None and font.layout_engine == metric.ImageFont.Layout.RAQM and
+            not st.get('fsp', 0)):
+        # ASS alignment uses the line box, but backgrounds only need to
+        # surround the actual ink. Do not mistake the font's blank ascender
+        # and descender space for visible glyph geometry.
+        from fontTools.ttLib import TTFont
+        cache = getattr(metric, '_prototype_line_metrics', None)
+        if cache is None:
+            cache = metric._prototype_line_metrics = {}
+        if face[:2] not in cache:
+            with TTFont(BytesIO(metric.font_bytes[face[0]]), fontNumber=face[1]) as tf:
+                os2 = tf['OS/2']
+                cache[face[:2]] = os2.usWinAscent/(os2.usWinAscent+os2.usWinDescent)
+        ascent = cache[face[:2]]*fs*sy/100
+        features = ['kern' if st.get('kerning', False) else '-kern']
+        ink_boxes = []
+        for i, line in enumerate(lines):
+            if not line.strip():
+                continue
+            left, top, right, bottom = font.getbbox(line, anchor='ls', features=features)
+            origin_x = pos[0]-((an-1) % 3)/2*widths[i]
+            baseline_y = y0+i*fs*sy/100+ascent
+            fx, fy = fs*sx/102400*factor, fs*sy/102400*factor
+            ink_boxes.append((origin_x+left*fx, baseline_y+top*fy,
+                              origin_x+right*fx, baseline_y+bottom*fy))
+        if ink_boxes:
+            x0, y0 = min(b[0] for b in ink_boxes), min(b[1] for b in ink_boxes)
+            x1, y1 = max(b[2] for b in ink_boxes), max(b[3] for b in ink_boxes)
+    pad = max(2*event.unit, abs(st.get('xbord', st.get('bord', 0))),
+              abs(st.get('ybord', st.get('bord', 0))),
+              abs(st.get('xshad', st.get('shad', 0))),
+              abs(st.get('yshad', st.get('shad', 0))))
+    # Overhangs and synthetic bold/italic need clearance beyond the advance.
+    pad += .08 * fs * max(sx, sy) / 100
+    if adjacency:
+        # This is a proximity estimate, never a full coverage proof. A small
+        # projective pose gets extra clearance; steep perspectives stay unknown.
+        pad += math.hypot(width, height)*sum(abs(math.sin(math.radians(st.get(k, 0))))
+                                           for k in ('frx', 'fry'))
+    points = [(x0-pad, y0-pad), (x1+pad, y0-pad),
+              (x1+pad, y1+pad), (x0-pad, y1+pad)]
+    origin = st.get('org', pos)
+    angle = math.radians(-st.get('frz', 0))
+    transformed = []
+    for x, y in points:
+        x, y = x-origin[0], y-origin[1]
+        x, y = x + st.get('fax', 0)*y, y + st.get('fay', 0)*x
+        transformed.append((origin[0]+x*math.cos(angle)-y*math.sin(angle),
+                            origin[1]+x*math.sin(angle)+y*math.cos(angle)))
+    xs, ys = zip(*transformed)
+    box = (min(xs), min(ys), max(xs), max(ys))
+    return box if all(math.isfinite(v) for v in box) else None
+
+
+def prototype_simple_path(event, *, max_vertices=8):
+    """One finite straight-sided contour with at most eight distinct vertices."""
+    raw = OVERRIDE_RE.sub('', event.text).strip()
+    tokens = geometry_key(event.text)
+    if (re.sub(NUMBER+r'|[A-Za-z]|\s+', '', raw) or not tokens or
+            tokens[0] != 'm' or sum(x == 'm' for x in tokens) != 1 or
+            any(isinstance(x, str) and x not in {'m', 'l'} for x in tokens)):
+        return None
+    points = []
+    i = 0
+    while i < len(tokens):
+        command = tokens[i]; i += 1
+        coords = []
+        while i < len(tokens) and isinstance(tokens[i], float):
+            coords.append(tokens[i]); i += 1
+        if ((command == 'm' and len(coords) != 2) or
+                (command == 'l' and (len(coords) < 2 or len(coords) % 2)) or
+                any(not math.isfinite(v) for v in coords)):
+            return None
+        points.extend(zip(coords[::2], coords[1::2]))
+    if points and points[-1] == points[0]:
+        points.pop()
+    if (len(set(points)) < 3 or (max_vertices is not None and
+            (len(set(points)) > max_vertices or len(points) > max_vertices+1))):
+        return None
+    area = abs(sum(ax*by-bx*ay for (ax, ay), (bx, by) in
+                   zip(points, points[1:]+points[:1]))) / 2
+    return points if area > 0 else None
+
+
+def prototype_flat_rectangle_border(event, *, scaled_borders=True):
+    """Fold a same-colour rectangular stroke into its simple solid fill."""
+    st = event.state
+    points = prototype_simple_path(event)
+    if (not scaled_borders or points is None or len(points) != 4 or st.get('borderstyle', 1) != 1 or
+            st.get('1c', 'FFFFFF') != st.get('3c', '000000') or
+            st.get('1a', 0) != st.get('3a', 0) or st.get('1a', 0) >= 254 or
+            any(st.get(k, 0) for k in ('frz', 'frx', 'fry', 'fax', 'fay', 'pbo'))):
+        return event
+    xs, ys = sorted({x for x, y in points}), sorted({y for x, y in points})
+    if (len(xs) != 2 or len(ys) != 2 or
+            set(points) != {(x, y) for x in xs for y in ys} or
+            any(ax != bx and ay != by for (ax, ay), (bx, by) in
+                zip(points, points[1:]+points[:1]))):
+        return event
+    sx = st.get('fscx', 100)/(100*2**(st.get('p', 1)-1))
+    sy = st.get('fscy', 100)/(100*2**(st.get('p', 1)-1))
+    bx, by = abs(st.get('xbord', st.get('bord', 0))), abs(st.get('ybord', st.get('bord', 0)))
+    if min(sx, sy) <= 0 or not (bx or by):
+        return event
+    # Preserve the drawing anchor before expanding its stroked footprint.
+    event = prototype_normalize_alignment(event)
+    x0, x1 = xs[0]-bx/sx, xs[1]+bx/sx
+    y0, y1 = ys[0]-by/sy, ys[1]+by/sy
+    block = OVERRIDE_RE.match(event.text)
+    raw = f'm {x0:g} {y0:g} l {x1:g} {y0:g} {x1:g} {y1:g} {x0:g} {y1:g}'
+    tags = block.group()[:-1]+r'\bord0\xbord0\ybord0'+'}'
+    return replace_event(event, text=tags+raw)
+
+
+def prototype_normalize_alignment(event):
+    """Express an unrotated drawing's alignment as an equivalent an7 pose."""
+    st = event.state
+    alignment = st.get('an', 7)
+    if alignment == 7 or alignment not in range(1, 10):
+        return event
+    if any(st.get(k, 0) for k in ('frz', 'frx', 'fry', 'fax', 'fay', 'pbo')):
+        return event
+    points = prototype_simple_path(event, max_vertices=None)
+    pos = get_pos(event.text)
+    if points is None or pos is None or st.get('p', 0) < 1:
+        return event
+    scale = 2 ** (st['p']-1)
+    sx, sy = st.get('fscx', 100)/(100*scale), st.get('fscy', 100)/(100*scale)
+    if sx <= 0 or sy <= 0:
+        return event
+    xs, ys = zip(*points)
+    x = pos[0] - ((alignment-1) % 3)/2 * (max(xs)-min(xs))*sx
+    y = pos[1] - (2-(alignment-1)//3)/2 * (max(ys)-min(ys))*sy
+    block = OVERRIDE_RE.match(event.text)
+    if block is None:
+        return event
+    tags = re.sub(r'\\an\d+|\\pos\([^)]*\)', '', block.group()[:-1], flags=re.I)
+    return replace_event(event, text=tags+f'\\an7\\pos({x:g},{y:g})}}'+event.text[block.end():])
+
+
+def prototype_rectangle_bias(points):
+    """Prefer the original bounds when a contour closely follows a rectangle."""
+    xs, ys = zip(*points)
+    x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+    side, box_area = min(x1-x0, y1-y0), (x1-x0)*(y1-y0)
+    if side <= 0:
+        return None
+    area = abs(sum(ax*by-bx*ay for (ax, ay), (bx, by) in
+                   zip(points, points[1:]+points[:1])))/2
+    if not .85*box_area <= area <= box_area*(1+1e-9):
+        return None
+    tolerance = .15*side+1e-9
+    for a, b in zip(points, points[1:]+points[:1]):
+        # Also test the segment midpoint: matching the four extremes alone
+        # would turn diagonal sides or a deep inward notch into a rectangle.
+        for x, y in (a, ((a[0]+b[0])/2, (a[1]+b[1])/2)):
+            if min(x-x0, x1-x, y-y0, y1-y) > tolerance:
+                return None
+    return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+
+
+
+def prototype_detach_edge_slivers(event):
+    """Separate tiny exterior triangles from one nearly rectangular panel.
+
+    Do not discard holes, intersecting contours or independent artwork. The
+    triangle must touch the main boundary but have no filled interior in it.
+    Test every boundary-partitioned segment, including collinear/tangent hits,
+    rather than relying on vertices or the overall drawing bounds.
+    """
+    raw = OVERRIDE_RE.sub('', event.text).strip()
+    block = OVERRIDE_RE.match(event.text)
+    parts = [part.strip() for part in re.split(r'(?=\bm\s)', raw, flags=re.I)
+             if part.strip()]
+    if block is None or not 2 <= len(parts) <= 5:
+        return event, 0
+    fragments = [replace_event(event, text=block.group()+part) for part in parts]
+    polygons = [prototype_simple_path(e, max_vertices=None) for e in fragments]
+    if any(p is None or len(p) > 4096 for p in polygons):
+        return event, 0
+    def area(p):
+        return abs(sum(ax*by-bx*ay for (ax, ay), (bx, by) in
+                       zip(p, p[1:]+p[:1])))/2
+    index = max(range(len(polygons)), key=lambda i: area(polygons[i]))
+    main = polygons[index]
+    if prototype_rectangle_bias(main) is None or coverage_geometry(fragments[index]) is None:
+        return event, 0
+    xs, ys = zip(*main)
+    side = min(max(xs)-min(xs), max(ys)-min(ys))
+    eps = 1e-8*max(1, side)
+    def cross(a, b):
+        return a[0]*b[1]-a[1]*b[0]
+    def sub(a, b):
+        return a[0]-b[0], a[1]-b[1]
+    def on_edge(p, a, b):
+        return (abs(cross(sub(p, a), sub(b, a))) <= eps*max(1, math.dist(a, b)) and
+                min(a[0], b[0])-eps <= p[0] <= max(a[0], b[0])+eps and
+                min(a[1], b[1])-eps <= p[1] <= max(a[1], b[1])+eps)
+    edges = list(zip(main, main[1:]+main[:1]))
+    def inside(p, polygon):
+        if any(on_edge(p, a, b) for a, b in zip(polygon, polygon[1:]+polygon[:1])):
+            return False  # Boundary contact is permitted, filled overlap is not.
+        crossings = winding = 0
+        for a, b in zip(polygon, polygon[1:]+polygon[:1]):
+            if a[1] <= p[1] < b[1] or b[1] <= p[1] < a[1]:
+                hit = a[0]+(p[1]-a[1])*(b[0]-a[0])/(b[1]-a[1])
+                if hit > p[0]:
+                    crossings += 1
+                    winding += 1 if b[1] > a[1] else -1
+        return bool(crossings % 2 or winding)
+    for i, triangle in enumerate(polygons):
+        if i == index:
+            continue
+        tx, ty = zip(*triangle)
+        if (len(triangle) != 3 or area(triangle) > .001*area(main) or
+                max(max(tx)-min(tx), max(ty)-min(ty)) > .05*side or
+                not any(on_edge(p, a, b) for p in triangle for a, b in edges) or
+                any(inside(p, main) for p in triangle) or
+                any(inside(p, triangle) for p in main)):
+            return event, 0
+        for a, b in zip(triangle, triangle[1:]+triangle[:1]):
+            delta = sub(b, a)
+            length2 = delta[0]**2+delta[1]**2
+            if length2 <= eps**2:
+                return event, 0
+            cuts = {0.0, 1.0}
+            for c, d in edges:
+                other = sub(d, c)
+                determinant = cross(delta, other)
+                if abs(determinant) > eps*max(1, math.dist(a, b), math.dist(c, d)):
+                    t = cross(sub(c, a), other)/determinant
+                    u = cross(sub(c, a), delta)/determinant
+                    if 0 <= t <= 1 and 0 <= u <= 1:
+                        cuts.add(t)
+                else:
+                    for p in (c, d):
+                        if on_edge(p, a, b):
+                            cuts.add(max(0, min(1, (sub(p, a)[0]*delta[0]+sub(p, a)[1]*delta[1])/length2)))
+            ordered = sorted(cuts)
+            if any(inside((a[0]+(lo+hi)/2*delta[0], a[1]+(lo+hi)/2*delta[1]), main)
+                   for lo, hi in zip(ordered, ordered[1:])):
+                return event, 0
+    return fragments[index], len(parts)-1
+
+
+def prototype_reduce_contour(event):
+    """Simplify a jagged single outer contour with bounded geometric error.
+
+    Nearly rectangular contours prefer a rectangle with their original bounds.
+    Other shapes retain the bounded contour reduction. Both the original fill
+    and the reduced fill must later cover the measured text.
+    """
+    points = prototype_simple_path(event, max_vertices=None)
+    info = coverage_geometry(event)
+    if points is None or info is None or len(points) > 4096:
+        return None
+    rectangle = prototype_rectangle_bias(points)
+    if rectangle is not None:
+        raw = 'm '+f'{rectangle[0][0]:g} {rectangle[0][1]:g} l '+ ' '.join(
+            f'{x:g} {y:g}' for x, y in rectangle[1:])
+        return raw, info[0]
+    def area(poly):
+        return abs(sum(ax*by-bx*ay for (ax, ay), (bx, by) in
+                       zip(poly, poly[1:]+poly[:1])))/2
+    def segment_distance(point, a, b):
+        vx, vy = b[0]-a[0], b[1]-a[1]
+        d = vx*vx+vy*vy
+        t = max(0, min(1, ((point[0]-a[0])*vx+(point[1]-a[1])*vy)/d)) if d else 0
+        return math.hypot(point[0]-a[0]-t*vx, point[1]-a[1]-t*vy)
+    def reduce_open(poly, tolerance):
+        retain, todo = {0, len(poly)-1}, [(0, len(poly)-1)]
+        while todo:
+            first, last = todo.pop()
+            if last <= first+1:
+                continue
+            distance, i = max((segment_distance(poly[j], poly[first], poly[last]), j)
+                              for j in range(first+1, last))
+            if distance > tolerance:
+                retain.add(i); todo.extend([(first, i), (i, last)])
+        return [poly[i] for i in sorted(retain)]
+    xs, ys = zip(*points)
+    side = min(max(xs)-min(xs), max(ys)-min(ys))
+    if side <= 0:
+        return None
+    split = max(range(1, len(points)), key=lambda i: math.dist(points[0], points[i]))
+    original_area = area(points)
+    for step in range(1, 11):
+        ratio = step/100
+        left = reduce_open(points[:split+1], ratio*side)
+        right = reduce_open(points[split:]+points[:1], ratio*side)
+        reduced = left[:-1]+right[:-1]
+        if (3 <= len(reduced) <= 8 and
+                abs(area(reduced)-original_area) <= .05*original_area):
+            raw = 'm '+f'{reduced[0][0]:g} {reduced[0][1]:g} l '+ ' '.join(
+                f'{x:g} {y:g}' for x, y in reduced[1:])
+            return raw, info[0]
+    return None
+
+
+def prototype_tiled_clip(rectangles, unit):
+    """Accept a gapless, non-overlapping strip partition of one rectangle.
+
+    Preserve the union clip. Removing it would expose unseen parts of paths.
+    General tiled artwork and overlapping clips are not approximated here.
+    """
+    if not rectangles:
+        return None
+    eps = 1e-5 * unit
+    for axis in (0, 1):
+        other = 1-axis
+        reference = rectangles[0]
+        if any(abs(r[other]-reference[other]) > eps or
+               abs(r[other+2]-reference[other+2]) > eps for r in rectangles):
+            continue
+        ordered = sorted(rectangles, key=lambda r: r[axis])
+        # Tiny overlaps from decimal rounding are harmless for the union;
+        # actual holes and substantial overlapping layers stay unsupported.
+        if any(b[axis]-a[axis+2] > eps or a[axis+2]-b[axis] >
+               min(.25*unit, .05*min(a[axis+2]-a[axis], b[axis+2]-b[axis]))+eps
+               for a, b in zip(ordered, ordered[1:])):
+            continue
+        box = list(reference)
+        box[axis], box[axis+2] = ordered[0][axis], ordered[-1][axis+2]
+        return tuple(box)
+    return None
+
+
+def prototype_paint(event):
+    """Select visible paint; offset shadows/strokes need more geometry work."""
+    st = event.state
+    # A nearly coincident shadow can contain the actual background fill.
+    if (st.get('4a', 0) < 254 and
+            0 < max(abs(st.get(k, st.get('shad', 0))) for k in ('xshad', 'yshad'))
+                <= .05 * event.unit and st.get('4a', 0) < st.get('1a', 0)):
+        return st.get('4c', '000000'), st.get('4a', 0)
+    if st.get('1a', 0) < 254:
+        return st.get('1c', 'FFFFFF'), st.get('1a', 0)
+    return None
+
+
+def prototype_composed_paint(events):
+    """Compose coextensive fills in their original same-layer source order."""
+    opacity, premult = 0.0, [0.0, 0.0, 0.0]
+    for event in sorted(events, key=lambda e: e.source_index):
+        paint = prototype_paint(event)
+        if paint is None:
+            continue
+        color, alpha = paint
+        ink = (255-alpha)/255
+        premult = [old*(1-ink)+((int(color, 16) >> shift) & 255)*ink
+                   for old, shift in zip(premult, (16, 8, 0))]
+        opacity = opacity*(1-ink)+ink
+    if opacity <= 1/255:
+        return None
+    color = ''.join(f'{round(v/opacity):02X}' for v in premult)
+    return color, round(255*(1-opacity))
+
+
+def prototype_held_scale(source, candidate, transforms, paint_tags):
+    """Validate a short scale entrance, shrinking exit, or stable-pose pair."""
+    if not transforms:
+        return True, False
+    if len(transforms) > 2:
+        return False, False
+    parsed, targets = [], []
+    target = source.state.copy()
+    for value in transforms:
+        item = parse_effect_transform(value, source.duration, paint_tags | {'fscx', 'fscy'})
+        if item is None:
+            return False, False
+        for key, argument in item[2]:
+            if key in ('fscx', 'fscy'):
+                # libass accepts a trailing comma on these numeric targets.
+                # Require a complete finite number rather than letting the
+                # strict production parser silently skip a malformed target.
+                if not re.fullmatch(r'\s*'+NUMBER+r'\s*,?\s*', argument):
+                    return False, False
+                argument = argument.strip().removesuffix(',').strip()
+                if not math.isfinite(float(argument)):
+                    return False, False
+            apply_tag(target, key, argument, source.styles, source.defaults)
+        parsed.append(item)
+        targets.append(target.copy())
+    def matches(pose):
+        return all(pose.get(k, 100) > 0 and
+                   abs(pose.get(k, 100)-candidate.state.get(k, 100)) < .001
+                   for k in ('fscx', 'fscy'))
+    def shrinks(before, after):
+        return (all(0 < after.get(k, 100) <= before.get(k, 100)
+                    for k in ('fscx', 'fscy')) and
+                any(after.get(k, 100) < before.get(k, 100) for k in ('fscx', 'fscy')))
+    if len(parsed) == 1:
+        begin, end, _ = parsed[0]
+        entrance = begin == 0 and end <= 200*source.duration and matches(targets[0])
+        exit_pose = (800*source.duration <= begin < 1000*source.duration and
+                     end >= 1000*source.duration-50 and
+                     matches(source.state) and shrinks(source.state, targets[0]))
+        return entrance or exit_pose, exit_pose
+    first, last = parsed
+    exit_pose = (first[0] == 0 and first[1] <= 200*source.duration and
+                 last[0]-first[1] >= 800*source.duration and
+                 last[1] >= 1000*source.duration-50 and
+                 matches(targets[0]) and shrinks(targets[0], targets[1]))
+    return exit_pose, exit_pose
+
+
+def prototype_static_vectors(sources, *, scaled_borders=True):
+    """Reduce proved static primitives and clipped gradients, not moving UI."""
+    groups, original_contours = {}, {}
+    counts = {'prototype_vector_candidates': 0, 'prototype_strips_collapsed': 0,
+              'prototype_vector_duplicates': 0, 'prototype_fade_frames': 0,
+              'prototype_unsupported_drawings': 0, 'prototype_polygons_simplified': 0,
+              'prototype_held_scaling_exits': 0, 'prototype_held_move_entrances': 0,
+              'prototype_edge_slivers_detached': 0}
+    paint_tags = {'c', '1c', '2c', '3c', '4c', 'alpha', '1a', '2a', '3a', '4a',
+                  'bord', 'xbord', 'ybord', 'shad', 'xshad', 'yshad', 'blur', 'be'}
+    for source in sources:
+        if (source.kind != 'Dialogue' or source.duration <= 0 or
+                not re.search(r'\\p[1-9]\d*\b', source.text, re.I)):
+            continue
+        text, visible, chars = simplify_visual_text(
+            source.text, 0, source.duration, source.defaults, source.styles, 2)
+        if not chars:
+            continue
+        candidate = prototype_normalize_alignment(prototype_flat_rectangle_border(
+            replace_event(source, text=text, effect=''), scaled_borders=scaled_borders))
+        candidate, detached = prototype_detach_edge_slivers(candidate)
+        counts['prototype_edge_slivers_detached'] += detached
+        original_points = None
+        if prototype_simple_path(candidate) is None:
+            reduction = prototype_reduce_contour(candidate)
+            if reduction is not None:
+                raw, original_points = reduction
+                candidate = replace_event(candidate, text=OVERRIDE_RE.match(candidate.text).group()+raw)
+                counts['prototype_polygons_simplified'] += 1
+        # A mixed text/drawing line and an animated pose cannot be represented
+        # by a single independently retained static primitive.
+        transforms = [(k, v) for block in OVERRIDE_RE.findall(source.text)
+                      for k, v in tokenize_override(block) if k == 't']
+        geometry_transforms = [value for _, value in transforms if
+                               any(k not in paint_tags for k, v in
+                                   tokenize_override(value[1:-1]))]
+        held_scale, held_exit = prototype_held_scale(
+            source, candidate, geometry_transforms, paint_tags)
+        animated_geometry = not held_scale
+        moves = [v for block in OVERRIDE_RE.findall(source.text)
+                 for k, v in tokenize_override(block) if k == 'move']
+        held_move = False
+        if len(moves) == 1:
+            motion = parse_effect_move(moves[0], source.duration)
+            held_move = (motion is not None and len(motion) == 6 and
+                         motion[5] <= 200*source.duration and
+                         get_pos(text) is not None and
+                         all(abs(a-b) < .001 for a, b in zip(get_pos(text), motion[2:4])))
+        if (visible or inline_layout_key(source) or prototype_simple_path(candidate) is None or
+                (moves and not held_move) or animated_geometry or
+                'iclip' in candidate.state or
+                any(candidate.state.get(k, 0) for k in ('frx', 'fax', 'fay', 'pbo')) or
+                candidate.state.get('fry', 0) % 360 not in (0, 180) or
+                get_pos(candidate.text) is None):
+            counts['prototype_unsupported_drawings'] += 1
+            continue
+        counts['prototype_held_scaling_exits'] += held_exit
+        counts['prototype_held_move_entrances'] += held_move
+        raw_key = (source.start, source.end, source.layer, source.style, source.name,
+                   source.margin_l, source.margin_r, source.margin_v,
+                   geometry_key(candidate.text), state_key(candidate, paint_tags | {'clip'}),
+                   tuple(original_points) if original_points is not None else None)
+        if original_points is not None:
+            original_contours[candidate.source_index] = tuple(original_points)
+        groups.setdefault(raw_key, []).append(candidate)
+    output = []
+    for group in groups.values():
+        first = group[0]
+        clipped = ['clip' in e.state for e in group]
+        rects = [rectangle_clip(e) for e in group]
+        # Clip coordinates outside a rectangle's actual fill do not create
+        # gaps. Intersect first; gradient generators often round those unused
+        # top/bottom limits differently in their final strip.
+        path = prototype_simple_path(first)
+        if (path and len({x for x, y in path}) == 2 and
+                len({y for x, y in path}) == 2 and coverage_geometry(first) is not None):
+            points = coverage_geometry(first)[0]
+            xs, ys = zip(*points)
+            bounds = min(xs), min(ys), max(xs), max(ys)
+            rects = [None if r is None else (max(r[0], bounds[0]), max(r[1], bounds[1]),
+                                           min(r[2], bounds[2]), min(r[3], bounds[3]))
+                     for r in rects]
+        if any(clipped):
+            if not all(clipped) or any(r is None or r[0] >= r[2] or r[1] >= r[3] for r in rects):
+                counts['prototype_unsupported_drawings'] += len(group)
+                continue
+            clip_groups = {}
+            for event, rect in zip(group, rects):
+                clip_groups.setdefault(rect, []).append(event)
+            rects = list(clip_groups)
+            union = prototype_tiled_clip(rects, first.unit)
+            if union is None:
+                counts['prototype_unsupported_drawings'] += len(group)
+                continue
+        else:
+            union = None
+        if union:
+            paints = [prototype_composed_paint(clip_group) for clip_group in clip_groups.values()]
+            weights = [(r[2]-r[0])*(r[3]-r[1]) for r in rects]
+            active = [(paint, weight) for paint, weight in zip(paints, weights) if paint]
+            # Average the composed paint of each distinct strip, including
+            # transparent strips, rather than counting coincident copies as
+            # overlapping partitions of the gradient.
+            area = sum(weights)
+            ink = sum(weight * (255-alpha) for (color, alpha), weight in active)
+            alpha = round(255-ink/area)
+            if alpha >= 254:
+                continue
+            channels = [round(sum(weight*(255-a)*((int(c, 16) >> shift) & 255)
+                                  for (c, a), weight in active)/ink)
+                        for shift in (16, 8, 0)]
+        else:
+            paint = prototype_composed_paint(group)
+            if paint is None:
+                continue
+            color, alpha = paint
+            channels = [(int(color, 16) >> shift) & 255 for shift in (16, 8, 0)]
+        color = ''.join(f'{v:02X}' for v in channels)
+        # Preserve the static pose and path after exact alignment normalization
+        # and the simple same-colour rectangular-stroke expansion above.
+        st = dict(first.state)
+        st.update({'1c': color, '1a': alpha, '2a': alpha, '3a': 255, '4a': 255,
+                   'bord': 0, 'xbord': 0, 'ybord': 0, 'shad': 0,
+                   'xshad': 0, 'yshad': 0, 'blur': 0, 'be': 0})
+        if union:
+            st['clip'] = '('+','.join(f'{x:g}' for x in union)+')'
+        else:
+            st.pop('clip', None)
+        keys = ('an', 'pos', 'org', 'p', 'fscx', 'fscy', 'frz', 'fry',
+                'bord', 'shad', 'xbord', 'ybord', 'xshad', 'yshad',
+                '1c', '1a', '2a', '3a', '4a', 'clip')
+        tags = ''.join(render_tag(k, st[k]) for k in keys if k in st)
+        event = replace_event(first, text='{'+tags+'}'+OVERRIDE_RE.sub('', first.text),
+                              source_index=min(e.source_index for e in group))
+        output.append(event)
+        counts['prototype_strips_collapsed' if union else 'prototype_vector_duplicates'] += len(group)-1
+    # Existing helper removes exact opaque layers. Restrict sequence merging
+    # to identical poses: its general path can otherwise freeze moving signs.
+    output, removed = reduce_vector_layers(output)
+    counts['prototype_vector_duplicates'] += removed
+    poses = {}
+    for e in output:
+        poses.setdefault((e.style, e.name, e.layer, geometry_key(e.text),
+                          state_key(e, {'1a', '2a', '3a', '4a'}),
+                          original_contours.get(e.source_index)), []).append(e)
+    output = []
+    for family in poses.values():
+        family, removed = freeze_vector_sequences(family)
+        output.extend(family)
+        counts['prototype_fade_frames'] += removed
+    counts['prototype_vector_candidates'] = len(output)
+    for e in output:
+        if e.source_index in original_contours:
+            # Temporary evidence for this pass, never serialized or shared
+            # with the production text engine.
+            e.state['_prototype_original_points'] = original_contours[e.source_index]
+    return sorted(output, key=lambda e: e.source_index), counts
+
+
+def prototype_composite_backdrops(sources, captions, metric):
+    """Approximate static shadow-painted erasure patches around literal text.
+
+    This is a bounded reconstruction, not a claim that disjoint source masks
+    covered every glyph. Require several matching opaque, similarly coloured
+    patches intersecting a measured caption, and keep their combined bounds.
+    Separate contours are measured separately so a distant separator cannot
+    enlarge a title panel merely because both share one drawing event.
+    """
+    groups = {}
+    for source in sources:
+        st = source.state
+        if (source.kind != 'Dialogue' or not st.get('p', 0) or
+                st.get('an') != 7 or st.get('1a', 0) < 254 or
+                st.get('3a', 0) < 254 or st.get('4a', 0) != 0 or
+                st.get('borderstyle', 1) != 1 or get_pos(source.text) is None or
+                not source.layer.lstrip('-').isdigit() or
+                any(k in st for k in ('clip', 'iclip')) or
+                any(st.get(k, 0) for k in ('frz', 'frx', 'fry', 'fax', 'fay', 'pbo')) or
+                re.search(r'\\(?:t|move|fad|fade)\s*\(', source.text, re.I) or
+                not 0 < max(abs(st.get(k, st.get('shad', 0)))
+                            for k in ('xshad', 'yshad')) <= .05*source.unit or
+                not 0 <= st.get('blur', 0) <= 8*source.unit):
+            continue
+        text, visible, chars = simplify_visual_text(source.text, 0, source.duration,
+                                                   source.defaults, source.styles, 2)
+        if visible or not chars or inline_layout_key(source):
+            continue
+        raw = OVERRIDE_RE.sub('', text).strip()
+        # Reject unknown commands before splitting move/line/cubic contours.
+        if re.sub(NUMBER+r'|[mlb\s]', '', raw, flags=re.I):
+            continue
+        key = (source.start, source.end, source.style, source.name, source.layer,
+               get_pos(source.text), st.get('p'), st.get('fscx'), st.get('fscy'))
+        for contour in re.split(r'(?=m\s)', raw, flags=re.I):
+            if not re.search(r'\bb\s', contour, re.I):
+                continue
+            fragment = replace_event(source, text=OVERRIDE_RE.match(text).group()+contour)
+            info = coverage_geometry(fragment)
+            if info is None:
+                continue
+            pad = 2*st.get('blur', 0)
+            x0, y0, x1, y1 = info[1]
+            bounds = (x0-pad, y0-pad, x1+pad, y1+pad)
+            color = str(st.get('4c', ''))
+            if re.fullmatch(r'[0-9A-Fa-f]{6}', color):
+                groups.setdefault(key, []).append((source, bounds, color))
+    rebuilt, used = [], set()
+    for caption in captions:
+        if (caption.kind != 'Dialogue' or caption.state.get('p', 0) or caption.lyric or
+                not caption.layer.lstrip('-').isdigit() or
+                len(OVERRIDE_RE.sub('', caption.text).strip()) < 2 or
+                re.search(r'\\[Nn]', OVERRIDE_RE.sub('', caption.text))):
+            continue
+        box = prototype_text_box(caption, metric)
+        if box is None:
+            continue
+        for key, fragments in groups.items():
+            first = fragments[0][0]
+            if (key in used or first.style != caption.style or first.name != caption.name or
+                    int(first.layer) >= int(caption.layer) or
+                    min(first.end_s, caption.end_s) <= max(first.start_s, caption.start_s)):
+                continue
+            nearby = []
+            for e, b, c in fragments:
+                # Blur clearance can approach a neighbouring separator, but
+                # that alone does not make its contour a title patch.
+                pad = 2*e.state.get('blur', 0)
+                if (min(b[2]-pad, box[2]) > max(b[0]+pad, box[0]) and
+                        min(b[3]-pad, box[3]) > max(b[1]+pad, box[1])):
+                    nearby.append((e, b, c))
+            if len({e.source_index for e, b, c in nearby}) < 3:
+                continue
+            bounds = (min(b[0] for e, b, c in nearby), min(b[1] for e, b, c in nearby),
+                      max(b[2] for e, b, c in nearby), max(b[3] for e, b, c in nearby))
+            x0, y0, x1, y1 = bounds
+            if (not (x0 < box[0] < box[2] < x1 and y0 < box[1] < box[3] < y1) or
+                    x1-x0 > 2*(box[2]-box[0]) or y1-y0 > 2*(box[3]-box[1])):
+                continue
+            colors = [tuple(int(c[i:i+2], 16) for i in (0, 2, 4)) for e, b, c in nearby]
+            if any(max(c[i] for c in colors)-min(c[i] for c in colors) > 32 for i in range(3)):
+                continue
+            weights = [(b[2]-b[0])*(b[3]-b[1]) for e, b, c in nearby]
+            color = ''.join(f'{round(sum(w*c[i] for w, c in zip(weights, colors))/sum(weights)):02X}'
+                            for i in range(3))
+            tags = (r'\an7\pos(0,0)\p1\fscx100\fscy100\bord0\shad0'
+                    r'\xbord0\ybord0\xshad0\yshad0'+render_tag('1c', color)+
+                    r'\1a&H00&\2a&H00&\3a&HFF&\4a&HFF&')
+            raw = f'm {x0:g} {y0:g} l {x1:g} {y0:g} {x1:g} {y1:g} {x0:g} {y1:g}'
+            event = replace_event(first, text='{'+tags+'}'+raw, effect='')
+            event.state['_prototype_composite_patch_bounds'] = bounds
+            rebuilt.append(event)
+            used.add(key)
+    return rebuilt
+
+
+def prototype_resolution(lines, axis):
+    default = 384 if axis == 'x' else 288
+    for line in lines:
+        if line.strip().lower().startswith('playres'+axis+':'):
+            try:
+                value = float(line.split(':', 1)[1])
+                return value if math.isfinite(value) and value > 0 else default
+            except ValueError:
+                return default
+    return default
+
+
+def prototype_load(path, encoding=None):
+    """Use the shared parser, including event fields and exact style state."""
+    raw = read_subtitle(path, encoding)
+    lines = re.split(r'\r\n|\r|\n', raw)
+    styles = parse_styles(lines)
+    section, wrap_mode = '', 0
+    for line in lines:
+        clean = line.strip()
+        if clean.startswith('['):
+            section = clean.casefold()
+        elif section == '[script info]' and clean.casefold().startswith('wrapstyle:'):
+            try:
+                value = int(clean.split(':', 1)[1].strip())
+                if value in range(4):
+                    wrap_mode = value
+            except ValueError:
+                pass
+    # Keep the script default as local measurement metadata, not an ASS tag
+    # default: adding q to the style state would change override serialization
+    # when a source caption is restored by the ordinary freezer.
+    for state in styles.values():
+        state['_prototype_wrap_mode'] = wrap_mode
+    default = {**DEFAULT_STATE, '_prototype_wrap_mode': wrap_mode}
+    unit = prototype_resolution(lines, 'y')/1080
+    section, fields, events, indices = '', EVENT_FIELDS, [], []
+    for i, line in enumerate(lines):
+        clean = line.strip()
+        if clean.startswith('['):
+            section = clean.lower()
+        elif section == '[events]' and clean.lower().startswith('format:'):
+            fields = [x.strip().lower() for x in clean.split(':', 1)[1].split(',')]
+        elif section == '[events]':
+            e = parse_dialogue(line, i, fields)
+            if e:
+                e.defaults = styles.get(e.style, default)
+                e.styles = styles
+                e.unit = unit
+                e.state = effective_state(e.text, e.defaults, styles)
+                events.append(e); indices.append(i)
+    return lines, events, fields, indices
+
+
+def prototype_texture(event, metric):
+    """Prove a multiline stamp texture by its exact glyph contour structure."""
+    if metric is None or not metric.available or event.state.get('p', 0):
+        return False
+    text = OVERRIDE_RE.sub('', event.text)
+    lines = re.split(r'\\[Nn]', text)
+    chars = [c for line in lines for c in line if not c.isspace()]
+    if len(lines) < 3 or len(chars) < 24:
+        return False
+    face = metric.matching_face(str(event.state.get('fn', '')),
+                                bool(event.state.get('b', 0)), bool(event.state.get('i', 0)))
+    if face is None or any(ord(c) not in face[2] for c in chars):
+        return False
+    # A font name or nonsensical-looking string alone authorizes nothing.
+    return all(metric.fragmented_glyph(face, c) is True for c in set(chars))
+
+
+def prototype_fullscreen(event):
+    """Prove that a static fill covers the viewport, including its clip."""
+    info = coverage_geometry(event)
+    canvas = event.state.get('_canvas')
+    if info is None or canvas is None:
+        return False
+    width, height = canvas
+    if width <= 0 or height <= 0:
+        return False
+    eps = 1e-4*event.unit
+    viewport = (eps, eps, width-eps, height-eps)
+    clip = rectangle_clip(event)
+    if 'clip' in event.state and (clip is None or not all((
+            clip[0] <= viewport[0], clip[1] <= viewport[1],
+            clip[2] >= viewport[2], clip[3] >= viewport[3]))):
+        return False
+    return polygon_covers_box(info[0], viewport)
+
+
+def prototype_clip_outline(event):
+    """Return one static, straight-sided scene-coordinate clip contour.
+
+    A shared authored contour can identify a panel without approximating the
+    perspective of its text. Keep the clip on that text; do not expand its ink.
+    """
+    if (event.state.get('p', 0) or 'iclip' in event.state or
+            inline_layout_key(event) or
+            re.search(r'\\(?:t|move|fad|fade)\s*\(', event.text, re.I)):
+        return None
+    mask = re.fullmatch(r'\(\s*(?:(\d+)\s*,\s*)?(m\s+.*?)\s*\)',
+                        str(event.state.get('clip', '')), re.I)
+    if mask is None or not 1 <= int(mask[1] or 1) <= 16:
+        return None
+    points = prototype_simple_path(replace_event(event, text='{\\p1}'+mask[2]))
+    scale = 2**(int(mask[1] or 1)-1)
+    return tuple((x/scale, y/scale) for x, y in points) if points else None
+
+
+def prototype_repair_shadow_offsets(sources, captions):
+    """Recover a held shadow offset hidden by an extra numeric-tag comma.
+
+    libass accepts a numeric prefix before the comma; v100's strict float
+    parsing skips it. Repair only these shadow tags, on the same faint-primary
+    caption with an opaque shadow and no outline. Other text paint is retained.
+    """
+    def key(e):
+        return (e.start, e.end, e.style, e.name, placement_key(e)[0],
+                get_pos(e.text), text_layout_key(e), OVERRIDE_RE.sub('', e.text).strip())
+    corrected = {}
+    for source in sources:
+        if (source.kind != 'Dialogue' or source.state.get('p', 0) or
+                inline_layout_key(source) or source.state.get('1a', 0) < 254 or
+                source.state.get('4a', 0) != 0 or
+                source.state.get('borderstyle', 1) != 1 or
+                max(abs(source.state.get(k, source.state.get('bord', 0)))
+                    for k in ('xbord', 'ybord')) != 0):
+            continue
+        clean = re.sub(r'(\\(?:xshad|yshad|shad)'+NUMBER+r'),(?=\\)', r'\1', source.text)
+        if clean == source.text:
+            continue
+        text, _, _ = simplify_visual_text(clean, 0, source.duration,
+                                         source.defaults, source.styles, 1)
+        repaired = replace_event(source, text=text)
+        corrected.setdefault(key(repaired), []).append(repaired)
+    output, count = [], 0
+    for e in captions:
+        choices = corrected.get(key(e), [])
+        offsets = {(c.state.get('xshad', c.state.get('shad', 0)),
+                    c.state.get('yshad', c.state.get('shad', 0))) for c in choices}
+        if (e.kind == 'Dialogue' and not e.lyric and len(offsets) == 1 and
+                e.state.get('1a', 0) >= 254 and e.state.get('4a', 0) == 0 and
+                not inline_layout_key(e)):
+            dx, dy = next(iter(offsets))
+            if (dx, dy) != (e.state.get('xshad', e.state.get('shad', 0)),
+                            e.state.get('yshad', e.state.get('shad', 0))):
+                text = OVERRIDE_RE.sub(lambda m: '{'+re.sub(
+                    r'\\(?:xshad|yshad|shad)[^\\}]*', '', m.group()[1:-1])+'}', e.text)
+                text = '{'+render_tag('xshad', dx)+render_tag('yshad', dy)+'}'+text
+                e = replace_event(e, text=text)
+                count += 1
+        output.append(e)
+    return output, count
+
+
+def prototype_restore_masked_foregrounds(sources, captions):
+    """Restore a solid clipped caption when v100 kept only its faint clone.
+
+    Require identical literal text, static layout, anchor, lifetime, actor and
+    fill colour. An ambiguous set of solid masks authorizes no replacement.
+    This correction is local to level 1; the embedded v100 engine is unchanged.
+    """
+    def key(e):
+        return (e.start, e.end, e.style, e.name, placement_key(e)[0],
+                get_pos(e.text), text_layout_key(e),
+                OVERRIDE_RE.sub('', e.text).strip(), e.state.get('1c'))
+    solids = {}
+    for source in sources:
+        if (source.kind != 'Dialogue' or source.state.get('1a', 0) != 0 or
+                prototype_clip_outline(source) is None):
+            continue
+        text, _, _ = simplify_visual_text(source.text, 0, source.duration,
+                                         source.defaults, source.styles, 1)
+        solid = replace_event(source, text=text, effect='')
+        solids.setdefault(key(solid), []).append(solid)
+    restored, count = [], 0
+    for caption in captions:
+        choices = solids.get(key(caption), [])
+        signatures = {(e.text, e.layer) for e in choices}
+        if (caption.kind == 'Dialogue' and not caption.lyric and
+                not caption.state.get('p', 0) and
+                not inline_layout_key(caption) and
+                'clip' not in caption.state and 'iclip' not in caption.state and
+                0 < caption.state.get('1a', 0) < 255 and len(signatures) == 1):
+            solid = choices[0]
+            # Preserve the output index for insertion, but recover the source
+            # layer as well as its paint, mask and exact static text pose.
+            caption = replace_event(caption, text=solid.text, layer=solid.layer)
+            count += 1
+        restored.append(caption)
+    return restored, count
+
+
+def prototype_shared_outline(panel, caption, points=None):
+    """Match a text mask to its panel while rejecting a displaced reuse."""
+    mask = prototype_clip_outline(caption)
+    raw_points = prototype_simple_path(panel)
+    if mask is None or raw_points is None or 'clip' in panel.state:
+        return False
+    scale = 2**(panel.state.get('p', 1)-1)
+    outline = tuple((x/scale, y/scale) for x, y in raw_points)
+    anchor = get_pos(caption.text)
+    if points is None:
+        info = coverage_geometry(panel)
+        points = info[0] if info is not None else None
+    return (mask == outline and points is not None and anchor is not None and
+            polygon_covers_box(list(mask), (*anchor, *anchor)) and
+            polygon_covers_box(points, (*anchor, *anchor)))
+
+
+def prototype_select_supports(candidates, captions, metric):
+    """Keep fullscreen fills and the uppermost local support in each interval.
+
+    Adjacency is only considered for small, straight, non-rectangular shapes
+    in a sparse sign group. It does not imply video coverage or text recovery.
+    """
+    eligible = [e for e in captions
+             if e.kind == 'Dialogue' and not e.state.get('p', 0) and
+             bool(OVERRIDE_RE.sub('', e.text).strip()) and not e.lyric]
+    boxes = {e.source_index: prototype_text_box(e, metric) for e in eligible}
+    nearby = [(e, prototype_text_box(e, metric, adjacency=True)) for e in captions
+              if e.kind == 'Dialogue' and not e.state.get('p', 0) and
+              len(OVERRIDE_RE.sub('', e.text).strip()) >= 2 and not e.lyric]
+    nearby = [(e, box) for e, box in nearby if box is not None]
+    geometry = {}
+    for e in candidates:
+        info = coverage_geometry(e)
+        if info is not None:
+            points, bounds, _ = info
+            xs, ys = zip(*points)
+            box = (min(xs), min(ys), max(xs), max(ys))
+            geometry[e.source_index] = points, box
+        elif rectangle_clip(e) is not None:
+            # Scene-coordinate clip bounds also bound rotated/aligned paths.
+            # They are sufficient for adjacency, but cannot prove fill coverage.
+            geometry[e.source_index] = None, rectangle_clip(e)
+    fullscreen_ids = {e.source_index for e in candidates if prototype_fullscreen(e)}
+    selected, associated, enclosing_ids = set(fullscreen_ids), {}, set()
+    # Fullscreen fills do not compete with local panels or require font
+    # measurement. Preserve source layers so both can sit beneath their text.
+    for e in candidates:
+        if e.source_index in fullscreen_ids:
+            associated[e.source_index] = [caption for caption in captions
+                if caption.kind == 'Dialogue' and caption.style == e.style and
+                caption.name == e.name and not caption.state.get('p', 0) and
+                min(caption.end_s, e.end_s) > max(caption.start_s, e.start_s)]
+    for caption in eligible:
+        box = boxes[caption.source_index]
+        mask = prototype_clip_outline(caption)
+        if box is None and mask is None:
+            continue
+        enclosing = []
+        for e in candidates:
+            if (e.source_index in fullscreen_ids or
+                    e.source_index not in geometry or e.style != caption.style or
+                    e.name != caption.name or not e.layer.lstrip('-').isdigit() or
+                    not caption.layer.lstrip('-').isdigit() or
+                    int(e.layer) > int(caption.layer)):
+                continue
+            overlap = min(e.end_s, caption.end_s)-max(e.start_s, caption.start_s)
+            if overlap <= 0:
+                continue
+            # Backdrops need only support the text while both are visible.
+            # Preserve source timing; no minimum percentage or maximum gap.
+            points, bounds = geometry[e.source_index]
+            clip = rectangle_clip(e)
+            contained = (box is not None and points is not None and polygon_covers_box(points, box) and
+                    polygon_covers_box(list(e.state.get('_prototype_original_points', points)), box) and
+                    (clip is None or all((clip[0] < box[0], clip[1] < box[1],
+                                         clip[2] > box[2], clip[3] > box[3]))))
+            # Authored reuse of the same simple path is explicit panel/mask
+            # evidence even for rotated, sheared or projective lettering.
+            # Both must contain the text anchor in rendered scene space: a
+            # reused shape parked elsewhere is not a supporting panel.
+            shared_outline = mask is not None and prototype_shared_outline(e, caption, points)
+            if contained or shared_outline:
+                enclosing.append(e)
+        if enclosing:
+            # Choose the uppermost local support separately for each occupied
+            # interval. A later panel cannot erase an earlier panel that is
+            # the text's only support before or after their shared interval.
+            times = sorted({caption.start_s, caption.end_s} |
+                           {t for e in enclosing for t in
+                            (max(e.start_s, caption.start_s),
+                             min(e.end_s, caption.end_s))})
+            winners = {}
+            for start, end in zip(times, times[1:]):
+                top = max((e for e in enclosing if e.start_s < end and e.end_s > start),
+                          key=lambda e: (int(e.layer), e.source_index), default=None)
+                if top is not None:
+                    winners[top.source_index] = top
+            for top in winners.values():
+                selected.add(top.source_index)
+                enclosing_ids.add(top.source_index)
+                associated.setdefault(top.source_index, []).append(caption)
+    # Adjacent arrows and small polygon patches are useful even when they are
+    # not backgrounds enclosing text. Reject dense drawings and lyric regions.
+    sparse = collections.Counter((e.start, e.end, e.style, e.name) for e in candidates
+                                 if e.source_index not in fullscreen_ids)
+    for e in candidates:
+        if e.source_index in selected or e.source_index not in geometry:
+            continue
+        points, bounds = geometry[e.source_index]
+        primitive = prototype_simple_path(e)
+        if (e.duration < .12 or sparse[(e.start, e.end, e.style, e.name)] > 8 or
+                '_prototype_original_points' in e.state or
+                primitive is None or len({x for x, y in primitive}) == 2 and
+                len({y for x, y in primitive}) == 2):
+            continue
+        for caption, box in nearby:
+            overlap = min(caption.end_s, e.end_s)-max(caption.start_s, e.start_s)
+            if (caption.style != e.style or caption.name != e.name or
+                    overlap < .8*min(caption.duration, e.duration)):
+                continue
+            height = text_height(caption)
+            dx = max(box[0]-bounds[2], bounds[0]-box[2], 0)
+            dy = max(box[1]-bounds[3], bounds[1]-box[3], 0)
+            if (math.hypot(dx, dy) <= 1.5*height and
+                    bounds[2]-bounds[0] <= 5*height and
+                    bounds[3]-bounds[1] <= 5*height):
+                selected.add(e.source_index)
+                associated.setdefault(e.source_index, []).append(caption)
+                break
+    kept = []
+    for e in candidates:
+        if e.source_index not in selected:
+            continue
+        if (e.source_index in enclosing_ids and
+                '_prototype_original_points' in e.state):
+            # Reconstructed paper panels hide the picture behind a caption.
+            # Their original translucent paint may have depended on discarded
+            # scene artwork underneath. Keep the simplified contour, colour
+            # and pose, but make these enclosing panels opaque. Gradient bands
+            # and adjacent decorative shapes retain their original opacity.
+            original_points = e.state['_prototype_original_points']
+            e = replace_event(e, text=re.sub(r'\\([12])a&H[0-9a-f]+&',
+                                            r'\\\1a&H00&', e.text, flags=re.I))
+            e.state['_prototype_original_points'] = original_points
+        kept.append(e)
+    return kept, associated
+
+
+_simplify_text_and_vectors = simplify_ass
+
+
+def prototype_fallback_vectors(events, captions, kept, metric, *, scaled_borders=True):
+    """Preserve baseline supports for unknown text, without equivalent copies."""
+    caption_groups = {}
+    for caption in captions:
+        if (caption.kind == 'Dialogue' and not caption.state.get('p', 0) and
+                OVERRIDE_RE.sub('', caption.text).strip()):
+            caption_groups.setdefault((caption.style, caption.name), []).append(
+                (caption, prototype_text_box(caption, metric)))
+    def fill_key(event):
+        # Compare rendered fill footprints, not header spelling or unused
+        # shadow/outline alpha. Never equate extra visible stroke/shadow paint.
+        event = prototype_normalize_alignment(prototype_flat_rectangle_border(
+            event, scaled_borders=scaled_borders))
+        st = event.state
+        if (prototype_simple_path(event) is None or st.get('1a', 0) >= 254 or
+                st.get('3a', 0) < 254 and any(st.get(k, st.get('bord', 0))
+                                            for k in ('xbord', 'ybord')) or
+                st.get('4a', 0) < 254 and any(st.get(k, st.get('shad', 0))
+                                            for k in ('xshad', 'yshad')) or
+                'iclip' in st or 'clip' in st and rectangle_clip(event) is None):
+            return None
+        info = coverage_geometry(event)
+        if info is None:
+            return None
+        points = tuple((round(x, 6), round(y, 6)) for x, y in info[0])
+        if points[-1] == points[0]:
+            points = points[:-1]
+        polygon = min(order[i:]+order[:i] for order in (points, points[::-1])
+                      for i in range(len(points)))
+        return (event.start, event.end, event.layer, event.style, event.name,
+                st.get('1c'), st.get('1a', 0), polygon, rectangle_clip(event))
+    equivalents = {key for event in kept if (key := fill_key(event)) is not None}
+    fullscreen_paints = {(v.start, v.end, v.layer, v.style, v.name,
+                          v.state.get('1c'), v.state.get('1a', 0))
+                         for v in kept if prototype_fullscreen(v)}
+    fallback = []
+    for event in events:
+        if event.kind != 'Dialogue' or not event.state.get('p', 0):
+            continue
+        overlapping = [(caption, box) for caption, box in
+                       caption_groups.get((event.style, event.name), [])
+                       if min(caption.end_s, event.end_s) > max(caption.start_s, event.start_s)]
+        # A known caption elsewhere cannot disprove the support needed by an
+        # unknown caption in the same group. Retain v100's existing fallback
+        # whenever any overlapping caption remains unmeasurable.
+        if overlapping and all(box is not None for caption, box in overlapping):
+            continue
+        key = fill_key(event)
+        if key is not None and key in equivalents:
+            continue
+        if (prototype_fullscreen(event) and
+                (event.start, event.end, event.layer, event.style, event.name,
+                 event.state.get('1c'), event.state.get('1a', 0)) in fullscreen_paints):
+            continue
+        fallback.append(event)
+    return fallback
+
+
+def prototype_scroll_tracks(events, resx, resy):
+    """Track baked text frames; never join overlapping spatial instances.
+
+    Paint-only inline spans and coincident effect copies may describe the same
+    line. Font/layout spans, live animation, drawings and non-frame cues cannot.
+    Ambiguous nearest-neighbour assignments start new tracks instead of guessing.
+    """
+    paint = {'alpha', 'c', 'bord', 'xbord', 'ybord', 'shad', 'xshad', 'yshad',
+             'blur', 'be'} | {f'{c}{kind}' for c in range(1, 5) for kind in 'ca'}
+    pose = {'pos', 'org', 'fscx', 'fscy', 'frz', 'frx', 'fry', 'fax', 'fay'}
+    groups = {}
+    for e in events:
+        if (e.kind != 'Dialogue' or not 0 < e.duration <= .16+1e-6 or
+                e.state.get('p', 0) or e.effect.strip() or
+                re.search(r'\\(?:move|t|fad|fade|[kK])(?=[(\d])', e.text)):
+            continue
+        pos = get_pos(e.text)
+        literal = OVERRIDE_RE.sub('', e.text)
+        if pos is None or not literal.strip() or any(x in literal for x in (r'\N', r'\n')):
+            continue
+        seen_text = False
+        safe = True
+        for part in re.split(r'(\{[^}]*\})', e.text):
+            if part.startswith('{'):
+                if seen_text and any(k not in paint for k, v in tokenize_override(part[1:-1])):
+                    safe = False
+            elif part:
+                seen_text = True
+        values = (*pos, *e.state.get('org', pos), *(e.state.get(k, 0) for k in
+                  ('fscx', 'fscy', 'frz', 'frx', 'fry', 'fax', 'fay')))
+        if not safe or not all(math.isfinite(v) for v in values):
+            continue
+        key = (e.style, e.name, e.layer, literal, e.margin_l, e.margin_r, e.margin_v,
+               state_key(e, paint | pose),
+               tuple(k for k in ('xbord', 'ybord', 'xshad', 'yshad') if k in e.state))
+        # Equal interval/pose copies are one spatial line, not extra votes.
+        frame_key = (e.start_s, e.end_s, tuple(e.state.get(k) for k in sorted(pose)), pos)
+        groups.setdefault(key, {}).setdefault(frame_key, []).append(e)
+    tracks = []
+    max_step = .08*min(resx, resy)
+    for frames in groups.values():
+        buckets = {}
+        for copies in frames.values():
+            e = copies[0]
+            buckets.setdefault(e.start_s, []).append(copies)
+        family = []
+        for start, nodes in sorted(buckets.items()):
+            active = [t for t in family if abs(t[-1][0].end_s-start) <= .011+1e-6]
+            distances = {(i, j): math.dist(get_pos(t[-1][0].text), get_pos(n[0].text))
+                         for i, t in enumerate(active) for j, n in enumerate(nodes)}
+            def nearest(options):
+                ranked = sorted(options)
+                if not ranked or ranked[0][0] > max_step:
+                    return None
+                if len(ranked) > 1 and ranked[1][0]-ranked[0][0] <= max(2*nodes[0][0].unit, .2*ranked[0][0]):
+                    return None
+                return ranked[0][1]
+            forward = {i: nearest([(distances[i, j], j) for j in range(len(nodes))])
+                       for i in range(len(active))}
+            reverse = {j: nearest([(distances[i, j], i) for i in range(len(active))])
+                       for j in range(len(nodes))}
+            for j, node in enumerate(nodes):
+                i = reverse[j]
+                if i is not None and forward[i] == j:
+                    active[i].append(node)
+                else:
+                    family.append([node])
+        tracks.extend(family)
+    return tracks
+
+
+def prototype_scroll_edge(track, axis, sign, resx, resy, metric):
+    """Strong edge evidence from measured text, with a wide uncertainty margin.
+
+    This is a bounded near-front-facing estimate, not a projective glyph box.
+    Steep perspective, distant origins, unknown fonts and clips cannot prove an
+    edge crossing. Anchors outside the viewport alone are never sufficient.
+    """
+    extent = (resx, resy)[axis]
+    def box(node):
+        e = node[0]
+        st = e.state
+        pos = get_pos(e.text)
+        origin = st.get('org', pos)
+        angles = [abs(math.remainder(st.get(k, 0), 360)) for k in ('frx', 'fry')]
+        if (max(angles) > 5 or math.dist(pos, origin) > .25*min(resx, resy) or
+                'clip' in st or 'iclip' in st):
+            return None
+        prefix = re.match(r'(?:\{[^}]*\})*', e.text).group()
+        flat = dataclass_replace(e, text=prefix+OVERRIDE_RE.sub('', e.text),
+                                 state={**st, 'frx': 0, 'fry': 0})
+        bounds = prototype_text_box(flat, metric)
+        if bounds is None:
+            return None
+        radius = math.dist(pos, origin)+math.hypot(bounds[2]-bounds[0], bounds[3]-bounds[1])
+        margin = .10*extent + radius*sum(abs(math.sin(math.radians(a))) for a in angles)
+        return bounds[axis]-margin, bounds[axis+2]+margin
+    first, last = box(track[0]), box(track[-1])
+    if first is None or last is None:
+        return False
+    # One endpoint's whole expanded box must be inside the scrolling axis;
+    # the other must be wholly beyond the corresponding edge.
+    if sign > 0:
+        return (0 < first[0] and first[1] < extent and last[0] > extent or
+                first[1] < 0 and 0 < last[0] and last[1] < extent)
+    return (0 < first[0] and first[1] < extent and last[1] < 0 or
+            first[0] > extent and 0 < last[0] and last[1] < extent)
+
+
+def prototype_drop_scrolling_blocks(events, resx, resy, metric, *, concurrency_limit=32):
+    """Last-resort removal of proved scrolling blocks after ordinary reduction.
+
+    At least three spatially distinct tracks must share >=1s of coherent
+    movement. Each travels >=50% of the relevant screen dimension. At least
+    one line has strong measured edge evidence. Removal also requires the
+    block's own remaining concurrency to exceed the explicit policy limit.
+    Total event count and unrelated captions cannot trigger this fallback.
+    """
+    if concurrency_limit < 0:
+        raise ValueError('Scrolling concurrency limit must be nonnegative.')
+    profiles = []
+    for track in prototype_scroll_tracks(events, resx, resy):
+        if len(track) < 8 or track[-1][0].end_s-track[0][0].start_s < 1:
+            continue
+        points = [get_pos(node[0].text) for node in track]
+        delta = tuple(points[-1][k]-points[0][k] for k in range(2))
+        axis = max(range(2), key=lambda k: abs(delta[k])/(resx, resy)[k])
+        extent = (resx, resy)[axis]
+        if abs(delta[axis]) < .5*extent:
+            continue
+        sign = 1 if delta[axis] > 0 else -1
+        # A brief zoom/entrance may precede the sustained scroll. Ignore at
+        # most the first 20% (and never more than one second) for its motion
+        # proof, but keep the whole continuous track as the removal unit.
+        cutoff = track[0][0].start_s+min(1, .2*(track[-1][0].end_s-track[0][0].start_s))
+        initial = [i for i, node in enumerate(track) if node[0].start_s <= cutoff]
+        first = min(initial, key=lambda i: sign*points[i][axis])
+        proof = track[first:]
+        points = points[first:]
+        delta = tuple(points[-1][k]-points[0][k] for k in range(2))
+        if proof[-1][0].end_s-proof[0][0].start_s < 1 or abs(delta[axis]) < .5*extent:
+            continue
+        steps = [(b[0]-a[0], b[1]-a[1]) for a, b in zip(points, points[1:])]
+        distance = math.hypot(*delta)
+        total = sum(math.hypot(*d) for d in steps)
+        if (distance < .92*total or
+                sum(max(0, -sign*d[axis]) for d in steps) > .05*abs(delta[axis]) or
+                abs(delta[1-axis]) > .25*abs(delta[axis])):
+            continue
+        # Large rotations/scale swings are not a translational scrolling line.
+        states = [node[0].state for node in track]
+        if any(abs(math.remainder(st.get(k, 0), 360)) > 5
+               for st in states for k in ('frx', 'fry')):
+            continue
+        offsets = [tuple(st.get('org', pos)[k]-pos[k] for k in range(2))
+                   for st, pos in zip(states, [get_pos(node[0].text) for node in track])]
+        if any(st.get(k, 0) for st in states for k in ('frz', 'frx', 'fry')) and (
+                max(math.hypot(*d) for d in offsets) > .25*min(resx, resy) or
+                any(max(d[k] for d in offsets)-min(d[k] for d in offsets) > .05*extent
+                    for k in range(2))):
+            # A changing rotation origin can cancel the movement of pos.
+            # Such anchors cannot establish a translating text track.
+            continue
+        if any(min(st.get(k, 100) for st in states) <= 0 or
+               max(st.get(k, 100) for st in states) > 1.3*min(st.get(k, 100) for st in states)
+               for k in ('fscx', 'fscy')):
+            continue
+        if any(max(abs(math.remainder(st.get(k, 0)-states[0].get(k, 0), 360)) for st in states) > 2
+               for k in ('frz', 'frx', 'fry')):
+            continue
+        profiles.append({'track': track, 'axis': axis, 'sign': sign,
+                         'start': proof[0][0].start_s, 'end': proof[-1][0].end_s,
+                         'delta': delta, 'points': points,
+                         'times': [node[0].start_s for node in proof]})
+    def position(p, at):
+        i = max(0, min(len(p['times'])-2, bisect_right(p['times'], at)-1))
+        a, b = p['times'][i:i+2]
+        fraction = max(0, min(1, (at-a)/(b-a)))
+        return tuple(p['points'][i][k]*(1-fraction)+p['points'][i+1][k]*fraction for k in range(2))
+    def coherent(a, b, lo, hi):
+        if (a['axis'], a['sign']) != (b['axis'], b['sign']):
+            return False
+        extent = (resx, resy)[a['axis']]
+        samples = [lo+(hi-lo)*i/4 for i in range(5)]
+        ap, bp = [position(a, t) for t in samples], [position(b, t) for t in samples]
+        da, db = [p[-1][a['axis']]-p[0][a['axis']] for p in (ap, bp)]
+        if min(a['sign']*da, a['sign']*db) < .05*extent:
+            return False
+        tolerance = max(.02*extent, .25*max(abs(da), abs(db)))
+        if abs(da-db) > tolerance:
+            return False
+        # Compare progress throughout the shared interval, not just endpoints.
+        return all(math.dist((x[0]-ap[0][0], x[1]-ap[0][1]),
+                             (y[0]-bp[0][0], y[1]-bp[0][1])) <= tolerance
+                   for x, y in zip(ap, bp))
+    def distinct(a, b, at):
+        pa, pb = position(a, at), position(b, at)
+        ea, eb = a['track'][0][0], b['track'][0][0]
+        # Effect shadows/paint copies of one word cannot vote as extra lines.
+        return math.dist(pa, pb) > max(4*ea.unit, .75*max(text_height(ea), text_height(eb)))
+    removed, report, confirmed = set(), [], set()
+    for i, seed in enumerate(profiles):
+        if i in confirmed:
+            continue
+        # Require every pair to agree on one common interval; no transitive
+        # chaining of unrelated neighbouring animations into a large block.
+        group = [i]
+        lo, hi = seed['start'], seed['end']
+        for j, candidate in enumerate(profiles):
+            if j == i:
+                continue
+            start, end = max(lo, candidate['start']), min(hi, candidate['end'])
+            if end-start < 1:
+                continue
+            if all(coherent(profiles[k], candidate, start, end) and
+                   distinct(profiles[k], candidate, (start+end)/2) for k in group):
+                group.append(j); lo, hi = start, end
+        if len(group) < 3 or not any(prototype_scroll_edge(profiles[k]['track'], seed['axis'],
+                                                           seed['sign'], resx, resy, metric)
+                                     for k in group):
+            continue
+        # Paint variants of a participating line are members but never extra
+        # votes toward the three-line minimum. Match their literal identity
+        # and near-coincident trajectory over this same proved interval.
+        voters = list(group)
+        for j, candidate in enumerate(profiles):
+            if j in group or candidate['start'] > lo or candidate['end'] < hi:
+                continue
+            ce = candidate['track'][0][0]
+            for k in voters:
+                p = profiles[k]; pe = p['track'][0][0]
+                if ((ce.style, ce.name, ce.layer, OVERRIDE_RE.sub('', ce.text),
+                     ce.state.get('fn'), ce.state.get('fs'), ce.state.get('an')) !=
+                    (pe.style, pe.name, pe.layer, OVERRIDE_RE.sub('', pe.text),
+                     pe.state.get('fn'), pe.state.get('fs'), pe.state.get('an'))):
+                    continue
+                if coherent(p, candidate, lo, hi) and all(
+                        math.dist(position(p, at), position(candidate, at)) <=
+                        .25*max(text_height(pe), text_height(ce))
+                        for at in (lo, (lo+hi)/2, hi)):
+                    group.append(j); break
+        members, block_events = [], []
+        for k in group:
+            confirmed.add(k)
+            p = profiles[k]
+            ids = {e.source_index for node in p['track'] for e in node}
+            block_events.extend(e for node in p['track'] for e in node)
+            members.append({'text': OVERRIDE_RE.sub('', p['track'][0][0].text),
+                            'start': p['start'], 'end': p['end'], 'events': len(ids),
+                            'travel': round(abs(p['delta'][p['axis']]), 2)})
+        block_ids = {e.source_index for e in block_events}
+        peak = peak_concurrent_events({e.source_index: e for e in block_events}.values())
+        drop = concurrency_limit > 0 and peak > concurrency_limit
+        if drop:
+            removed.update(block_ids)
+        report.append({'start': lo, 'end': hi, 'axis': 'xy'[seed['axis']],
+                       'direction': seed['sign'], 'tracks': members,
+                       'peak_concurrent': peak, 'concurrency_limit': concurrency_limit,
+                       'action': 'removed' if drop else 'retained'})
+    return [e for e in events if e.source_index not in removed], report
+
+
+
+def simplify_ass(path: Path, output: Path, config: SimplifyConfig, *,
+                 font_spacing: FontSpacing | None = None) -> dict[str, int]:
+    """Simplify text, apply the scrolling concurrency fallback, rebuild supports."""
+    if config.level != 1:
+        return _simplify_text_and_vectors(path, output, config, font_spacing=font_spacing)
+    if path.resolve() == output.resolve():
+        raise ValueError('Subtitle output must differ from its input.')
+    if config.scroll_concurrency_limit < 0:
+        raise ValueError('Scrolling concurrency limit must be nonnegative.')
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix='ass-simplify-') as temp:
+        source_lines, sources, _, _ = prototype_load(path, config.encoding)
+        baseline = Path(temp)/'baseline.ass'
+        stats = _simplify_text_and_vectors(path, baseline, config, font_spacing=font_spacing)
+        lines, events, fields, indices = prototype_load(baseline)
+        events, repaired_shadows = prototype_repair_shadow_offsets(sources, events)
+        events, restored_foregrounds = prototype_restore_masked_foregrounds(sources, events)
+        # Judge the residual moving block, after all ordinary text reduction.
+        # A dense source or a large number of successive frames is not enough.
+        before_scroll = len(events)
+        events, scroll_report = prototype_drop_scrolling_blocks(
+            events, prototype_resolution(lines, 'x'), prototype_resolution(lines, 'y'),
+            font_spacing, concurrency_limit=config.scroll_concurrency_limit)
+        scrolling_removed = before_scroll-len(events)
+        scaled_borders = any(line.strip().lower() == 'scaledborderandshadow: yes'
+                             for line in source_lines)
+        candidates, counts = prototype_static_vectors(sources, scaled_borders=scaled_borders)
+        counts['prototype_scrolling_events_removed'] = scrolling_removed
+        counts['prototype_scrolling_blocks_detected'] = len(scroll_report)
+        counts['prototype_scrolling_blocks_removed'] = sum(b['action'] == 'removed' for b in scroll_report)
+        counts['prototype_scrolling_blocks_retained'] = sum(b['action'] == 'retained' for b in scroll_report)
+        counts['prototype_scrolling_peak_after_reduction'] = max(
+            (b['peak_concurrent'] for b in scroll_report), default=0)
+        counts['prototype_scrolling_concurrency_limit'] = config.scroll_concurrency_limit
+        counts['prototype_masked_foregrounds_restored'] = restored_foregrounds
+        counts['prototype_shadow_offsets_repaired'] = repaired_shadows
+        # Texture removal is only for proved stamps in a replacement sign:
+        # there must also be retained literal text and a supporting shape.
+        textures = {e.source_index for e in events if e.kind == 'Dialogue' and
+                    prototype_texture(e, font_spacing)}
+        captions = [e for e in events if e.source_index not in textures]
+        composites = prototype_composite_backdrops(sources, captions, font_spacing)
+        candidates += composites
+        counts['prototype_composite_backdrops'] = len(composites)
+        if config.max_drawing_chars > 0:
+            candidates = [e for e in candidates if
+                          len(OVERRIDE_RE.sub('', e.text)) <= config.max_drawing_chars]
+        kept, associated = prototype_select_supports(candidates, captions, font_spacing)
+        fallback_vectors = prototype_fallback_vectors(
+            events, captions, kept, font_spacing, scaled_borders=scaled_borders)
+        budgeted, capped = cap_vector_cues(kept+fallback_vectors, config.max_vectors_per_cue)
+        budget_ids = {id(e) for e in budgeted}
+        kept = [e for e in kept if id(e) in budget_ids]
+        fallback_vectors = [e for e in fallback_vectors if id(e) in budget_ids]
+        counts['prototype_vectors_capped'] = capped
+        removed_textures = set()
+        resx = prototype_resolution(lines, 'x')
+        resy = prototype_resolution(lines, 'y')
+        for e in events:
+            if e.source_index not in textures:
+                continue
+            box = prototype_text_box(e, font_spacing)
+            if box is not None:
+                # Only ink inside the rendered viewport can affect the video.
+                # Inset a boundary-touching test box for the strict polygon
+                # containment helper; no ink outside the viewport is exposed.
+                eps = 1e-4*e.unit
+                box = (max(eps, box[0]), max(eps, box[1]),
+                       min(resx-eps, box[2]), min(resy-eps, box[3]))
+            if box is not None and box[0] < box[2] and box[1] < box[3] and any(
+                    v.style == e.style and v.name == e.name and
+                    v.start_s <= e.start_s+.001 and v.end_s >= e.end_s-.001 and
+                    coverage_geometry(v) is not None and
+                    polygon_covers_box(coverage_geometry(v)[0], box) and
+                    polygon_covers_box(list(v.state.get('_prototype_original_points',
+                                                         coverage_geometry(v)[0])), box) and
+                    ((clip := rectangle_clip(v)) is None or
+                     clip[0] < box[0] and clip[1] < box[1] and
+                     clip[2] > box[2] and clip[3] > box[3]) for v in kept):
+                removed_textures.add(e.source_index)
+        counts['prototype_unmeasured_backdrops'] = len(fallback_vectors)
+        fallback_ids = {e.source_index for e in fallback_vectors}
+        # Enclosing supports were proved to be below their captions. Nearby
+        # arrows may intentionally have a higher layer; preserve their original
+        # layering rather than raising the associated literal text.
+        result = [e for e in events
+                  if (not (e.kind == 'Dialogue' and e.state.get('p', 0)) or
+                      e.source_index in fallback_ids) and
+                  e.source_index not in removed_textures]
+        # Insert supports before their associated retained captions. Do not
+        # sort unrelated same-layer captions by start time or source indices
+        # from the other file: those indices belong to different documents.
+        insertion, standalone = {}, []
+        for v in kept:
+            if not associated[v.source_index]:
+                standalone.append(v)
+                continue
+            index = min(e.source_index for e in associated[v.source_index])
+            insertion.setdefault(index, []).append(v)
+        combined = sorted(standalone, key=lambda v: (int(v.layer), v.source_index))
+        for e in result:
+            combined.extend(sorted(insertion.pop(e.source_index, []),
+                                   key=lambda v: (int(v.layer), v.source_index)))
+            combined.append(e)
+        # The text engine already ran its touching-copy pass. Preserve that
+        # order after the targeted solid-mask correction and support insertion.
+        combined = [dataclass_replace(e, source_index=i) for i, e in enumerate(combined)]
+        rendered = []
+        for e in combined:
+            data = dict(zip(EVENT_FIELDS, e.fields()))
+            data.update(actor=e.name, marked='Marked=0')
+            rendered.append(f'{e.kind}: '+','.join(data.get(k, '') for k in fields))
+        if indices:
+            lines = lines[:indices[0]]+rendered+lines[indices[-1]+1:]
+        elif rendered:
+            section = next(i for i, line in enumerate(lines)
+                           if line.strip().lower() == '[events]')
+            end = next((i for i in range(section+1, len(lines))
+                        if lines[i].strip().startswith('[')), len(lines))
+            lines = lines[:end]+rendered+lines[end:]
+        lines = mark_generated(lines)
+        output.write_text('\n'.join(lines).rstrip('\n')+'\n', encoding='utf-8-sig')
+        stats.update(counts)
+        stats['excess_vectors'] += capped
+        stats['prototype_supports_retained'] = len(kept)
+        stats['prototype_textures_removed'] = len(removed_textures)
+        stats['prototype_fullscreen_backgrounds'] = sum(prototype_fullscreen(v) for v in kept)
+        stats['output'] = sum(e.kind == 'Dialogue' for e in combined)
+        stats['max_concurrent_out'] = peak_concurrent_events(combined)
+        stats['vector_output'] = sum(e.kind == 'Dialogue' and bool(e.state.get('p', 0))
+                                     for e in combined)
+        enclosed = 0
+        for v in kept:
+            if prototype_fullscreen(v):
+                continue
+            info = coverage_geometry(v)
+            clip = rectangle_clip(v)
+            if info is not None and any(prototype_shared_outline(v, e, info[0]) or
+                    (box := prototype_text_box(e, font_spacing)) is not None and
+                    polygon_covers_box(info[0], box) and (clip is None or
+                    clip[0] < box[0] and clip[1] < box[1] and
+                    clip[2] > box[2] and clip[3] > box[3]) for e in associated[v.source_index]):
+                enclosed += 1
+        stats['backdrops_retained'] = enclosed+len(fallback_vectors)+stats['prototype_fullscreen_backgrounds']
+        stats['prototype_adjacent_shapes'] = len(kept)-enclosed-stats['prototype_fullscreen_backgrounds']
+        print(f"  Vector supports: {len(kept)} supporting shapes; "
+              f"{counts['prototype_strips_collapsed']} strips collapsed; "
+              f"{len(removed_textures)} font textures removed")
+        if scroll_report:
+            print(f"  Scrolling fallback: {counts['prototype_scrolling_blocks_removed']} blocks removed; "
+                  f"{counts['prototype_scrolling_blocks_retained']} retained; "
+                  f"remaining block peak {counts['prototype_scrolling_peak_after_reduction']} "
+                  f"(limit {config.scroll_concurrency_limit}; 0 disables removal)")
+        return stats
+
+
+if __name__ == '__main__':
     raise SystemExit(main())

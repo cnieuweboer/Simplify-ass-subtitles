@@ -1,13 +1,14 @@
-﻿# Requires Windows PowerShell 5.1+ or PowerShell 7, Python 3 and MKVToolNix.
+# Requires Windows PowerShell 5.1+ or PowerShell 7, Python 3 and MKVToolNix.
 # Put the current simplify_ass.py beside this script, or supply -Simplifier.
 # Level 1 uses embedded fonts; install once: python -m pip install Pillow fonttools
-# Use -SimplificationLevel 2 to retain static sign text and vector drawings.
+# Level 2 is deprecated; its parameter remains for compatibility.
 # Default: add tracks above 50,000 bytes with more than 10% fewer events.
 # Use -ProcessAllTracks to bypass both thresholds; -ReplaceOriginals to replace.
 param(
     [string] $InputFolder,
     [string] $OutputFolder,
     [string] $Simplifier,
+    # Level 2 is deprecated and retained for explicit legacy calls only.
     [ValidateSet(1, 2)] [int] $SimplificationLevel = 1,
     [string] $Python = 'python',
     [string] $MkvToolNixFolder,
@@ -16,8 +17,59 @@ param(
     [switch] $ReplaceOriginals,
     [switch] $ProcessAllTracks,
     [ValidateRange(0, 2147483647)] [long] $MinimumSubtitleBytes = 50000,
-    [ValidateRange(0, 100)] [double] $MinimumEventReductionPercent = 10
+    [ValidateRange(0, 100)] [double] $MinimumEventReductionPercent = 10,
+    [ValidateRange(0, 2147483647)] [int] $ScrollConcurrencyLimit = 32,
+    [string] $ReportPath
 )
+
+# Normalize scrolling-text counters independently of console logs. Ordinary copies
+# merged away are not counted as dropped text. Older scripts may omit the data.
+function Get-ScrollingDropWarning([object] $Stats) {
+    if ($null -eq $Stats -or $null -eq $Stats.prototype_scrolling_events_removed -or
+        [long]$Stats.prototype_scrolling_events_removed -le 0) { return $null }
+    $limit = $Stats.prototype_scrolling_concurrency_limit
+    $limitText = if ($null -ne $limit) { [string]$limit } else { 'unknown' }
+    return [pscustomobject]@{
+        Code = 'scrolling_text_dropped'; Events = [long]$Stats.prototype_scrolling_events_removed
+        Limit = $limit; Blocks = $Stats.prototype_scrolling_blocks_removed
+        Peak = $Stats.prototype_scrolling_peak_after_reduction
+        Message = "Dropped $($Stats.prototype_scrolling_events_removed) events due to exceeding concurrent event limit $limitText for scrolling text blocks."
+    }
+}
+
+function Show-ScrollingDropWarning([object] $Warning, [string] $Context) {
+    Write-Host ''
+    Write-Host ('=' * 78) -ForegroundColor Red
+    Write-Host ("WARNING: " + $Warning.Message) -ForegroundColor Red
+    if ($Context) { Write-Host $Context -ForegroundColor Red }
+    Write-Host ('=' * 78) -ForegroundColor Red
+}
+
+function Show-ScrollingDropSummary($Items) {
+    $valid = @($Items | Where-Object { $null -ne $_ -and [long]$_.Events -gt 0 })
+    foreach ($group in @($valid | Group-Object Limit)) {
+        $events = [long]0
+        foreach ($item in $group.Group) { $events += [long]$item.Events }
+        $limit = $group.Group[0].Limit
+        $limitText = if ($null -ne $limit) { [string]$limit } else { 'unknown' }
+        Show-ScrollingDropWarning ([pscustomobject]@{
+            Message = "Dropped $events events due to exceeding concurrent event limit $limitText for scrolling text blocks."
+        }) ("RUN SUMMARY: $($group.Count) affected subtitle track(s).")
+    }
+}
+
+# Probe once in the parent, rather than once per worker or track. Explicit
+# overrides fail clearly on an old simplifier; default runs remain compatible.
+function Get-SimplifierHelp([string] $PythonPath, [string] $SimplifierPath) {
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $helpLines = @(& $PythonPath $SimplifierPath --help 2>&1)
+        $code = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previousPreference }
+    if ($code -ne 0) { throw 'Cannot read simplifier command-line options.' }
+    return ($helpLines -join "`n")
+}
 
 $ErrorActionPreference = 'Stop'
 if ($ReplaceOriginals) { $AddSimplifiedSubtitles = $false }
@@ -60,6 +112,14 @@ $mkvextract = Resolve-Executable 'mkvextract'
 $pythonCmd = Get-Command $Python -ErrorAction SilentlyContinue
 if (-not $pythonCmd) { throw "Cannot find Python command: $Python" }
 $pythonPath = $pythonCmd.Source
+$simplifierHelp = Get-SimplifierHelp $pythonPath $simplifierPath
+$supportsScrollLimit = $simplifierHelp -match '(?m)(?:^|\s)--scroll-concurrency-limit(?:\s|=|$)'
+$supportsStats = $simplifierHelp -match '(?m)(?:^|\s)--stats-json(?:\s|=|$)'
+$supportsSuffix = $simplifierHelp -match '(?m)(?:^|\s)--suffix(?:\s|=|$)'
+if ($PSBoundParameters.ContainsKey('ScrollConcurrencyLimit') -and -not $supportsScrollLimit) {
+    throw 'This simplifier does not support -ScrollConcurrencyLimit. Select simplify_ass.py version 101 or newer with -Simplifier.'
+}
+if (-not $supportsStats) { throw 'This wrapper requires a simplifier with --stats-json support.' }
 New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
 
 $files = @(Get-ChildItem -LiteralPath $inputRoot -Filter '*.mkv' -File -Recurse:$Recurse |
@@ -68,6 +128,9 @@ if (-not $files.Count) { Write-Host 'No MKV files found.'; return }
 
 $failures = 0
 $fontDependenciesChecked = $false
+$conversionTracks = [System.Collections.Generic.List[object]]::new()
+$droppedTextTracks = [System.Collections.Generic.List[object]]::new()
+try {
 foreach ($file in $files) {
     $relative = $file.FullName.Substring($inputRoot.Length).TrimStart('\', '/')
     $destination = Join-Path $outputRoot $relative
@@ -164,27 +227,44 @@ foreach ($file in $files) {
         $replacements = @()
         $pythonArgs = @($simplifierPath, '--level', [string]$SimplificationLevel)
         if ($SimplificationLevel -eq 1) { $pythonArgs += @('--fonts-dir', $fontsFolder) }
+        if ($supportsScrollLimit) { $pythonArgs += @('--scroll-concurrency-limit', [string]$ScrollConcurrencyLimit) }
+        if ($supportsSuffix) { $pythonArgs += @('--suffix', '.simple') }
         $statsPath = Join-Path $work 'simplification-stats.json'
-        if (-not $ProcessAllTracks) { $pythonArgs += @('--stats-json', $statsPath) }
+        $pythonArgs += @('--stats-json', $statsPath)
+        $pythonArgs += '--'
         $pythonArgs += @($candidates | ForEach-Object { $_.Input })
 
         # One Python process reuses the font index across every subtitle track.
         & $pythonPath @pythonArgs
         Check-Exit 'simplify subtitle tracks'
-        $statsByInput = @{}
-        if (-not $ProcessAllTracks) {
-            $statsReport = Get-Content -LiteralPath $statsPath -Raw -Encoding UTF8 | ConvertFrom-Json
-            foreach ($record in @($statsReport.tracks)) {
-                if ($record.error -or $null -eq $record.stats) { throw 'Simplifier returned failed or missing event statistics.' }
-                $statsByInput[[IO.Path]::GetFullPath([string]$record.input)] = $record.stats
-            }
-        }
+        if (-not (Test-Path -LiteralPath $statsPath -PathType Leaf)) { throw 'Simplifier did not create its statistics JSON.' }
+        $statsReport = Get-Content -LiteralPath $statsPath -Raw -Encoding UTF8 | ConvertFrom-Json
         foreach ($candidate in $candidates) {
             if (-not (Test-Path -LiteralPath $candidate.File -PathType Leaf)) {
                 throw "Missing simplified track: $($candidate.File)"
             }
+            $records = @($statsReport.tracks | Where-Object { $_.input -ieq [IO.Path]::GetFullPath($candidate.Input) })
+            if ($records.Count -ne 1 -or $records[0].error -or $null -eq $records[0].stats) {
+                throw "Missing or invalid simplifier statistics for track $($candidate.Original.id)."
+            }
+            $stats = $records[0].stats
+            $trackReport = [pscustomobject]@{
+                File = $file.FullName; Output = $destination; Track = $candidate.Original.id
+                Name = $candidate.Original.properties.track_name; Stats = $stats
+                Warnings = @($records[0].warnings | Where-Object { $null -ne $_ })
+                SelectedForRemux = $false
+            }
+            $conversionTracks.Add($trackReport)
+            $warning = Get-ScrollingDropWarning $stats
+            if ($null -ne $warning) {
+                $droppedTextTracks.Add([pscustomobject]@{
+                    File = $file.FullName; Track = $candidate.Original.id; Name = $candidate.Original.properties.track_name
+                    Events = $warning.Events; Limit = $warning.Limit; Blocks = $warning.Blocks
+                    Peak = $warning.Peak; Message = $warning.Message
+                })
+                Show-ScrollingDropWarning $warning ("$($file.Name) - track $($candidate.Original.id) - $($candidate.Original.properties.track_name)")
+            }
             if (-not $ProcessAllTracks) {
-                $stats = $statsByInput[[IO.Path]::GetFullPath($candidate.Input)]
                 if ($null -eq $stats -or $null -eq $stats.original -or $null -eq $stats.output -or
                     [long]$stats.original -lt 0 -or [long]$stats.output -lt 0) {
                     throw "Missing or invalid event counts for track $($candidate.Original.id)."
@@ -198,6 +278,7 @@ foreach ($file in $files) {
                     continue
                 }
             }
+            $trackReport.SelectedForRemux = $true
             $replacements += $candidate
         }
         if (-not $replacements.Count) {
@@ -283,5 +364,20 @@ foreach ($file in $files) {
     } finally {
         Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
     }
+}
+} finally {
+Show-ScrollingDropSummary $droppedTextTracks.ToArray()
+if ($ReportPath) {
+    $reportFullPath = [IO.Path]::GetFullPath($ReportPath)
+    $reportFolder = [IO.Path]::GetDirectoryName($reportFullPath)
+    New-Item -ItemType Directory -Path $reportFolder -Force | Out-Null
+    [pscustomobject]@{
+        Simplifier = $simplifierPath; Level = $SimplificationLevel; Failures = $failures
+        ScrollConcurrencyLimit = if ($supportsScrollLimit) { $ScrollConcurrencyLimit } else { $null }
+        ScrollingDropWarnings = @($droppedTextTracks.ToArray())
+        Tracks = @($conversionTracks.ToArray())
+    } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $reportFullPath -Encoding UTF8
+    Write-Host "Report: $reportFullPath"
+}
 }
 if ($failures) { throw "$failures file(s) failed. See warnings above." }
