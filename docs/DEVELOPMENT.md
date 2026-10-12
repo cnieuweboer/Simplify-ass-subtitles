@@ -117,8 +117,11 @@ converts them and writes per-MKV ZIPs and reports without remuxing the originals
 Use explicit input/output paths and a suitable `-MaxParallel` value.
 
 `tests/windows/test_subtitles_step2_test.bat` / `.ps1` operate on the previously extracted cache
-without repeating MKV extraction. The snapshot does not include the mentioned
-first-pass `extract_mkv_test_data.ps1`; reuse your existing extractor/cache.
+without repeating MKV extraction. The first-pass extractor is now available as
+`tests/windows/test_subtitles_step1_extract.bat` / `.ps1`. Configure both stages
+to use the same cache folder; their launchers currently have different default
+cache paths. You can also pass an explicit extraction `-OutputFolder` and
+step-two `-InputFolder`.
 These PowerShell/batch paths need native Windows execution to validate process,
 filesystem and wrapper behavior.
 

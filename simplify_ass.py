@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.12.178"
+__version__ = "2026.10.12.179"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -16436,11 +16436,12 @@ def normalize_shadow_lettering(events: list[Event]) -> tuple[list[Event], int]:
 
 
 def normalize_near_text_colors(events: list[Event]) -> tuple[list[Event], int]:
-    """Collapse bounded static text palettes, preserving ordered gradients.
+    """Collapse bounded static text palettes, preserving wider gradients.
 
     A style/channel's complete palette must fit within two 8-bit RGB levels
-    on every axis. Never form transitive clusters. Animated/mixed drawings,
-    hidden paint and any inline color variation veto that style/channel.
+    on every axis. Never form transitive clusters. Animated/mixed drawings
+    and hidden paint veto that style/channel. Inline variation is permitted
+    inside the same full-palette bound, including tiny ordered ramps.
     Styles and borrowed events remain unchanged; run after all source proofs.
     """
     palettes, blocked = {}, set()
@@ -16455,7 +16456,6 @@ def normalize_near_text_colors(events: list[Event]) -> tuple[list[Event], int]:
                  if text.strip()]
         for channel in (1, 3):
             key = event.style, channel
-            colors = []
             for state, text in spans:
                 color = str(state.get(f'{channel}c', '')).upper()
                 if (not re.fullmatch(r'[0-9A-F]{6}', color) or
@@ -16465,11 +16465,8 @@ def normalize_near_text_colors(events: list[Event]) -> tuple[list[Event], int]:
                                 for k in ('xbord', 'ybord')) <= 0)):
                     blocked.add(key)
                     continue
-                colors.append(tuple(int(color[i:i+2], 16) for i in (0, 2, 4)))
                 votes = palettes.setdefault(key, {})
                 votes[color] = votes.get(color, 0) + event.duration * len(text)
-            if len(set(colors)) > 1:
-                blocked.add(key)
     representatives = {}
     for key, votes in palettes.items():
         if key in blocked or len(votes) < 2:

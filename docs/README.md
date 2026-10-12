@@ -36,4 +36,4 @@ replacement and backed-pulse index payloads remain deferred to their separate
 API and pass-local index reviews.
 
 
-[COLOR_NORMALIZATION.md](COLOR_NORMALIZATION.md) describes the guarded v178 near-color pass.
+[COLOR_NORMALIZATION.md](COLOR_NORMALIZATION.md) describes the guarded v179 near-color pass.

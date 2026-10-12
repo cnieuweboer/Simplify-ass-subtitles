@@ -69,15 +69,32 @@ for delta, accepted in [(1, True), (2, True), (3, False)]:
 
 for name, es in [
     ('bounded neighbor chain does not accumulate', [event('{\\c&H'+f'{c:02X}'*3+'&}X') for c in (10,12,14,16)]),
-    ('alternating inline noise retained to protect shaping', [event(r'A{\c&HFDFDFD&}B{\c&HFFFFFF&}C')]),
-    ('tiny ordered ramp', [event(r'A{\c&HFEFEFE&}B{\c&HFDFDFD&}C')]),
-    ('two-color ordered ramp', [event(r'A{\c&HFDFDFD&}B')]),
     ('large intentional gradient', [event(r'A{\c&HDEC7F6&}B{\c&HA9FFC8&}C')]),
-    ('outline gradient', [event(r'A{\3c&H111111&}B{\3c&H121212&}C')]),
+    ('wide outline gradient', [event(r'A{\3c&H202020&}B{\3c&H303030&}C')]),
     ('gradient split over events', [event(r'{\c&HE2C3FA&}A'), event(r'{\c&HA9FFC8&}B')]),
 ]:
     result, n = s.normalize_near_text_colors(es)
     check('preserve '+name, n == 0 and all(a is b for a, b in zip(es, result)))
+
+for name, text, channel in [
+    ('alternating inline fill', r'A{\c&HFDFDFD&}B{\c&HFFFFFF&}C', 1),
+    ('tiny ordered fill ramp', r'A{\c&HFEFEFE&}B{\c&HFDFDFD&}C', 1),
+    ('two-color fill ramp', r'A{\c&HFDFDFD&}B', 1),
+    ('tiny ordered outline ramp', r'A{\3c&H111111&}B{\3c&H121212&}C', 3),
+]:
+    original = event(text)
+    snapshot = deepcopy(original)
+    result, n = s.normalize_near_text_colors([original])
+    check('normalize '+name, n == 1 and len(set(colors(result[0], channel))) == 1)
+    check('preserve text timing and formatting '+name,
+          s.OVERRIDE_RE.sub('', result[0].text) == s.OVERRIDE_RE.sub('', text) and
+          result[0].fields()[:-1] == original.fields()[:-1] and vars(original) == vars(snapshot))
+    check('inline normalization idempotent '+name,
+          s.normalize_near_text_colors(result) == (result, 0))
+
+es = [event(r'A{\c&HFDFDFD&}B{\c&HFFFFFF&}C'), event(r'{\c&H000000&}Different paint')]
+result, n = s.normalize_near_text_colors(es)
+check('wide complete style palette vetoes tiny inline variation', n == 0 and result == es)
 
 for tag in (r'\t(0,100,\c&HFDFDFD&)', r'\k20', r'\fad(100,0)', r'\move(1,1,2,2)'):
     es = [event('ABC'), event('{'+tag+r'\c&HFDFDFD&}X')]
@@ -128,6 +145,16 @@ with tempfile.TemporaryDirectory() as folder:
     difference = ImageChops.difference(render(noisy, 'noise'), render(normalized, 'normalized'))
     check('rendered dither change bounded by two RGB levels '+str(difference.getextrema()),
           0 < max(hi for lo, hi in difference.getextrema()) <= 2)
+    inline = event(r'A{\c&HFDFDFD&\3c&H121212&}B{\c&HFFFFFF&\3c&H101010&}C')
+    normalized, n = s.normalize_near_text_colors([inline])
+    check('inline fill and outline reduced to inherited colors', n == 1 and normalized[0].text == 'ABC')
+    original_frame = render(inline, 'inline')
+    normalized_frame = render(normalized[0], 'inline-normalized')
+    difference = ImageChops.difference(original_frame, normalized_frame)
+    check('inline run merging permits outline-compositing changes',
+          max(hi for lo, hi in difference.getextrema()) > 2)
+    check('normalized inline render equals uniform-caption render',
+          ImageChops.difference(normalized_frame, render(event('ABC'), 'uniform')).getbbox() is None)
     gradient = event(r'A{\c&HDEC7F6&}B{\c&HA9FFC8&}C')
     retained = s.normalize_near_text_colors([gradient])[0][0]
     check('rendered intentional gradient pixel-identical',
@@ -147,6 +174,17 @@ with tempfile.TemporaryDirectory() as folder:
     with patch.object(s, 'normalize_near_text_colors', wraps=s.normalize_near_text_colors) as normalize:
         s.simplify_ass(source, Path(folder)/'legacy.ass', s.SimplifyConfig(level=2))
         check('legacy path does not invoke new pass', normalize.call_count == 0)
+    source.write_text(HEADER + 'Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,A{\\c&HFDFDFD&}B{\\c&HFFFFFF&}C\n')
+    source_bytes = source.read_bytes()
+    stats = s.simplify_ass(source, output, s.SimplifyConfig())
+    actual = s.load_subtitle_events(output)[1]
+    check('full pipeline normalizes retained inline colors',
+          stats['text_colors_normalized'] == 1 and len(actual) == 1 and
+          s.OVERRIDE_RE.sub('', actual[0].text) == 'ABC' and
+          set(colors(actual[0], 1)) == {'FFFFFF'})
+    check('inline pipeline keeps source bytes', source.read_bytes() == source_bytes)
+    s.simplify_ass(output, again, s.SimplifyConfig())
+    check('inline pipeline byte-idempotent', output.read_bytes() == again.read_bytes())
 
 def definitions(path):
     return {n.name: n for n in executable_ast(ast.parse(path.read_text())).body

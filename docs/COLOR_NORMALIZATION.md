@@ -1,4 +1,4 @@
-# Near-color normalization — v178
+# Near-color normalization — v179
 
 The AoT v177 English/romanized opening and ending lines already have uniform
 fill and outline colors, including every inline static text span. No dithering
@@ -15,17 +15,22 @@ Choose an existing color by duration times literal-span length, with a stable
 lexical tie-break. No rounding grid, nearest-neighbor chain or transitive
 clustering is used. A long chain of individually close shades is retained.
 
-Any inline color variation vetoes normalization for that style/channel, even when
-its total variation fits inside the tolerance. Wide palettes also veto it,
-including gradients split across separate events. Animated paint, karaoke,
-movement, fades, mixed/drawing events and hidden paint are conservatively
-excluded. Outline admission also requires a visible ordinary border.
+Inline color variation is permitted within the same complete-palette bound,
+including ordered ramps whose full range is no greater than two levels. Wider
+gradients remain exact, including gradients split across separate events.
+Animated paint, karaoke, movement, fades, mixed/drawing events and hidden paint
+are conservatively excluded. Outline admission requires a visible ordinary border.
 
-This deliberately leaves inline noise untouched: color runs may change glyph
-shaping and outline composition when combined. Meaningful color variation
-elsewhere in a style can block normalization. Tiny intentional differences
-between captions cannot always be inferred
-from colors alone; the two-level bound limits the admitted visual change.
+The two-level bound applies to the subtitle's color values, rather than every
+final rendered pixel. Combining inline runs can change how libass composites
+overlapping outlines. In an Arial ABC diagnostic, outline coverage changed at
+eight pixels; the largest final RGB difference was 27 levels despite a two-level
+color difference. The fill coverage was unchanged. This outline-compositing difference is accepted for near-color
+normalization; it does not veto inline simplification.
+
+Meaningful color variation elsewhere in a style can still block normalization.
+Tiny intentional differences inside the tolerance are also simplified. The
+original v178 policy vetoed inline variation; v179 removes that restriction.
 
 For an admitted channel, redundant color tags are removed and a representative
 override is inserted only where inherited styling or a reset requires it. Styles
@@ -46,5 +51,5 @@ python validation/run_backend_check.py --backend windows tests/check_color_norma
 The regression checks cover dither reduction, threshold boundaries, chaining, ordered gradients,
 split gradients, resets, alpha, input ownership, real song palettes and pipeline
 idempotence. The v177 lifecycle AST audit is frozen at its release reference;
-the new check independently verifies that v178 adds only this helper and changes
+the new check independently verifies that the current converter adds only this helper and changes
 only the final pipeline function.
