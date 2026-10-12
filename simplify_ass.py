@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.12.177"
+__version__ = "2026.10.12.178"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -16435,6 +16435,95 @@ def normalize_shadow_lettering(events: list[Event]) -> tuple[list[Event], int]:
     return output, count
 
 
+def normalize_near_text_colors(events: list[Event]) -> tuple[list[Event], int]:
+    """Collapse bounded static text palettes, preserving ordered gradients.
+
+    A style/channel's complete palette must fit within two 8-bit RGB levels
+    on every axis. Never form transitive clusters. Animated/mixed drawings,
+    hidden paint and any inline color variation veto that style/channel.
+    Styles and borrowed events remain unchanged; run after all source proofs.
+    """
+    palettes, blocked = {}, set()
+    for event in events:
+        if event.kind != 'Dialogue':
+            continue
+        obj = static_object_key(event, event.styles, allow_unpositioned=True)
+        if obj is None or any(drawing for _, drawing, _ in obj[-1]):
+            blocked.update((event.style, channel) for channel in (1, 3))
+            continue
+        spans = [(dict(signature.formatting), text) for signature, _, text in obj[-1]
+                 if text.strip()]
+        for channel in (1, 3):
+            key = event.style, channel
+            colors = []
+            for state, text in spans:
+                color = str(state.get(f'{channel}c', '')).upper()
+                if (not re.fullmatch(r'[0-9A-F]{6}', color) or
+                        state.get(f'{channel}a', 0) >= 254 or
+                        channel == 3 and (state.get('borderstyle', 1) != 1 or
+                            max(abs(state.get(k, state.get('bord', 0)))
+                                for k in ('xbord', 'ybord')) <= 0)):
+                    blocked.add(key)
+                    continue
+                colors.append(tuple(int(color[i:i+2], 16) for i in (0, 2, 4)))
+                votes = palettes.setdefault(key, {})
+                votes[color] = votes.get(color, 0) + event.duration * len(text)
+            if len(set(colors)) > 1:
+                blocked.add(key)
+    representatives = {}
+    for key, votes in palettes.items():
+        if key in blocked or len(votes) < 2:
+            continue
+        rgb = [tuple(int(color[i:i+2], 16) for i in (0, 2, 4)) for color in votes]
+        if any(max(c[axis] for c in rgb) - min(c[axis] for c in rgb) > 2
+               for axis in range(3)):
+            continue
+        representatives[key] = min(votes, key=lambda color: (-votes[color], color))
+    output, count = [], 0
+    color_tag = re.compile(r'\\(1c|3c|c)(?![A-Za-z])[^\\]*', re.I)
+    for event in events:
+        targets = {channel: representatives[event.style, channel] for channel in (1, 3)
+                   if (event.style, channel) in representatives}
+        if not targets or event.kind != 'Dialogue':
+            output.append(event)
+            continue
+        state = event.defaults.copy()
+        continuation = OverrideContinuation()
+        parts = []
+        for part in re.split(r'(\{[^}]*\})', event.text):
+            if not part:
+                continue
+            if part.startswith('{') and part.endswith('}'):
+                # Only admitted channels become constant. Preserve other raw
+                # tags, their order and reset/alignment continuation.
+                block = color_tag.sub(lambda m: '' if
+                    (1 if m[1].lower() in ('c', '1c') else 3) in targets else m[0],
+                    part[1:-1])
+                if block:
+                    parts.append('{'+block+'}')
+                    for name, value in tokenize_override(block):
+                        continuation = apply_override(state, name, value,
+                                                      event.styles, event.defaults, continuation)
+            else:
+                tags = ''.join(render_tag(f'{channel}c', color)
+                               for channel, color in targets.items()
+                               if str(state.get(f'{channel}c', '')).upper() != color)
+                if tags:
+                    if parts and parts[-1].startswith('{') and parts[-1].endswith('}'):
+                        parts[-1] = parts[-1][:-1]+tags+'}'
+                    else:
+                        parts.append('{'+tags+'}')
+                    state.update({f'{channel}c': color for channel, color in targets.items()})
+                parts.append(part)
+        text = ''.join(parts)
+        if text == event.text:
+            output.append(event)
+        else:
+            output.append(replace_event(event, text=text))
+            count += 1
+    return output, count
+
+
 def simplify_ass(
     path: Path, output: Path, config: SimplifyConfig, *, font_metrics: FontMetrics | None=None,
     font_report: FontProcessingReport | None=None, outline_matcher: FontOutlineMatcher | None=None,
@@ -16464,9 +16553,12 @@ def simplify_ass(
     captions = _normalize_text_result(text_source,text_result)
     supports,scroll_report = _reconstruct_caption_backdrops(source,captions,config,font_metrics)
     output_events, shadow_lettering = normalize_shadow_lettering(supports.events)
+    output_events, normalized_colors = normalize_near_text_colors(output_events)
     write_subtitle_document(output,captions,output_events,final_newline=True)
     stats = _summarize_caption_supports(text_result.statistics,supports,font_metrics)
     stats['shadow_lettering_normalized'] = shadow_lettering
+    if normalized_colors:
+        stats['text_colors_normalized'] = normalized_colors
     _print_support_report(supports,scroll_report,config)
     return stats
 

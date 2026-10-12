@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.12.176",
+  "version": "2026.10.12.178",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -305,6 +305,11 @@
       "script": "tests/check_glyph_lifecycles.py",
       "status": "current",
       "category": "source ownership"
+    },
+    {
+      "script": "tests/check_color_normalization.py",
+      "status": "current",
+      "category": "text-paint"
     }
   ],
   "historical": [

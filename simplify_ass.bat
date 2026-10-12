@@ -1,6 +1,6 @@
 @echo off
 setlocal
-echo Subtitle simplifier launcher v177
+echo Subtitle simplifier launcher v178
 
 set "SCRIPT=%~dp0simplify_ass.ps1"
 set "INPUT=%~dp0."

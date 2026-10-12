@@ -1,6 +1,6 @@
 @echo off
 setlocal
-echo Subtitle simplifier launcher v177
+echo Subtitle simplifier launcher v178
 rem Edit these settings before running.
 set "CACHE_FOLDER=%~dp0..\..\cache"
 set "OUTPUT_FOLDER=%~dp0..\..\results"

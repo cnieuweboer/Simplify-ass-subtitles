@@ -122,7 +122,7 @@ with tempfile.TemporaryDirectory() as directory:
  check('actual opening pipeline byte-idempotent',output.read_bytes()==twice.read_bytes() and again['covered_fragments']==0)
  check('source bytes untouched',fixture.read_bytes()==original)
 def definitions(p):return {n.name:n for n in executable_ast(ast.parse(p.read_text())).body if isinstance(n,(ast.ClassDef,ast.FunctionDef))}
-a,b=definitions(ROOT/'test-data/simplify_ass-v176-reference.py'),definitions(ROOT/'simplify_ass.py')
+a,b=definitions(ROOT/'test-data/simplify_ass-v176-reference.py'),definitions(ROOT/'tests/references/simplify_ass_v177.py')
 check('only focused lifecycle proof definitions added',set(b)-set(a)=={'GlyphPhaseLife','_index_glyph_phase_slots','_prove_glyph_phase_lives','reconstruct_glyph_lifecycles'} and not set(a)-set(b))
 check('existing changes confined to source preparation and proof adoption',{k for k in a if ast.dump(a[k])!=ast.dump(b[k])}=={'_prepare_source_text','_consolidate_text_events'})
 report=dict(version=s.__version__,runtime_sha256=hashlib.sha256((ROOT/'simplify_ass.py').read_bytes()).hexdigest(),checks_passed=len(checks),checks=checks,romaji_lines=21,source_phases=12783)

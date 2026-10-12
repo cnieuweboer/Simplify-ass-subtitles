@@ -35,3 +35,5 @@ The original structural plan is complete. Simultaneous catalog/text-style
 replacement and backed-pulse index payloads remain deferred to their separate
 API and pass-local index reviews.
 
+
+[COLOR_NORMALIZATION.md](COLOR_NORMALIZATION.md) describes the guarded v178 near-color pass.
