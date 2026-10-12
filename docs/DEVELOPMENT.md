@@ -60,7 +60,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 62 current scripts. The runner uses three workers for
+The suite inventory lists 63 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
@@ -72,7 +72,9 @@ RAQM is an occasional explicit check:
 python validation/run_review_checks.py --backend raqm
 ```
 
-For fresh full-corpus comparisons, first produce the isolated opening output,
+The following corpus runner preserves the historical v177 migration assertions;
+later color and timing changes can legitimately fail its unchanged-output checks.
+For that historical comparison, first produce the isolated opening output,
 then regenerate both historical v176 and current outputs for all nine sources:
 
 ```sh
@@ -142,3 +144,7 @@ Keep the two larger reviews separate from those fixes:
 
 `CONTEXT_OWNERSHIP_REVIEW.md` records the deferred questions. Earlier structural
 work is documented as completed; those notes are context for the new reviews.
+
+Current staggered-fade timing policy and its v179 comparison are documented in
+[STAGGERED_FADE_CORES.md](STAGGERED_FADE_CORES.md). The focused check runs the
+actual opening through both engines with the same supplied fonts.

@@ -190,7 +190,7 @@ def definitions(path):
     return {n.name: n for n in executable_ast(ast.parse(path.read_text())).body
             if isinstance(n, (ast.ClassDef, ast.FunctionDef))}
 a = definitions(ROOT/'tests/references/simplify_ass_v177.py')
-b = definitions(ROOT/'simplify_ass.py')
+b = definitions(ROOT/'tests/references/simplify_ass_v179.py')
 check('only one production helper added', set(b)-set(a) == {'normalize_near_text_colors'} and not set(a)-set(b))
 check('integration confined to final pipeline', {k for k in a if ast.dump(a[k]) != ast.dump(b[k])} == {'simplify_ass'})
 (ROOT/'validation/color-normalization-checks.json').write_text(json.dumps(dict(

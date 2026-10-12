@@ -7,3 +7,8 @@ Behavioral checks continue to exercise the current production converter.
 
 Do not edit a frozen engine to accommodate later changes. Earlier references
 remain in the supplied local `test-data` folder.
+
+`simplify_ass_v179.py` preserves commit
+`775b98ec6b43ea511efb93b8eecfd1fda67cacd9` byte for byte. It freezes the
+normalization scope audit and provides the staggered-fade timing baseline.
+Behavioral checks use the current converter.

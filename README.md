@@ -46,7 +46,7 @@ python sync_fonts.py /path/to/media --preview
 
 The converter writes `input.simple.ass` by default. Exact fonts help prove line
 geometry; uncertain fragments are retained. Use `--help` for all options.
-Current converter version: **2026.10.12.179**.
+Current converter version: **2026.10.12.180**.
 
 ## Development
 

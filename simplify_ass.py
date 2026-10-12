@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.12.179"
+__version__ = "2026.10.12.180"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -12816,6 +12816,76 @@ def text_cue_lane(e: Event, pos: tuple[float,float], state: dict) -> tuple:
             round(pos[1],4),(int(state.get('an',2))-1)//3)
 
 
+def derive_staggered_fade_cores(events: list[Event], rows: list[TextRow],
+                                sources: dict[int,Event]) -> list[TextRow]:
+    """Attach complete source-fade cores to already validated reconstructed rows.
+
+    Each fragment must match one stationary original source in text, font,
+    layout and anchor. Protect the intersection of their fully readable
+    intervals, without requiring synchronized glyph entrances or exits.
+    Borrow all inputs; only returned row successors receive the new core.
+    Existing phase proofs and ambiguous or incomplete rows are untouched.
+    """
+    current = {e.source_index:e for e in events}
+    claims = collections.Counter(row.base.source_index for row in rows if not row.virtual)
+    forbidden = {'t','move','clip','iclip','org','fade','r','k','kf','ko','kt','fax','fay','p'}
+    cache = {}
+    output = []
+    for row in rows:
+        caption = current.get(row.base.source_index)
+        pos = get_pos(caption.text) if caption is not None else None
+        if (row.virtual or row.phase_core is not None or
+                claims[row.base.source_index] != 1 or caption is None or
+                caption.kind != 'Dialogue' or caption.text != row.base.text or len(row.pieces) < 2 or
+                pos is None or not all(math.isfinite(v) for v in pos) or
+                _faded_cue_is_scrolling(caption) or
+                not opaque_text_effect_state(caption.state) or
+                not unrotated_text_state(caption.state) or
+                re.search(r'\\[Nn]|[\r\n]',caption.text) or
+                ''.join(OVERRIDE_RE.sub('',caption.text).split()) !=
+                ''.join(''.join(word.split()) for piece,word,anchor in row.pieces) or
+                len({piece.source_index for piece,word,anchor in row.pieces}) != len(row.pieces)):
+            output.append(row)
+            continue
+        lane = text_cue_lane(caption,pos,caption.state)
+        intervals = []
+        for piece,word,anchor in row.pieces:
+            index = piece.source_index
+            source = sources.get(index)
+            if index not in cache:
+                cache[index] = (_parse_faded_source_evidence(source,forbidden)
+                                if source is not None and source.source_index == index and
+                                source.kind == 'Dialogue' and not _faded_cue_is_scrolling(source) and
+                                not OVERRIDE_RE.search(source.text,
+                                    re.match(r'(?:\{[^}]*\})*',source.text).end()) and
+                                source.duration > 0 and all(math.isfinite(v) for v in
+                                    (source.start_s,source.end_s)) else None)
+            proof = cache[index]
+            slot = _faded_cue_slot(piece,anchor) if anchor is not None and len(anchor) == 2 else None
+            if (source is None or proof is None or not word.strip() or
+                    piece.kind != 'Dialogue' or anchor is None or len(anchor) != 2 or
+                    not all(math.isfinite(v) for v in anchor) or
+                    source.style != caption.style or proof[0] != lane or
+                    # Reconstruction serializes anchors to two decimals in
+                    # some paths. Permit only that subpixel rounding error;
+                    # text/font/layout identity must still match exactly.
+                    math.dist(proof[1][0],anchor) > .0071 or
+                    slot is None or proof[1][1:] != slot[1:] or
+                    OVERRIDE_RE.sub('',piece.text).strip() != word.strip() or
+                    proof[2] <= 0 or proof[3] <= 0 or
+                    source.start_s < caption.start_s-1e-7 or
+                    source.end_s > caption.end_s+1e-7):
+                break
+            intervals.append((source.start_s+proof[2],source.end_s-proof[3]))
+        if len(intervals) != len(row.pieces):
+            output.append(row)
+            continue
+        core = max(start for start,end in intervals),min(end for start,end in intervals)
+        output.append(dataclass_replace(row,phase_core=core)
+                      if caption.start_s < core[0] < core[1] < caption.end_s else row)
+    return output
+
+
 def collect_faded_cue_families(events: list[Event], rows: list[TextRow],
                                sources: dict[int,Event]) -> list[CueFadeFamily]:
     """Recover fade boundaries across source-backed staggered fragments.
@@ -14088,6 +14158,8 @@ def _consolidate_text_events(
             simplified_events, visible_map, row_evidence+authored_rows, animated_sources,parsed_by_line,font_metrics)
         simplified_events,row_evidence = covered.events,covered.rows
         covered_fragments = covered.removed_effects+source_effects+word_echoes
+        row_evidence = derive_staggered_fade_cores(
+            simplified_events,row_evidence,parsed_by_line)
         cue_families = collect_faded_cue_families(
             simplified_events,row_evidence,timing_sources)
         simplified_events, cue_overlaps_trimmed = trim_faded_cue_overlaps(

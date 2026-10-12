@@ -32,8 +32,19 @@ def row_test_call(metric,name,*args,**kwargs):
         kwargs['font_report']=font_test_report(metric)
     return function(metric,*args,**kwargs)
 
-def install_row_test_doubles(module):
+def install_row_test_doubles(module, *, historical_fade_timing=False):
     """Install normal mocks at the new function boundary, never a runtime shim."""
+    if historical_fade_timing and hasattr(module,'derive_staggered_fade_cores'):
+        # Historical conversion equivalence audits preserve their release's
+        # timing policy. Direct pass tests still exercise the current helper;
+        # check_staggered_fade_cores exercises unmodified real conversions.
+        simplify = module.simplify_ass
+        @functools.wraps(simplify)
+        def historical_conversion(*args,**kwargs):
+            with patch.object(module,'derive_staggered_fade_cores',
+                              lambda events,rows,sources: rows):
+                return simplify(*args,**kwargs)
+        module.simplify_ass = historical_conversion
     if getattr(module,'_row_test_doubles_installed',False):return
     module._row_test_doubles_installed=True
     for old,new in ROW_NAMES.items():

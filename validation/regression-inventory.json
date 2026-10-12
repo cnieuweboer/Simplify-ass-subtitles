@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.12.179",
+  "version": "2026.10.12.180",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -310,6 +310,11 @@
       "script": "tests/check_color_normalization.py",
       "status": "current",
       "category": "text-paint"
+    },
+    {
+      "script": "tests/check_staggered_fade_cores.py",
+      "status": "current",
+      "category": "timing"
     }
   ],
   "historical": [

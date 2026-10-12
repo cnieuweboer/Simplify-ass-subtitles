@@ -96,7 +96,10 @@ check('vector diagnostic preserves untrimmed family',local.missing_families=={' 
 # Full conversions preserve row counters, selective diagnostics, file bytes
 # and statistics, including already-completed work before a write failure.
 conversion_cases=[]
-with tempfile.TemporaryDirectory() as directory:
+with tempfile.TemporaryDirectory() as directory, patch.object(
+        current,'derive_staggered_fade_cores',lambda events,rows,sources: rows):
+    # This release-equivalence audit retains pre-v180 fade timing. Real
+    # staggered timing is covered by check_staggered_fade_cores instead.
     folder=Path(directory)
     synthetic=folder/'missing-fonts.ass'
     synthetic.write_text(HEADER+''.join(

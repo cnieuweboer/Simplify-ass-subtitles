@@ -17,7 +17,7 @@ import tempfile
 
 import simplify_ass as current
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
-install_row_test_doubles(current)
+install_row_test_doubles(current, historical_fade_timing=True)
 from event_evidence_test_helpers import event_comparison_fields
 
 ROOT = Path(__file__).resolve().parents[1]
