@@ -13,6 +13,8 @@ param(
     [ValidateRange(0, 2147483647)] [int] $ScrollConcurrencyLimit = 32
 )
 
+. (Join-Path $PSScriptRoot 'subtitle_report_helpers.ps1')
+
 # Normalize scrolling-text counters independently of console logs. Ordinary copies
 # merged away are not counted as dropped text. Older scripts may omit the data.
 # Normalize older report keys at the reporting boundary. Current keys win.
@@ -131,6 +133,7 @@ $pythonCommand = Get-Command $Python -CommandType Application -ErrorAction Silen
 if (-not $pythonCommand) { throw "Cannot find Python command: $Python" }
 $pythonPath = $pythonCommand.Source
 $simplifierHelp = Get-SimplifierHelp $pythonPath $simplifierPath
+$simplifierVersion = Get-SubtitleSimplifierVersion $pythonPath $simplifierPath
 $supportsScrollLimit = $simplifierHelp -match '(?m)(?:^|\s)--scroll-concurrency-limit(?:\s|=|$)'
 if ($PSBoundParameters.ContainsKey('ScrollConcurrencyLimit') -and -not $supportsScrollLimit) {
     throw 'This simplifier does not support -ScrollConcurrencyLimit. Select simplify_ass.py version 101 or newer with -Simplifier.'
@@ -169,61 +172,8 @@ $completed = [System.Collections.Generic.List[object]]::new()
 $active = [System.Collections.Generic.List[object]]::new()
 $runState = 'Running'
 
-$labels = [ordered]@{
-    deduped = 'duplicate layers removed'
-    lyric_merged = 'lyric fragments merged'
-    phase_merged = 'glyph phases merged'
-    overlap_removed = 'overlapping effects removed'
-    full_copies_removed = 'full lyric copies removed'
-    merged = 'frame pieces merged'
-    static_merged = 'identical timed copies merged'
-    text_copies_removed = 'duplicate sign text removed'
-    tiles_joined = 'identical text strips joined'
-    stacked_text_copies_flattened = 'stacked text copies flattened'
-    text_effect_sequences_frozen = 'text effect sequences frozen'
-    staggered_rows = 'staggered row fragments merged'
-    fullwidth_merged = 'fullwidth glyph events merged'
-    progressive_rows = 'progressive row fragments merged'
-    overlaid_letters = 'overlaid letters removed'
-    covered_fragments = 'covered fragments removed'
-    masked_decorations = 'masked decorations removed'
-    vector_copies_removed = 'vector copies removed'
-    vector_glows_removed = 'covered contours removed'
-    covered_vectors = 'fully covered drawings removed'
-    vector_frames_removed = 'drawing animation frames removed'
-    vector_output = 'vector events retained'
-    max_concurrent_in = 'maximum concurrent events before (across tracks)'
-    max_concurrent_out = 'maximum concurrent events remaining (across tracks)'
-    backdrops_retained = 'caption backdrops retained'
-    excess_vectors = 'excess vector details removed'
-    dropped = 'drawings/effects dropped'
-    cue_overlaps_trimmed = 'lyric cue overlaps trimmed'
-    vector_text_recovered = 'vector captions recovered'
-    drawing_candidates = 'supporting drawing candidates'
-    drawing_strips_collapsed = 'drawing strips collapsed'
-    drawing_duplicates_removed = 'duplicate supporting drawings removed'
-    drawing_fade_frames_removed = 'drawing fade frames removed'
-    unsupported_drawings_excluded = 'unsupported drawings excluded'
-    drawing_contours_simplified = 'drawing contours simplified'
-    drawing_scale_exits_frozen = 'drawing scale exits held static'
-    drawing_move_entrances_frozen = 'drawing move entrances held static'
-    drawing_edge_slivers_detached = 'drawing edge slivers detached'
-    composite_backdrops_built = 'composite caption backdrops built'
-    scrolling_events_dropped = 'scrolling-text events dropped'
-    scrolling_blocks_detected = 'scrolling-text blocks detected'
-    scrolling_blocks_dropped = 'scrolling-text blocks dropped'
-    scrolling_blocks_retained = 'scrolling-text blocks retained'
-    scrolling_peak_after_reduction = 'maximum scrolling-text concurrency after reduction (across tracks)'
-    scrolling_concurrency_limit = 'scrolling-text concurrent event limit'
-    masked_foregrounds_restored = 'masked text foregrounds restored'
-    shadow_offsets_repaired = 'text shadow positions repaired'
-    drawing_events_capped = 'supporting drawings removed by vector budget'
-    unmeasured_backdrops_retained = 'unmeasured caption backdrops retained'
-    supporting_shapes_retained = 'supporting shapes retained'
-    font_textures_removed = 'font textures removed'
-    fullscreen_backgrounds_retained = 'fullscreen backgrounds retained'
-    adjacent_shapes_retained = 'adjacent supporting shapes retained'
-}
+$counterCatalog = Get-SubtitleCounterCatalog $SimplificationLevel
+$labels = $counterCatalog.Labels
 
 # Start-Job works on Windows PowerShell 5.1; no PS7 or ThreadJob module needed.
 # Workers never write the aggregate report. All files and fonts are isolated.
@@ -480,8 +430,10 @@ $summary = [pscustomobject]@{
     TracksProcessed = 0; TracksFailed = 0; TracksSkipped = 0; Original = [long]0; Remaining = [long]0
 }
 $totals = [ordered]@{}
+$counterCoverage = [ordered]@{}
 foreach ($key in $labels.Keys) {
-    if ($key -notin @('max_concurrent_in', 'max_concurrent_out', 'scrolling_concurrency_limit')) { $totals[$key] = [long]0 }
+    $totals[$key] = $null
+    $counterCoverage[$key] = 0
 }
 $topTracks = [System.Collections.Generic.List[object]]::new()
 $topConcurrentTracks = [System.Collections.Generic.List[object]]::new()
@@ -528,14 +480,7 @@ function Add-ResultToSummary($Item) {
         $summary.TracksProcessed++
         $summary.Original += [long]$stats.original
         $summary.Remaining += [long]$stats.output
-        foreach ($property in $stats.PSObject.Properties) {
-            $key = $property.Name
-            if ($key -in @('original', 'output', 'scrolling_concurrency_limit')) { continue }
-            if (-not $totals.Contains($key)) { $totals[$key] = [long]0 }
-            if ($key -in @('max_concurrent_in', 'max_concurrent_out', 'scrolling_peak_after_reduction')) {
-                $totals[$key] = [Math]::Max([long]$totals[$key], [long]$property.Value)
-            } else { $totals[$key] += [long]$property.Value }
-        }
+        Add-SubtitleCounterStats $stats $totals $counterCoverage $simplifierVersion
         # Older simplifiers omit concurrency; do not rank missing data as zero.
         if ($null -ne $stats.max_concurrent_out) {
             $topConcurrentTracks.Add([pscustomobject]@{
@@ -600,9 +545,11 @@ function Save-Report {
     $lines.Add("Dialogue events before: $($summary.Original)")
     $lines.Add("Dialogue events remaining: $($summary.Remaining)")
     $lines.Add('Concurrency values are maxima across individual tracks, not sums.')
-    foreach ($key in $totals.Keys) {
-        $label = if ($labels.Contains($key)) { $labels[$key] } else { $key }
-        $lines.Add("${label}: $($totals[$key])")
+    $lines.Add('Zero means every successful track reported no contribution; missing or partial counters are marked separately.')
+    $lines.Add('Zero alone does not prove supersession: a matching effect may be absent or handled by an earlier pass.')
+    $lines.Add('')
+    foreach ($line in @(Get-SubtitleCounterReportLines $counterCatalog $totals $counterCoverage $summary.TracksProcessed)) {
+        $lines.Add($line)
     }
     $lines.Add('')
     $lines.Add('TOP 10 TRACKS BY REMAINING DIALOGUE EVENTS')
@@ -650,6 +597,7 @@ function Save-Report {
         TracksProcessed = $summary.TracksProcessed; TracksFailed = $summary.TracksFailed
         TracksSkipped = $summary.TracksSkipped
         Original = $summary.Original; Remaining = $summary.Remaining; Totals = $totals
+        CounterCoverage = $counterCoverage; CounterPolicy = 'active-v1'; SimplifierVersion = [string]$simplifierVersion
         Files = @($completed.ToArray() | Sort-Object File)
     } | ConvertTo-Json -Depth 25 | Set-Content -LiteralPath $jsonReportPath -Encoding UTF8
 }

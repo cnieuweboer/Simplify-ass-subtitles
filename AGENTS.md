@@ -41,3 +41,8 @@ assets incidentally with code changes. See `docs/DEVELOPMENT.md` for fixture lay
 
 Use the existing checkout: cloud tasks are already isolated. Do not create a Git
 worktree unless the user explicitly requests one.
+
+When adding production counters, update the shared test-wrapper catalog in
+`tests/windows/subtitle_report_helpers.ps1`. Preserve raw track statistics; never
+turn unknown/missing counters into genuine zero contributions. Run
+`tests/windows/check_reporting.ps1` with PowerShell for wrapper report changes.

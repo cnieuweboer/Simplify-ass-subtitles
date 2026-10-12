@@ -151,3 +151,37 @@ actual opening through both engines with the same supplied fonts.
 
 See [SYNCHRONIZED_HANDOFFS.md](SYNCHRONIZED_HANDOFFS.md) for shared source-safe
 transitions across separate text rows (v181).
+
+## Test-wrapper counter reports
+
+Both Windows wrappers use `tests/windows/subtitle_report_helpers.ps1`; keep that
+file beside them when copying the wrappers. Standard-mode summaries list current
+filter contributions separately from retained-output and diagnostic counts.
+Legacy-only counters and unused compatibility placeholders are excluded. Explicit
+legacy mode shows its own active counters. Original per-track `stats.json` files
+and conversion behavior remain unchanged.
+
+Active counters retain genuine zeros. Missing counters show `not reported`;
+partial totals identify how many successful tracks supplied the statistic.
+`report.json` stores nullable `Totals` plus `CounterCoverage`. Unknown counters
+remain available in per-track data, rather than being classified as filters.
+Update the shared catalog whenever adding a production counter.
+
+The color-normalization counter is sparse in v178 and later: omission means zero
+when the converter version confirms that contract. Older or unrecognized versions
+show an unavailable statistic instead. No other missing counter is assumed zero.
+
+A zero identifies no recorded contribution, not proof of supersession. A matching
+effect may be absent, an earlier pass may have handled it, or font measurements
+may be unavailable/disabled. Individual counters can cover multiple functions.
+
+Run the PowerShell reporting checks (including actual summary/report generation)
+without converting media:
+
+```powershell
+powershell.exe -NoProfile -File tests/windows/check_reporting.ps1
+```
+
+PowerShell 7 can also run these checks using `pwsh`. Linux checks do not validate
+Windows extraction, job management or filesystem behavior. The existing Python
+reporting and statistics-name checks remain independent of the wrapper catalog.
