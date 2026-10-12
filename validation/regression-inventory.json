@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.12.181",
+  "version": "2026.10.12.182",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -320,6 +320,11 @@
       "script": "tests/check_synchronized_handoffs.py",
       "status": "current",
       "category": "timing"
+    },
+    {
+      "script": "tests/check_matching_lyric_layers_render.py",
+      "status": "current",
+      "category": "render"
     }
   ],
   "historical": [

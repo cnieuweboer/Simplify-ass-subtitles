@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.12.181"
+__version__ = "2026.10.12.182"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -2708,46 +2708,115 @@ def coalesce_lyric_phases(events: list[Event], visible_map: dict[int, str]) -> t
 
 
 def collapse_matching_lyric_layers(events: list[Event],
-                                   visible_map: dict[int, str]) -> tuple[list[Event], int]:
-    """Remove a nearby positioned syllable row when a full lyric line matches it."""
-    def norm(s: str) -> str:
-        return "".join(s.split()).casefold()
+                                   visible_map: dict[int, str],
+                                   font_metrics: FontMetrics | None = None) -> tuple[list[Event], int]:
+    """Remove complete lyric copies only after exact-font text/anchor proof.
 
-    lines = [e for e in events if e.kind == "Dialogue" and e.effect == "" and
-             e.lyric and
-             bool(norm(visible_map.get(e.source_index, "")))]
-    groups: dict[tuple, list[Event]] = {}
-    for e in events:
-        if e.kind != "Dialogue" or not e.lyric:
-            continue
+    Keep authored capitalization and spacing, layout and paint. Matching rows
+    may supply a readable entrance or exit beyond the retained full caption.
+    Event formatting, visibility and font catalogs are borrowed read-only.
+    """
+    if font_metrics is None or not font_metrics.available:
+        return events, 0
+
+    def eligible(e: Event) -> bool:
+        word = visible_map.get(e.source_index, '')
         pos = get_pos(e.text)
-        if pos is not None and visible_map.get(e.source_index):
-            key = (e.start, e.end, e.style, e.name, e.row)
-            groups.setdefault(key, []).append(e)
+        return (e.kind == 'Dialogue' and e.lyric and not e.effect and word and
+                pos is not None and OVERRIDE_RE.sub('', e.text) == word and
+                not inline_layout_key(e) and not e.state.get('p', 0) and
+                e.state.get('borderstyle', 1) == 1 and e.state.get('1a', 0) == 0 and
+                not any(k in e.state for k in ('clip', 'iclip', 'org')) and
+                unrotated_text_state(e.state) and
+                all(math.isfinite(v) for v in (*pos, e.start_s, e.end_s, e.unit)) and
+                all(math.isfinite(e.state.get(k, DEFAULT_STATE[k]))
+                    for k in ('fs', 'fscx', 'fscy', 'fsp', 'an', 'fax', 'fay')) and
+                all(e.state.get(k, DEFAULT_STATE[k]) > 0 for k in ('fs', 'fscx', 'fscy')) and
+                e.state.get('an', 2) in range(1, 10) and
+                all(abs(e.state.get(k, 0)) <= .001 for k in ('fax', 'fay')) and
+                e.unit > 0 and e.duration > 0 and
+                not any(c in word for c in ('\\', '\n', '\r', '\t')) and
+                static_object_key(e, e.styles) is not None)
+
+    lines = [e for e in events if eligible(e)]
+    groups: dict[tuple, list[Event]] = {}
+    # Ineligible members must not disappear from a phase's completeness proof.
+    for e in events:
+        if e.kind == 'Dialogue' and e.lyric and get_pos(e.text) is not None and visible_map.get(e.source_index):
+            groups.setdefault((e.start, e.end, e.style, e.name, e.row), []).append(e)
 
     removed: set[int] = set()
     extended: dict[int, Event] = {}
     for (start, end, style, name, _band), group in groups.items():
-        positions: dict[float, set[str]] = {}
-        for e in group:
-            positions.setdefault(x_key(e), set()).add(visible_map[e.source_index])
-        if len(positions) < 3 or any(len(v) != 1 for v in positions.values()):
+        if any(not eligible(e) or e.source_index in removed or e.source_index in extended for e in group):
             continue
-        assembled = norm("".join(next(iter(positions[x])) for x in sorted(positions)))
+        positions: dict[float, list[Event]] = {}
+        for e in group:
+            positions.setdefault(x_key(e), []).append(e)
+        if (len(positions) < 3 or any(len({visible_map[e.source_index] for e in col}) != 1
+                                      for col in positions.values())):
+            continue
+        columns = [positions[x] for x in sorted(positions)]
+        ids = {e.source_index for e in group}
+        proposals = []
         for line in lines:
-            if (line.row != _band or line in group or
+            if (line.source_index in ids or line.source_index in removed or line.row != _band or
                     placement_key(line) != placement_key(group[0]) or
-                    line.style != style or line.name != name or norm(visible_map[line.source_index]) != assembled):
+                    line.style != style or line.name != name):
                 continue
             overlap = min(line.end_s, group[0].end_s) - max(line.start_s, group[0].start_s)
-            if overlap < 0.8 * min(line.duration, group[0].duration):
+            if overlap + 1e-9 < 0.8 * min(line.duration, group[0].duration):
                 continue
-            removed.update(e.source_index for e in group)
-            earlier = min(line.start_s, group[0].start_s)
-            later = max(line.end_s, group[0].end_s)
+            literal = visible_map[line.source_index]
+            model = authored_glyph_positions(font_metrics, line.state, literal,
+                                             get_pos(line.text)[0], line.unit)
+            if model is None:
+                continue
+            cursor = glyph_cursor = 0
+            errors = []
+            for column in columns:
+                word = visible_map[column[0].source_index]
+                # Spaces omitted BETWEEN fragments are verified by their
+                # authored advances. Spaces within a fragment remain literal.
+                while cursor < len(literal) and literal[cursor].isspace():
+                    cursor += 1
+                if not literal.startswith(word, cursor):
+                    break
+                target = model[glyph_cursor:glyph_cursor + sum(not c.isspace() for c in word)]
+                if not target:
+                    break
+                valid = True
+                for e in column:
+                    if (text_layout_key(e) != text_layout_key(line) or e.measurement != line.measurement or
+                            placement_key(e) != placement_key(line) or
+                            any(e.state.get(k, DEFAULT_STATE.get(k)) != line.state.get(k, DEFAULT_STATE.get(k))
+                                for k in ('1c', '3c', '1a', '3a'))):
+                        valid = False; break
+                    pos = get_pos(e.text)
+                    actual = authored_glyph_positions(font_metrics, e.state, word, pos[0], e.unit)
+                    tolerance = .25 * min(e.unit, line.unit)
+                    if (actual is None or len(actual) != len(target) or
+                            abs(pos[1] - get_pos(line.text)[1]) > tolerance or
+                            any(a != b or abs(x-y) > tolerance for (a,x),(b,y) in zip(actual,target))):
+                        valid = False; break
+                    errors.extend(abs(x-y) for (_,x),(_,y) in zip(actual,target))
+                if not valid:
+                    break
+                cursor += len(word)
+                glyph_cursor += len(target)
+            else:
+                if not literal[cursor:].strip() and glyph_cursor == len(model):
+                    proposals.append((max(errors), line.source_index, line))
+        if proposals:
+            # Nearby identical full-copy layers are equivalent witnesses;
+            # prefer the exact anchor deterministically, independent of order.
+            line = min(proposals, key=lambda item: item[:2])[2]
+            removed.update(ids)
+            previous = extended.get(line.source_index, line)
+            earlier = min(previous.start_s, group[0].start_s)
+            later = max(previous.end_s, group[0].end_s)
             extended[line.source_index] = replace_event(line, start=format_time(earlier),
                 end=format_time(later), start_s=earlier, end_s=later)
-            break
 
     output = [extended.get(e.source_index, e) for e in events if e.source_index not in removed]
     return output, len(removed)
@@ -14220,7 +14289,7 @@ def _consolidate_text_events(
     overlap_removed = full_copies_removed = 0
     if config.level == 1:
         simplified_events, overlap_removed = collapse_matching_lyric_layers(
-            simplified_events, visible_map)
+            simplified_events, visible_map, font_metrics)
         copies = collapse_full_lyric_copies(
             simplified_events, visible_map)
         simplified_events,full_copies_removed = copies.events,copies.removed_count

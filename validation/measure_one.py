@@ -16,4 +16,5 @@ with args.output.with_suffix('.log').open('w') as log,contextlib.redirect_stdout
  if prof:prof.disable();prof.dump_stats(str(args.output.with_suffix('.prof')))
 assert sha(args.source)==input_sha
 result=dict(version=engine.__version__,engine_sha256=sha(args.engine),source=str(args.source),source_sha256=input_sha,font_setup_s=font_setup_s,import_s=import_s,wall_s=wall_s,cpu_s=cpu_s,statistics=stats,profiled=args.profile,skip_outline_proofs=args.skip_outline_proofs,max_rss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,output=str(args.output),output_sha256=sha(args.output),python=platform.python_version(),platform=platform.platform(),pid=os.getpid())
+result['missing_families']=sorted(kwargs['font_report'].missing_families) if 'font_report' in kwargs else None
 args.output.with_suffix('.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps({k:result[k] for k in ['version','wall_s','cpu_s','font_setup_s','profiled','output']}),flush=True)

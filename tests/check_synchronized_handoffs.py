@@ -125,7 +125,7 @@ check('source bytes preserved',hashlib.sha256(source.read_bytes()).hexdigest()==
 from executable_ast_audit import executable_ast
 def definitions(path):
     return {n.name:n for n in executable_ast(ast.parse(path.read_text())).body if isinstance(n,(ast.ClassDef,ast.FunctionDef))}
-a=definitions(ROOT/'tests/references/simplify_ass_v180.py');b=definitions(ROOT/'simplify_ass.py')
+a=definitions(ROOT/'tests/references/simplify_ass_v180.py');b=definitions(ROOT/'tests/references/simplify_ass_v181.py')
 check('only synchronization helper added',set(b)-set(a)=={'synchronize_faded_cue_handoffs'} and not set(a)-set(b))
 check('runtime integration confined to overlap filter',{name for name in a if ast.dump(a[name])!=ast.dump(b[name])}=={'trim_faded_cue_overlaps'})
 (ROOT/'validation/synchronized-handoff-checks.json').write_text(json.dumps(dict(version=s.__version__,checks_passed=len(checks),checks=checks),indent=2)+'\n')
