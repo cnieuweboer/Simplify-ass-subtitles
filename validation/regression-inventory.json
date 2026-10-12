@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.12.180",
+  "version": "2026.10.12.181",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -313,6 +313,11 @@
     },
     {
       "script": "tests/check_staggered_fade_cores.py",
+      "status": "current",
+      "category": "timing"
+    },
+    {
+      "script": "tests/check_synchronized_handoffs.py",
       "status": "current",
       "category": "timing"
     }

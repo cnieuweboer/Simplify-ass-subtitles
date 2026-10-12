@@ -12,3 +12,7 @@ remain in the supplied local `test-data` folder.
 `775b98ec6b43ea511efb93b8eecfd1fda67cacd9` byte for byte. It freezes the
 normalization scope audit and provides the staggered-fade timing baseline.
 Behavioral checks use the current converter.
+
+`simplify_ass_v180.py` preserves commit
+`0eb1a2a71842ff9f33967f96b133844e52a888ad` byte for byte. It freezes the v180
+fade-core scope audit and supplies the cross-lane synchronization baseline.

@@ -11,6 +11,7 @@ import io
 import json
 import sys
 import tempfile
+from unittest.mock import patch
 import simplify_ass as s
 from executable_ast_audit import executable_ast
 
@@ -139,7 +140,8 @@ sys.modules[spec.name] = reference
 spec.loader.exec_module(reference)
 source = ROOT/'test-data/Attack-on-Titan-S02E01-opening-source.ass'
 digest = hashlib.sha256(source.read_bytes()).hexdigest()
-with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()):
+with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()), patch.object(
+        s,'synchronize_faded_cue_handoffs',lambda context,pairs,proven: {}):
     results = []
     statistics = []
     for engine in (reference,s):
@@ -181,7 +183,8 @@ def capture_cores(events, rows, sources):
         if before is not after:
             protected[(after.base.style,s.OVERRIDE_RE.sub('',after.base.text))] = after.phase_core
     return successors
-with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()):
+with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()), patch.object(
+        s,'synchronize_faded_cue_handoffs',lambda context,pairs,proven: {}):
     paths,statistics = [],[]
     for engine in (reference,s):
         path = Path(folder)/(engine.__version__+'.ass')
@@ -229,7 +232,7 @@ def definitions(path):
     return {n.name:n for n in executable_ast(ast.parse(path.read_text())).body
             if isinstance(n,(ast.ClassDef,ast.FunctionDef))}
 a = definitions(ROOT/'tests/references/simplify_ass_v179.py')
-b = definitions(ROOT/'simplify_ass.py')
+b = definitions(ROOT/'tests/references/simplify_ass_v180.py')
 check('only one timing helper added',set(b)-set(a)=={'derive_staggered_fade_cores'} and not set(a)-set(b))
 check('integration confined to timing evidence adoption',
       {k for k in a if ast.dump(a[k])!=ast.dump(b[k])}=={'_consolidate_text_events'})

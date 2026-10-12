@@ -97,7 +97,8 @@ check('vector diagnostic preserves untrimmed family',local.missing_families=={' 
 # and statistics, including already-completed work before a write failure.
 conversion_cases=[]
 with tempfile.TemporaryDirectory() as directory, patch.object(
-        current,'derive_staggered_fade_cores',lambda events,rows,sources: rows):
+        current,'derive_staggered_fade_cores',lambda events,rows,sources: rows), patch.object(
+        current,'synchronize_faded_cue_handoffs',lambda context,pairs,proven: {}):
     # This release-equivalence audit retains pre-v180 fade timing. Real
     # staggered timing is covered by check_staggered_fade_cores instead.
     folder=Path(directory)

@@ -60,7 +60,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 63 current scripts. The runner uses three workers for
+The suite inventory lists 64 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
@@ -148,3 +148,6 @@ work is documented as completed; those notes are context for the new reviews.
 Current staggered-fade timing policy and its v179 comparison are documented in
 [STAGGERED_FADE_CORES.md](STAGGERED_FADE_CORES.md). The focused check runs the
 actual opening through both engines with the same supplied fonts.
+
+See [SYNCHRONIZED_HANDOFFS.md](SYNCHRONIZED_HANDOFFS.md) for shared source-safe
+transitions across separate text rows (v181).

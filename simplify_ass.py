@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.12.180"
+__version__ = "2026.10.12.181"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -13205,6 +13205,116 @@ def _select_faded_cue_handoff(left: tuple, right: tuple, a: tuple | None,
     return boundary
 
 
+def synchronize_faded_cue_handoffs(context: FadedCueContext, pairs: list,
+                                   proven: dict) -> dict:
+    """Choose shared safe boundaries for uniquely paired separate text lanes.
+
+    Touching captions can supply an authored boundary. Overlapping lanes can
+    instead share the intersection of their source-protected handoff windows.
+    All evidence is borrowed; ambiguous associations keep independent timing.
+    """
+    records = {}
+    def caption(key,timing):
+        members = context.groups[key][timing]
+        if len(members) != 1:
+            return None
+        e = members[0]
+        size = float(e.state.get('fs',20))
+        literal = OVERRIDE_RE.sub('',e.text).replace(r'\h',' ').strip()
+        if (not math.isfinite(size) or size <= 0 or
+                not all(math.isfinite(v) for v in get_pos(e.text)) or
+                not literal or re.search(r'\\[Nn]|[\r\n]',literal) or
+                e.state.get('p',0) or
+                any(tag in {'move','t','clip','iclip','org','fade','fad','k','kf','ko','kt','p','r'}
+                    for tag,value in event_override_tokens(e))):
+            return None
+        evidence = context.provenance.get(e.source_index,[])
+        if len(evidence) > 1 or evidence and evidence[0].base.text != e.text:
+            return None
+        xs = [anchor[0] for piece,word,anchor in evidence[0].pieces] if evidence else [get_pos(e.text)[0]]
+        if not xs or not all(math.isfinite(x) for x in xs):
+            return None
+        return literal,(min(xs),max(xs)),size
+    for key,left,right in pairs:
+        a,b = proven.get((key,left)),proven.get((key,right))
+        if _select_faded_cue_handoff(left,right,a,b) is None:
+            continue
+        outgoing,incoming = caption(key,left),caption(key,right)
+        if outgoing is None or incoming is None or outgoing[0] == incoming[0]:
+            continue
+        low = math.ceil(max(right[0],a[1])*100-1e-7)
+        high = math.floor(min(left[1],b[0])*100+1e-7)
+        records[key,left,right] = (low,high,a[:2],b[:2],outgoing,incoming)
+    anchors = {}
+    for key,timed in context.groups.items():
+        ordered = sorted(timed)
+        for left,right in zip(ordered,ordered[1:]):
+            if left[1] != right[0]:
+                continue
+            outgoing,incoming = caption(key,left),caption(key,right)
+            if outgoing is None or incoming is None or outgoing[0] == incoming[0]:
+                continue
+            boundary = round(left[1]*100)
+            if any(t not in (left,right) and t[0] <= boundary/100 <= t[1] for t in ordered):
+                continue
+            anchors[key,left,right] = (boundary,boundary,left,right,outgoing,incoming)
+    def related(one,two):
+        key,left,right = one
+        other,other_left,other_right = two
+        if key == other:
+            return False
+        a,b = records[one],(records.get(two) or anchors[two])
+        size = max(a[4][2],a[5][2],b[4][2],b[5][2])
+        # Require distinct visual rows, including top/bottom translations.
+        if not math.isfinite(size) or size <= 0 or abs(key[5]-other[5]) < .5*size:
+            return False
+        if max(a[0],b[0]) > min(a[1],b[1]):
+            return False
+        for phase in (2,3):
+            if max(a[phase][0],b[phase][0]) >= min(a[phase][1],b[phase][1]):
+                return False
+            if two in anchors and not (b[phase][0] <= a[phase][0] and a[phase][1] <= b[phase][1]):
+                return False
+            x,y = a[phase+2][1],b[phase+2][1]
+            if min(x[1],y[1]) < max(x[0],y[0]):
+                return False
+        return True
+    neighbors = {identity:[] for identity in records}
+    for one in records:
+        for two in (*records,*anchors):
+            if related(one,two):
+                neighbors[one].append(two)
+    result,visited = {},set()
+    for identity in records:
+        if identity in visited:
+            continue
+        component,pending = set(),[identity]
+        while pending:
+            one = pending.pop()
+            if one in component:
+                continue
+            component.add(one)
+            pending.extend(two for two in neighbors[one] if two in records)
+        visited.update(component)
+        references = {two for one in component for two in neighbors[one] if two in anchors}
+        all_items = component | references
+        # At most one transition per lane; conflicting authored boundaries
+        # or competing overlap pairs cannot establish a common handoff.
+        if len({item[0] for item in all_items}) != len(all_items):
+            continue
+        # An authored transition must also be unique to this component.
+        if any(other not in component and ref in linked
+               for ref in references for other,linked in neighbors.items()):
+            continue
+        values = [records.get(item) or anchors[item] for item in all_items]
+        low,high = max(v[0] for v in values),min(v[1] for v in values)
+        if low > high or len(all_items) < 2:
+            continue
+        boundary = min(high,max(low,round((low+high)/2)))/100
+        result.update({item:boundary for item in component})
+    return result
+
+
 def trim_faded_cue_overlaps(events: list[Event], rows: list[TextRow],
                             source_events: dict[int,Event], *,
                             cue_families: list[CueFadeFamily] | None = None) -> tuple[list[Event],int]:
@@ -13242,11 +13352,12 @@ def trim_faded_cue_overlaps(events: list[Event], rows: list[TextRow],
     for key,timing in candidates:
         proven[key,timing] = _prove_faded_cue_core(context,evidence,key,timing)
 
+    synchronized = synchronize_faded_cue_handoffs(context,pairs,proven)
     replacements = {}
     trimmed = 0
     for key,left,right in pairs:
         a,b = proven.get((key,left)),proven.get((key,right))
-        boundary = _select_faded_cue_handoff(left,right,a,b)
+        boundary = synchronized.get((key,left,right),_select_faded_cue_handoff(left,right,a,b))
         if boundary is None:
             continue
         for timing,time_field in ((left,'end'),(right,'start')):

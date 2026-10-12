@@ -42,7 +42,8 @@ def install_row_test_doubles(module, *, historical_fade_timing=False):
         @functools.wraps(simplify)
         def historical_conversion(*args,**kwargs):
             with patch.object(module,'derive_staggered_fade_cores',
-                              lambda events,rows,sources: rows):
+                              lambda events,rows,sources: rows), patch.object(
+                    module,'synchronize_faded_cue_handoffs',lambda context,pairs,proven: {},create=True):
                 return simplify(*args,**kwargs)
         module.simplify_ass = historical_conversion
     if getattr(module,'_row_test_doubles_installed',False):return
