@@ -7,6 +7,8 @@ for path in root.rglob('*'):
  relative=path.relative_to(root)
  if len(relative.parts)==1:
   if path.suffix not in ('.py','.bat','.ps1','.md'):continue
+ elif relative.parts[0] in ('tests','docs'):
+  if path.suffix not in ('.py','.bat','.ps1','.md'):continue
  elif relative.parts[0]=='validation':
   if path.suffix not in ('.py','.json','.log','.patch','.prof') and path.name not in ('static-outline-comparison.png','outline-karaoke-comparison.png') and not path.name.startswith(('shadow-compare-','jitter-render-','word-echo-render-','lifecycle-render-')):continue
  elif relative.parts[0] not in ('fonts','outputs','test-data'):continue

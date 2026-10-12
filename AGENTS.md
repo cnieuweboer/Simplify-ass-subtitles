@@ -9,12 +9,12 @@ proved; avoid guessing text or substituting fonts.
 
 The production entry point is `simplify_ass.bat` → `simplify_ass.ps1` →
 `simplify_ass.py`. Preserve this batch MKV workflow and CLI compatibility.
-`test_mkv_subtitles.ps1` performs extraction and conversion in one pass.
-`test_subtitles_step2_test.bat` / `.ps1` rerun conversion against an existing
+`tests/windows/test_mkv_subtitles.ps1` performs extraction and conversion in one pass.
+`tests/windows/test_subtitles_step2_test.bat` / `.ps1` rerun conversion against an existing
 extracted cache. Native Windows wrapper behavior requires Windows validation.
 
-Read `DEVELOPMENT.md`, the relevant pass documentation, and
-`CONTEXT_OWNERSHIP_REVIEW.md` before changing matching or reconstruction policy.
+Read `docs/DEVELOPMENT.md`, the relevant pass documentation, and
+`docs/CONTEXT_OWNERSHIP_REVIEW.md` before changing matching or reconstruction policy.
 Current work targets concrete failure cases. Global API and pass-local index
 reviews are future work; do not mix broad refactors into a failure-case fix.
 Archived release plans and historical validation reports are background evidence,
@@ -26,16 +26,18 @@ idempotence where relevant. Preserve source/cache immutability and document
 measurement/parser-continuation contracts. Avoid mutable global parser caches.
 
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
-Use `python validation/run_backend_check.py --backend windows check_NAME.py` for
+Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
 61-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
+If a required font is missing, identify its family and variant and request it
+from the user before continuing font-dependent analysis or changes.
 Keep fresh reports separate from imported historical evidence.
 
 Fonts, subtitle fixtures, generated conversions and reports are local development
 assets ignored by Git. Preserve them and the user's media. Do not publish these
-assets incidentally with code changes. See `DEVELOPMENT.md` for fixture layout.
+assets incidentally with code changes. See `docs/DEVELOPMENT.md` for fixture layout.
 
 Use the existing checkout: cloud tasks are already isolated. Do not create a Git
 worktree unless the user explicitly requests one.

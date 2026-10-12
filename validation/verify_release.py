@@ -12,5 +12,5 @@ for a in x['cases']:
  if a['case'].startswith('Attack'):assert (a['before']['output'],a['after']['output'])==(3491,354)
  else:assert a['before']==a['after']
 x=json.loads((r/'validation/lifecycle-render-checks.json').read_text());assert x['runtime_sha256']==h and len(x['checks'])==12 and x['static_hold_pixel_identical']
-for p in r.glob('*.py'):py_compile.compile(str(p),doraise=True)
+for p in [*r.glob('*.py'), *(r/'tests').glob('*.py')]:py_compile.compile(str(p),doraise=True)
 print('v177 verified: 61 Windows scripts; 84 lifecycle checks; 9 full-corpus comparisons; 12 render samples')

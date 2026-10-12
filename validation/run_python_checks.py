@@ -11,7 +11,7 @@ results = []
 for script in scripts:
     started = time.perf_counter()
     result = subprocess.run([sys.executable,str(root/script)],capture_output=True,text=True)
-    (root/'validation'/script.replace('.py','.log')).write_text(result.stdout+result.stderr)
+    (root/'validation'/(Path(script).stem+'.log')).write_text(result.stdout+result.stderr)
     entry = {'script':script,'exit_code':result.returncode,
         'seconds':round(time.perf_counter()-started,3),'summary':result.stdout.splitlines()[-3:]}
     results.append(entry)

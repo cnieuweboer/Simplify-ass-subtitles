@@ -21,7 +21,7 @@ if args.backend=='both':
 else:
     backends=[args.backend]
 scripts=[x['script'] for x in json.loads((root/'validation/regression-inventory.json').read_text())['current']]
-pixel={s for s in scripts if s.endswith('_render.py') or s=='check_relative_size_render.py'}
+pixel={s for s in scripts if s.endswith('_render.py') or Path(s).name=='check_relative_size_render.py'}
 all_results=[]
 backend_results=[]
 for backend in backends:
@@ -39,8 +39,8 @@ for backend in backends:
         p=subprocess.run([sys.executable,str(root/'validation/run_backend_check.py'),
                           '--backend',backend,str(root/script)],capture_output=True,text=True,env=env)
         log=p.stdout+p.stderr
-        (destination/script.replace('.py','.log')).write_text(log)
-        (root/'validation'/script.replace('.py','.log')).write_text(log)
+        (destination/(Path(script).stem+'.log')).write_text(log)
+        (root/'validation'/(Path(script).stem+'.log')).write_text(log)
         entry=dict(script=script,backend=backend,exit_code=p.returncode,
                    seconds=round(time.perf_counter()-start,3),summary=p.stdout.splitlines()[-3:])
         print(backend,script,p.returncode,entry['summary'],flush=True)
