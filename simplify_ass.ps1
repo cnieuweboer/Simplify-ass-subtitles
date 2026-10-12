@@ -1,14 +1,14 @@
 # Requires Windows PowerShell 5.1+ or PowerShell 7, Python 3 and MKVToolNix.
 # Put the current simplify_ass.py beside this script, or supply -Simplifier.
-# Level 1 uses embedded fonts; install once: python -m pip install Pillow fonttools
-# Level 2 is deprecated; its parameter remains for compatibility.
+# Standard simplification uses embedded fonts; install once: python -m pip install Pillow fonttools
+# Legacy simplification is deprecated; its parameter remains for compatibility.
 # Default: add tracks above 50,000 bytes with more than 10% fewer events.
 # Use -ProcessAllTracks to bypass both thresholds; -ReplaceOriginals to replace.
 param(
     [string] $InputFolder,
     [string] $OutputFolder,
     [string] $Simplifier,
-    # Level 2 is deprecated and retained for explicit legacy calls only.
+    # Legacy simplification is deprecated and retained for explicit legacy calls only.
     [ValidateSet(1, 2)] [int] $SimplificationLevel = 1,
     [string] $Python = 'python',
     [string] $MkvToolNixFolder,
@@ -24,16 +24,64 @@ param(
 
 # Normalize scrolling-text counters independently of console logs. Ordinary copies
 # merged away are not counted as dropped text. Older scripts may omit the data.
+# Normalize older report keys at the reporting boundary. Current keys win.
+function ConvertTo-CurrentSubtitleStats([object] $Stats) {
+    if ($null -eq $Stats) { return $null }
+    $aliases = @{
+        'aggressive_copies' = 'stacked_text_copies_flattened'
+        'aggressive_sequences' = 'text_effect_sequences_frozen'
+        'prototype_vector_candidates' = 'drawing_candidates'
+        'prototype_strips_collapsed' = 'drawing_strips_collapsed'
+        'prototype_vector_duplicates' = 'drawing_duplicates_removed'
+        'prototype_fade_frames' = 'drawing_fade_frames_removed'
+        'prototype_unsupported_drawings' = 'unsupported_drawings_excluded'
+        'prototype_polygons_simplified' = 'drawing_contours_simplified'
+        'prototype_held_scaling_exits' = 'drawing_scale_exits_frozen'
+        'prototype_held_move_entrances' = 'drawing_move_entrances_frozen'
+        'prototype_edge_slivers_detached' = 'drawing_edge_slivers_detached'
+        'prototype_composite_backdrops' = 'composite_backdrops_built'
+        'prototype_scrolling_events_removed' = 'scrolling_events_dropped'
+        'prototype_scrolling_blocks_detected' = 'scrolling_blocks_detected'
+        'prototype_scrolling_blocks_removed' = 'scrolling_blocks_dropped'
+        'prototype_scrolling_blocks_retained' = 'scrolling_blocks_retained'
+        'prototype_scrolling_peak_after_reduction' = 'scrolling_peak_after_reduction'
+        'prototype_scrolling_concurrency_limit' = 'scrolling_concurrency_limit'
+        'prototype_masked_foregrounds_restored' = 'masked_foregrounds_restored'
+        'prototype_shadow_offsets_repaired' = 'shadow_offsets_repaired'
+        'prototype_vectors_capped' = 'drawing_events_capped'
+        'prototype_unmeasured_backdrops' = 'unmeasured_backdrops_retained'
+        'prototype_supports_retained' = 'supporting_shapes_retained'
+        'prototype_textures_removed' = 'font_textures_removed'
+        'prototype_fullscreen_backgrounds' = 'fullscreen_backgrounds_retained'
+        'prototype_adjacent_shapes' = 'adjacent_shapes_retained'
+    }
+    $values = [ordered]@{}
+    foreach ($property in $Stats.PSObject.Properties) {
+        if (-not $aliases.ContainsKey($property.Name)) {
+            $values[$property.Name] = $property.Value
+        }
+    }
+    foreach ($old in $aliases.Keys) {
+        $property = $Stats.PSObject.Properties[$old]
+        $current = $aliases[$old]
+        if ($null -ne $property -and -not $values.Contains($current)) {
+            $values[$current] = $property.Value
+        }
+    }
+    return [pscustomobject]$values
+}
+
 function Get-ScrollingDropWarning([object] $Stats) {
-    if ($null -eq $Stats -or $null -eq $Stats.prototype_scrolling_events_removed -or
-        [long]$Stats.prototype_scrolling_events_removed -le 0) { return $null }
-    $limit = $Stats.prototype_scrolling_concurrency_limit
+    $Stats = ConvertTo-CurrentSubtitleStats $Stats
+    if ($null -eq $Stats -or $null -eq $Stats.scrolling_events_dropped -or
+        [long]$Stats.scrolling_events_dropped -le 0) { return $null }
+    $limit = $Stats.scrolling_concurrency_limit
     $limitText = if ($null -ne $limit) { [string]$limit } else { 'unknown' }
     return [pscustomobject]@{
-        Code = 'scrolling_text_dropped'; Events = [long]$Stats.prototype_scrolling_events_removed
-        Limit = $limit; Blocks = $Stats.prototype_scrolling_blocks_removed
-        Peak = $Stats.prototype_scrolling_peak_after_reduction
-        Message = "Dropped $($Stats.prototype_scrolling_events_removed) events due to exceeding concurrent event limit $limitText for scrolling text blocks."
+        Code = 'scrolling_text_dropped'; Events = [long]$Stats.scrolling_events_dropped
+        Limit = $limit; Blocks = $Stats.scrolling_blocks_dropped
+        Peak = $Stats.scrolling_peak_after_reduction
+        Message = "Dropped $($Stats.scrolling_events_dropped) events due to exceeding concurrent event limit $limitText for scrolling text blocks."
     }
 }
 
@@ -247,7 +295,7 @@ foreach ($file in $files) {
             if ($records.Count -ne 1 -or $records[0].error -or $null -eq $records[0].stats) {
                 throw "Missing or invalid simplifier statistics for track $($candidate.Original.id)."
             }
-            $stats = $records[0].stats
+            $stats = ConvertTo-CurrentSubtitleStats $records[0].stats
             $trackReport = [pscustomobject]@{
                 File = $file.FullName; Output = $destination; Track = $candidate.Original.id
                 Name = $candidate.Original.properties.track_name; Stats = $stats

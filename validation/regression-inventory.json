@@ -1,0 +1,463 @@
+{
+  "version": "2026.10.12.176",
+  "current": [
+    {
+      "script": "check_caption_spans.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "check_collision_duplicates.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "check_cue_families.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "check_file_safety.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "check_font_selection.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "check_relative_font_size.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "check_reporting.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "check_row_geometry.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "check_shared_intervals.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "check_simplify_ass.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "check_statistics_names.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "check_translucent_duplicates.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "check_undefined_styles.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "check_upright_priority.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "check_freeze_continuation.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_freeze_consumers.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_override_continuation.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_static_continuation.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_inline_continuation.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_parser_effect_consumers.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_frozen_block_results.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_pose_evidence.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_measurement_context.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_measurement_effects.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_document_boundary.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_event_evidence.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_source_visibility.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_text_visibility_ownership.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_covered_fragment_ownership.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_covered_fragments.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_event_continuation.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_effect_continuation.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_source_fragment_ownership.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_context_contracts.py",
+      "status": "current",
+      "category": "extended final review"
+    },
+    {
+      "script": "check_pipeline_equivalence.py",
+      "status": "current",
+      "category": "extended final review"
+    },
+    {
+      "script": "check_row_reconstruction_ownership.py",
+      "status": "current",
+      "category": "extended final review"
+    },
+    {
+      "script": "check_frame_echo_replacements.py",
+      "status": "current",
+      "category": "extended final review"
+    },
+    {
+      "script": "check_faded_cue_conversions.py",
+      "status": "current",
+      "category": "extended final review"
+    },
+    {
+      "script": "check_full_lyric_visibility.py",
+      "status": "current",
+      "category": "extended final review"
+    },
+    {
+      "script": "check_masked_glyphs.py",
+      "status": "current",
+      "category": "extended final review"
+    },
+    {
+      "script": "check_translated_phases.py",
+      "status": "current",
+      "category": "extended final review"
+    },
+    {
+      "script": "check_relative_size_render.py",
+      "status": "current",
+      "category": "extended final review"
+    },
+    {
+      "script": "check_translucent_render.py",
+      "status": "current",
+      "category": "extended final review"
+    },
+    {
+      "script": "check_undefined_style_render.py",
+      "status": "current",
+      "category": "extended final review"
+    },
+    {
+      "script": "check_authored_lyric_ownership.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_font_metrics.py",
+      "status": "current",
+      "category": "font measurement ownership"
+    },
+    {
+      "script": "check_outline_matcher.py",
+      "status": "current",
+      "category": "outline matcher ownership"
+    },
+    {
+      "script": "check_font_row_geometry.py",
+      "status": "current",
+      "category": "font_ownership"
+    },
+    {
+      "script": "check_final_visibility_ownership.py",
+      "status": "current",
+      "category": "ownership/context"
+    },
+    {
+      "script": "check_documentation_only.py",
+      "status": "current",
+      "category": "documentation"
+    },
+    {
+      "script": "check_static_strip_outline.py",
+      "status": "current",
+      "category": "paint"
+    },
+    {
+      "script": "check_outline_karaoke.py",
+      "status": "current",
+      "category": "paint"
+    },
+    {
+      "script": "check_caption_wrapping.py",
+      "status": "current",
+      "category": "layout/timing"
+    },
+    {
+      "script": "check_outline_parsing_reuse.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "check_portable_caption_ink.py",
+      "status": "current",
+      "category": "font measurement portability"
+    },
+    {
+      "script": "check_regression_backend.py",
+      "status": "current",
+      "category": "regression backend selection"
+    },
+    {
+      "script": "check_shadow_lettering.py",
+      "status": "current",
+      "category": "text-paint"
+    },
+    {
+      "script": "check_complete_line_jitter.py",
+      "status": "current",
+      "category": "effects"
+    },
+    {
+      "script": "check_complete_line_jitter_render.py",
+      "status": "current",
+      "category": "render"
+    },
+    {
+      "script": "check_word_echoes.py",
+      "status": "current",
+      "category": "source ownership"
+    },
+    {
+      "script": "check_glyph_lifecycles.py",
+      "status": "current",
+      "category": "source ownership"
+    }
+  ],
+  "historical": [
+    {
+      "script": "check_backed_pulses.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": [
+        "check_effect_continuation.py"
+      ]
+    },
+    {
+      "script": "check_boundary_glyph_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": [
+        "check_effect_continuation.py"
+      ]
+    },
+    {
+      "script": "check_caption_support_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": []
+    },
+    {
+      "script": "check_faded_cue_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": []
+    },
+    {
+      "script": "check_fragment_phase_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": []
+    },
+    {
+      "script": "check_frame_echo_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": []
+    },
+    {
+      "script": "check_full_line_copy_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": [
+        "check_authored_lyric_ownership.py"
+      ]
+    },
+    {
+      "script": "check_karaoke_completion_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": [
+        "check_effect_continuation.py"
+      ]
+    },
+    {
+      "script": "check_moving_glyphs.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": [
+        "check_effect_continuation.py"
+      ]
+    },
+    {
+      "script": "check_progressive_reveal_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": [
+        "check_parser_effect_consumers.py"
+      ]
+    },
+    {
+      "script": "check_row_reconstruction.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": []
+    },
+    {
+      "script": "check_scrolling_block_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": []
+    },
+    {
+      "script": "check_shared_interval_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": []
+    },
+    {
+      "script": "check_shrinking_row_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": [
+        "check_effect_continuation.py"
+      ]
+    },
+    {
+      "script": "check_sliced_text_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": [
+        "check_measurement_effects.py",
+        "check_effect_continuation.py"
+      ]
+    },
+    {
+      "script": "check_source_fragment_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": []
+    },
+    {
+      "script": "check_stacked_copy_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": [
+        "check_parser_effect_consumers.py"
+      ]
+    },
+    {
+      "script": "check_static_state_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": [
+        "check_freeze_consumers.py"
+      ]
+    },
+    {
+      "script": "check_supporting_drawing_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": []
+    },
+    {
+      "script": "check_text_effect_sequence_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": [
+        "check_freeze_consumers.py"
+      ]
+    },
+    {
+      "script": "check_vector_text_stages.py",
+      "status": "historical extraction harness",
+      "reason": "Earlier helper decomposition, call traces or API/mutation contracts; not a current suite entry point",
+      "reused_by_current_scripts": [
+        "check_effect_continuation.py"
+      ]
+    }
+  ]
+}

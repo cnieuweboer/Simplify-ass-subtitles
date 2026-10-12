@@ -1,0 +1,19 @@
+{
+  "helpers": [
+    "_collect_covered_held_glyphs",
+    "_index_covered_row_times",
+    "_prepare_covered_fragments",
+    "_covered_fragment_spans",
+    "_covered_animated_shadow_source",
+    "_covered_held_glyph_copy",
+    "_timed_covered_rows",
+    "_prepare_covered_shadow_rows",
+    "_shared_covered_shadow_fade_core",
+    "_select_covered_shadow_timing",
+    "_covered_shadow_fragment_copy",
+    "_remove_covered_shadow_fragments",
+    "_covered_fragment_candidates",
+    "_covered_fragment_copy_matches",
+    "_remove_covered_fragment_copies"
+  ]
+}

@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.11.171"
+__version__ = "2026.10.12.177"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -658,9 +658,25 @@ class StackedTextProof:
 
 @dataclass(frozen=True)
 class OutlineStripEvidence:
-    """Pass-local complete strip partition, borrowed sources and bounded color weights."""
+    """One family's strip partition, initial paint, weights and source tokens.
+
+    Original sources remain borrowed and unchanged. Token entries retain their
+    exact source object and use its identity, so a replacement with the same
+    source index cannot inherit parsing. Reuse expires with this family's proof,
+    rather than retaining every source token until the entire pass finishes.
+    """
     strips: tuple[tuple[Event,tuple,dict],...]
     weights: tuple[float,...]
+    animated: bool = False
+    source_tokens: dict[int,tuple[Event,tuple[tuple[str,str],...]]] = field(
+        default_factory=dict,compare=False,repr=False)
+
+    def tokens_for(self, source: Event) -> tuple[tuple[str,str],...]:
+        entry = self.source_tokens.get(id(source))
+        if entry is None:
+            entry = source,tuple(event_override_tokens(source))
+            self.source_tokens[id(source)] = entry
+        return entry[1]
 
 
 @dataclass(frozen=True)
@@ -1382,19 +1398,25 @@ def apply_override(state: dict, name: str, value: str, styles: dict, default: di
 
 
 def evaluate_effective_state(text: str, default: dict | None = None,
-                             styles: dict | None = None) -> OverrideEvaluation:
+                             styles: dict | None = None, *,
+                             tokens: Iterable[tuple[str,str]] | None = None) -> OverrideEvaluation:
     """Evaluate a complete override stream without mixing history into formatting.
 
     Adjacent blocks and literal text do not restart reset-style tracking or
     the first-alignment latch. Readers that emit/evaluate more overrides must
     keep the returned continuation alongside the owned formatting buffer.
     Defaults and styles are borrowed; each evaluation owns a fresh buffer.
+    A caller may supply the complete ordered tokens of this same text to reuse
+    parsing. The stream is borrowed and formatting/history are still resolved
+    here through the canonical override evaluator.
     """
     default = default or resolve_event_style(styles or {}, 'Default')
     state = default.copy()
     continuation = OverrideContinuation()
-    for block in OVERRIDE_RE.findall(text):
-        for name, value in tokenize_override(block):
+    token_blocks = ((tokenize_override(block) for block in OVERRIDE_RE.findall(text))
+                    if tokens is None else (tokens,))
+    for block in token_blocks:
+        for name, value in block:
             continuation = apply_override(state,name,value,styles or {},default,continuation)
     return OverrideEvaluation(state,continuation)
 
@@ -4002,15 +4024,21 @@ def _collect_outline_strip_evidence(chosen: Event, group: list[Event],
         return None
     layout,literal = text_layout_key(chosen),OVERRIDE_RE.sub('',chosen.text)
     candidates = []
+    animated = False
+    source_tokens = {}
     for event in strips:
         source = sources.get(event.source_index)
         if (source is None or not event.layer.lstrip('-').isdigit() or
                 not chosen.layer.lstrip('-').isdigit() or
-                (int(event.layer),event.source_index) >= (int(chosen.layer),chosen.source_index) or
-                any(name in {'move','fade','k','kf','ko','kt'}
-                    for name,value in event_override_tokens(source))):
+                (int(event.layer),event.source_index) >= (int(chosen.layer),chosen.source_index)):
             return None
-        state = event_evaluation(source).formatting
+        tokens = tuple(event_override_tokens(source))
+        source_tokens[id(source)] = source,tokens
+        if any(name in {'move','fade','k','kf','ko','kt'} for name,value in tokens):
+            return None
+        animated = animated or any(name == 't' for name,value in tokens)
+        state = source.state if source.state else evaluate_effective_state(
+            source.text,source.defaults,source.styles,tokens=tokens).formatting
         original = dataclass_replace(source,state=state)
         rect = rectangle_clip(original)
         width = tuple(state.get(k,state.get('bord',0)) for k in ('xbord','ybord'))
@@ -4044,7 +4072,7 @@ def _collect_outline_strip_evidence(chosen: Event, group: list[Event],
                     for source,rect,state in candidates)
     if sum(weights) <= 0:
         return None
-    return OutlineStripEvidence(tuple(candidates),weights)
+    return OutlineStripEvidence(tuple(candidates),weights,animated,source_tokens)
 
 
 def _average_outline_strip_color(evidence: OutlineStripEvidence, states: list[dict]) -> str:
@@ -4061,26 +4089,24 @@ def _average_outline_strip_color(evidence: OutlineStripEvidence, states: list[di
     return ''.join(f'{encode(value):02X}' for value in channels)
 
 
-def _representative_static_strip_outline(chosen: Event, group: list[Event],
-                                        context: StackedTextContext) -> dict | None:
-    """Recover static strip paint; original transforms still disqualify this route."""
-    if any(name == 't' for event in group if 'clip' in event.state or 'iclip' in event.state
-           for name,value in event_override_tokens((context.source_events or {}).get(event.source_index,event))):
-        return None
-    evidence = _collect_outline_strip_evidence(chosen,group,context)
-    if evidence is None:
+def _representative_static_strip_outline(chosen: Event,
+                                        evidence: OutlineStripEvidence | None) -> dict | None:
+    """Use the existing coverage proof; original transforms disqualify static paint."""
+    if evidence is None or evidence.animated:
         return None
     color = _average_outline_strip_color(evidence,[state for source,rect,state in evidence.strips])
     return {**chosen.state,'3c':color,'3a':0,'bord':2,'xbord':2,'ybord':2}
 
 
-def _profile_outline_strip_transition(source: Event, state: dict) -> tuple | None:
+def _profile_outline_strip_transition(source: Event, state: dict, *,
+                                      tokens: tuple[tuple[str,str],...] | None = None) -> tuple | None:
     """Admit one outline-color transition and independent restored stroke/blur pulses.
 
     libass renders reversed/equal endpoints as a step after the stated start.
     Normalize only this paint evidence; general effect proofs remain strict.
     """
-    tokens = event_override_tokens(source)
+    if tokens is None:
+        tokens = tuple(event_override_tokens(source))
     first = next((i for i,(name,value) in enumerate(tokens) if name == 't'),None)
     if (first is None or inline_layout_key(source) or
             source.effect.split(';',1)[0].strip().casefold() in {'banner','scroll up','scroll down'} or
@@ -4103,10 +4129,11 @@ def _profile_outline_strip_transition(source: Event, state: dict) -> tuple | Non
         if len(args) in (2,3) and args[1] < args[0]:
             args[1] = args[0]
             normalized = '('+','.join(str(v) for v in args)+',\\'+tail+')'
-        has_color = any(tag == '3c' for tag,arg in tokenize_override('\\'+tail))
+        changes = tokenize_override('\\'+tail)
+        has_color = any(tag == '3c' for tag,arg in changes)
         parsed = parse_effect_transform(normalized,source.duration,
             {'3c','bord','xbord','ybord','blur','be'},allow_instant=True,
-            allow_after_end=not has_color)
+            allow_after_end=not has_color,parsed_changes=changes)
         if parsed is None:
             return None
         begin,end,changes = parsed
@@ -4137,18 +4164,19 @@ def _profile_outline_strip_sweep(chosen: Event, evidence: OutlineStripEvidence,
     if (foreground is None or
             foreground.effect.split(';',1)[0].strip().casefold() in {'banner','scroll up','scroll down'} or
             any(name in {'t','move','fade','k','kf','ko','kt'}
-                                  for name,value in event_override_tokens(foreground))):
+                                  for name,value in evidence.tokens_for(foreground))):
         return None
     transitions = []
     fades = set()
     for source,rect,state in evidence.strips:
         if abs(source.start_s-chosen.start_s) > .001 or abs(source.end_s-chosen.end_s) > .001:
             return None
-        transition = _profile_outline_strip_transition(source,state)
+        tokens = evidence.tokens_for(source)
+        transition = _profile_outline_strip_transition(source,state,tokens=tokens)
         if transition is None:
             return None
         transitions.append(transition)
-        fades.add(tuple(value for name,value in event_override_tokens(source) if name == 'fad'))
+        fades.add(tuple(value for name,value in tokens if name == 'fad'))
     if len({(begin,end) for begin,end,final in transitions}) != 1 or len(fades) != 1:
         return None
     begin,end = transitions[0][:2]
@@ -4167,7 +4195,7 @@ def _profile_outline_strip_sweep(chosen: Event, evidence: OutlineStripEvidence,
                                      outline_states=[candidate],measurement=chosen.measurement)
     color = effective_state(text,chosen.defaults,chosen.styles)['3c']
     visible_end = chosen.end_s
-    for name,value in event_override_tokens(evidence.strips[0][0]):
+    for name,value in evidence.tokens_for(evidence.strips[0][0]):
         if name == 'fad':
             match = re.fullmatch(r'\(\s*('+NUMBER+r')\s*,\s*('+NUMBER+r')\s*\)',value)
             if match is None:
@@ -4190,14 +4218,11 @@ def _render_stacked_text_caption(key: tuple, group: list[Event], proof: StackedT
     elif proof.static_shadow_text:
         state,outlines = _static_stacked_shadow_paint(key,group,state)
     else:
-        animated = any(name == 't' for event in group if 'clip' in event.state or 'iclip' in event.state
-                       for name,value in event_override_tokens((context.source_events or {}).get(event.source_index,event)))
-        if animated:
-            evidence = _collect_outline_strip_evidence(chosen,group,context)
-            if evidence is not None:
-                profile = _profile_outline_strip_sweep(chosen,evidence,context)
+        evidence = _collect_outline_strip_evidence(chosen,group,context)
+        if evidence is not None and evidence.animated:
+            profile = _profile_outline_strip_sweep(chosen,evidence,context)
         else:
-            representative = _representative_static_strip_outline(chosen,group,context)
+            representative = _representative_static_strip_outline(chosen,evidence)
             if representative is not None:
                 outlines.append(representative)
     text = render_simplified_caption(state, OVERRIDE_RE.sub("", chosen.text),
@@ -4924,7 +4949,9 @@ def literal_font_spans(e: Event) -> tuple[tuple[str,str],...] | None:
 
 def parse_effect_transform(value: str, duration: float,
                            allowed: set[str], *, allow_instant: bool = False,
-                           allow_after_end: bool = False) -> tuple[float,float,list[tuple[str,str]]] | None:
+                           allow_after_end: bool = False,
+                           parsed_changes: list[tuple[str,str]] | None = None
+                           ) -> tuple[float,float,list[tuple[str,str]]] | None:
     """Validate one transform used as evidence for an effect family.
 
     Resolve all four ASS timing forms, requiring forward finite timing and
@@ -4933,13 +4960,15 @@ def parse_effect_transform(value: str, duration: float,
     rounding; the general static freezer retains its more permissive parsing.
     Geometry-only paint proofs may allow transforms ending after the cue.
     Each matcher supplies the tags that its own effect can safely change.
+    A caller that has already parsed this exact payload may lend its changes;
+    all timing and allowed-tag checks still run, without modifying that list.
     """
     prefix,sep,tail = value[1:-1].partition('\\')
     try:
         args = [float(v.strip()) for v in prefix.rstrip(', ').split(',') if v.strip()]
     except ValueError:
         return None
-    changes = tokenize_override('\\'+tail)
+    changes = tokenize_override('\\'+tail) if parsed_changes is None else parsed_changes
     begin,end = args[:2] if len(args) >= 2 else (0,1000*duration)
     if (not sep or len(args) > 3 or not all(math.isfinite(v) for v in args) or
             not 0 <= begin <= end or not allow_after_end and end > 1000*duration+50 or
@@ -6005,6 +6034,234 @@ def collapse_progressive_text_reveals(events: list[Event],
     output = [replacements.get(e.source_index,e) for e in events
               if e.source_index not in removed or e.source_index in replacements]
     return TextVisibilityResult(output,len(events)-len(output),visibility_updates)
+
+
+@dataclass(frozen=True)
+class JitterTextFamily:
+    """One complete, uniformly painted frame sequence and its readable hold."""
+    members: tuple[Event,...]
+    holds: tuple[Event,...]
+    start_s: float
+    end_s: float
+    anchor: tuple[float,float]
+
+
+def _index_complete_line_jitter(events: list[Event], visible_map: dict[int,str],
+                                 styles: dict, max_piece_duration: float,
+                                 source_events: dict[int,Event] | None) -> dict:
+    """Index static literal frames by exact text/layout, independently of paint."""
+    buckets = {}
+    for e in events:
+        literal = visible_map.get(e.source_index,'')
+        if (e.kind != 'Dialogue' or len(literal.strip()) < 2 or
+                e.duration <= 0 or e.duration > max_piece_duration+1e-6 or
+                get_pos(e.text) is None or inline_layout_key(e) or
+                not e.layer.lstrip('-').isdigit()):
+            continue
+        if source_events is not None:
+            original = source_events.get(e.source_index)
+            original_object = (static_object_key(original,styles) if original is not None else None)
+            if (original is None or inline_layout_key(original) or original_object is None or
+                    len(original_object[-1]) != 1 or original_object[-1][0][1] or
+                    original_object[-1][0][2] != literal or
+                    original.start_s != e.start_s or original.end_s != e.end_s or
+                    any(k in original.state for k in ('clip','iclip','org')) or
+                    not unrotated_text_state(original.state)):
+                continue
+        obj = static_object_key(e,styles)
+        if obj is None or len(obj[-1]) != 1:
+            continue
+        signature,drawing,payload = obj[-1][0]
+        state = dict(signature.formatting)
+        if (drawing or payload != literal or not unrotated_text_state(state) or
+                any(k in state for k in ('clip','iclip','org')) or
+                state.get('borderstyle',1) != 1 or
+                str(state.get('fn','')).startswith('@') or
+                any(not math.isfinite(state.get(k,0)) or state.get(k,0) <= 0
+                    for k in ('fs','fscx','fscy')) or
+                not math.isfinite(text_height(e)) or text_height(e) <= 0 or
+                any(not math.isfinite(v) for v in get_pos(e.text))):
+            continue
+        key = (e.style,e.name,e.margin_l,e.margin_r,e.margin_v,
+               e.measurement,literal,text_layout_key(e))
+        buckets.setdefault(key,{}).setdefault(e.layer,[]).append(e)
+    return buckets
+
+
+def _prove_complete_line_jitter(members: list[Event],
+                                 max_piece_duration: float) -> JitterTextFamily | None:
+    """Require repeated bounded reversals and a sustained readable paint core.
+
+    A whole-family box, rather than pairwise distance, prevents small steps
+    from swallowing travelling text. Fade-only echoes have no sustained core.
+    """
+    if len(members) < 8:
+        return None
+    ordered = sorted(members,key=lambda e:(e.start_s,e.end_s,e.source_index))
+    if any(a.end_s != b.start_s for a,b in zip(ordered,ordered[1:])):
+        return None  # One sample per frame; overlapping copies need separate proof.
+    positions = [get_pos(e.text) for e in ordered]
+    height = min(text_height(e) for e in ordered)
+    if any(max(p[i] for p in positions)-min(p[i] for p in positions) > .05*height+1e-6
+           for i in (0,1)):
+        return None
+    reversals = 0
+    for axis in (0,1):
+        signs = [1 if b[axis] > a[axis] else -1
+                 for a,b in zip(positions,positions[1:])
+                 if abs(b[axis]-a[axis]) > .001*height]
+        reversals = max(reversals,sum(a != b for a,b in zip(signs,signs[1:])))
+    if reversals < 2:
+        return None
+    # Consecutive equal effective paint, including alpha, supplies the core.
+    # Geometry remains exact through the bucket key; only position is jitter.
+    paint = lambda e: state_key(e,{'pos'})
+    runs = []
+    for e in ordered:
+        if e.state.get('1a',255) >= 128:
+            continue
+        if runs and runs[-1][-1].end_s == e.start_s and paint(runs[-1][-1]) == paint(e):
+            runs[-1].append(e)
+        else:
+            runs.append([e])
+    holds = [e for run in runs if run[-1].end_s-run[0].start_s >= 2*max_piece_duration-1e-6
+             for e in run]
+    if not holds:
+        return None
+    anchor = tuple(statistics.median(get_pos(e.text)[i] for e in holds) for i in (0,1))
+    return JitterTextFamily(tuple(ordered),tuple(holds),ordered[0].start_s,ordered[-1].end_s,anchor)
+
+
+def _complete_line_jitter_families(layers: dict,
+                                   max_piece_duration: float) -> list[JitterTextFamily]:
+    """Preserve every gap and reject a whole temporal component on proof failure."""
+    families = []
+    for events in layers.values():
+        components = []
+        for e in sorted(events,key=lambda e:(e.start_s,e.end_s,e.source_index)):
+            if not components or e.start_s > components[-1][-1].end_s+1e-6:
+                components.append([])
+            components[-1].append(e)
+        for component in components:
+            proof = _prove_complete_line_jitter(component,max_piece_duration)
+            if proof is not None:
+                families.append(proof)
+    return families
+
+
+def _complete_line_jitter_core_overlap(a: JitterTextFamily, b: JitterTextFamily) -> float:
+    """Measure actual readable coverage without bridging an internal fade gap."""
+    i = j = 0
+    overlap = 0.0
+    while i < len(a.holds) and j < len(b.holds):
+        x,y = a.holds[i],b.holds[j]
+        overlap += max(0,min(x.end_s,y.end_s)-max(x.start_s,y.start_s))
+        if x.end_s <= y.end_s:
+            i += 1
+        else:
+            j += 1
+    return overlap
+
+
+def _group_complete_line_jitter_stacks(families: list[JitterTextFamily],
+                                       max_piece_duration: float) -> list[list[JitterTextFamily]]:
+    """Own staggered layers over a continuous complete-caption witness.
+
+    A foreground can briefly disappear while its full-caption backing remains.
+    Such gaps do not split the caption; a gap in every layer always does.
+    Reject overlapping copies within a layer and unrelated partial overlays.
+    """
+    components = []
+    for family in sorted(families,key=lambda f:(f.start_s,f.end_s)):
+        matching = [group for group in components if any(
+            family.start_s < peer.end_s and peer.start_s < family.end_s and
+            max(abs(family.anchor[i]-peer.anchor[i]) for i in (0,1)) <=
+                .05*min(text_height(family.members[0]),text_height(peer.members[0]))+1e-6
+            for peer in group)]
+        if len(matching) == 1:
+            matching[0].append(family)
+        else:
+            components.append([family])
+    groups = []
+    for component in components:
+        start,end = min(f.start_s for f in component),max(f.end_s for f in component)
+        witness = next((f for f in component if f.start_s == start and f.end_s == end),None)
+        layers = {}
+        for f in component:
+            layers.setdefault(f.members[0].layer,[]).append(f)
+        valid = witness is not None
+        for peers in layers.values():
+            peers.sort(key=lambda f:f.start_s)
+            core = sum(e.duration for f in peers for e in f.holds)
+            valid &= (all(a.end_s <= b.start_s for a,b in zip(peers,peers[1:])) and
+                      peers[0].start_s-start <= max_piece_duration+1e-6 and
+                      end-peers[-1].end_s <= max_piece_duration+1e-6 and
+                      core >= .8*(end-start)-.011)
+        if witness is not None:
+            height = min(text_height(f.members[0]) for f in component)
+            valid &= all(max(abs(f.anchor[i]-witness.anchor[i]) for i in (0,1)) <= .05*height+1e-6 and
+                _complete_line_jitter_core_overlap(f,witness) >=
+                .8*min(sum(e.duration for e in f.holds),
+                       sum(e.duration for e in witness.holds))-.011
+                for f in component)
+        groups.extend([component] if valid else [[f] for f in component])
+    return groups
+
+
+def _render_complete_line_jitter(group: list[JitterTextFamily], literal: str,
+                                  styles: dict) -> Event:
+    """Use the actual foreground layer's sustained paint and representative pose."""
+    foreground = max(group,key=lambda f:(int(f.members[0].layer),f.members[0].source_index))
+    holds = [e for f in group if f.members[0].layer == foreground.members[0].layer for e in f.holds]
+    anchor = tuple(statistics.median(get_pos(e.text)[i] for e in holds) for i in (0,1))
+    midpoint = (min(e.start_s for e in holds)+max(e.end_s for e in holds))/2
+    chosen = min(holds,key=lambda e:(
+        sum((get_pos(e.text)[i]-anchor[i])**2 for i in (0,1)),
+        abs((e.start_s+e.end_s)/2-midpoint),e.source_index))
+    state = select_static_state(chosen.state,[],set(),styles,chosen.defaults,
+        paint_events=holds,continuation=chosen.continuation).state
+    members = [e for f in group for e in f.members]
+    text = render_simplified_caption(state,literal,outline_states=[e.state for e in members],
+                                     measurement=chosen.measurement)
+    start,end = min(f.start_s for f in group),max(f.end_s for f in group)
+    return replace_event(chosen,text=text,start=format_time(start),end=format_time(end),
+        start_s=start,end_s=end,source_index=min(e.source_index for e in members),effect='')
+
+
+@dataclass(frozen=True)
+class CompleteLineJitterResult:
+    """Accepted captions explicitly own subsequent word-echo proofs."""
+    events: list[Event]
+    frames: int
+    stacks: int
+    captions: tuple[Event,...]
+
+
+def flatten_complete_line_jitter(events: list[Event], visible_map: dict[int,str],
+                                  styles: dict, *, max_piece_duration: float = .16,
+                                  source_events: dict[int,Event] | None = None
+                                  ) -> CompleteLineJitterResult:
+    """Freeze complete explicit-frame jitter, then consolidate its proved paint layers.
+
+    Uniform static frames only: inline gradients and other incomplete evidence
+    fall through to the existing pipeline. No animation tag or exact font is
+    required to prove that the same literal caption remains at the same anchor.
+    Ownership is local and atomic; unrelated translucent text is untouched.
+    """
+    buckets = _index_complete_line_jitter(events,visible_map,styles,max_piece_duration,source_events)
+    replacements,removed = {},set()
+    frame_count = stack_count = 0
+    for key,layers in buckets.items():
+        families = _complete_line_jitter_families(layers,max_piece_duration)
+        for group in _group_complete_line_jitter_stacks(families,max_piece_duration):
+            caption = _render_complete_line_jitter(group,key[-2],styles)
+            replacements[caption.source_index] = caption
+            removed.update(e.source_index for f in group for e in f.members)
+            frame_count += sum(len(f.members)-1 for f in group)
+            stack_count += len(group)-1
+    return CompleteLineJitterResult([replacements.get(e.source_index,e) for e in events
+             if e.source_index not in removed or e.source_index in replacements],
+            frame_count,stack_count,tuple(replacements.values()))
 
 
 def _prepare_text_effect_sequence_pass(events: list[Event], context: TextEffectSequenceContext
@@ -7271,21 +7528,63 @@ class FontMetrics:
                          kerning: bool = False) -> FontLineInkMetrics | None:
         """Return baseline-relative ink at 1024 px for an already measured face.
 
-        Only the established RAQM path supplies ink refinement. Unsupported or
-        unmeasured faces return None; font/backend errors retain their existing
-        propagation. Blank lines retain their slot without requesting ink.
+        RAQM supplies raster bounds; direct HarfBuzz supplies outward-rounded
+        shaped glyph bounds when RAQM is absent. Both borrow the exact face
+        already loaded by measure(). Unsupported or unmeasured faces stay
+        unknown. Blank lines retain their slot without requesting ink.
         """
         font = self._loaded.get(face.key)
-        if font is None or font.layout_engine != self._imagefont.Layout.RAQM:
+        if font is None:
+            return None
+        raqm = font.layout_engine == self._imagefont.Layout.RAQM
+        hb_font = self._shaping_fonts.get(face.key)
+        if not raqm and (self._harfbuzz is None or hb_font is None):
             return None
         if face.key not in self._line_ascent_ratios:
             with self.open_face(face) as tf:
                 os2 = tf['OS/2']
                 self._line_ascent_ratios[face.key] = os2.usWinAscent/(os2.usWinAscent+os2.usWinDescent)
-        features = ['kern' if kerning else '-kern']
-        boxes = tuple(font.getbbox(line,anchor='ls',features=features)
-                      if line.strip() else None for line in lines)
-        return FontLineInkMetrics(self._line_ascent_ratios[face.key],boxes)
+        if raqm:
+            features = ['kern' if kerning else '-kern']
+            boxes = tuple(font.getbbox(line,anchor='ls',features=features)
+                          if line.strip() else None for line in lines)
+            return FontLineInkMetrics(self._line_ascent_ratios[face.key],boxes)
+        boxes = []
+        for line in lines:
+            if not line.strip():
+                boxes.append(None)
+                continue
+            buffer = self._harfbuzz.Buffer()
+            buffer.add_str(line)
+            buffer.guess_segment_properties()
+            if buffer.direction != 'ltr':
+                return None
+            self._harfbuzz.shape(hb_font,buffer,{'kern':bool(kerning)})
+            x, glyph_boxes = 0, []
+            for info, position in zip(buffer.glyph_infos,buffer.glyph_positions):
+                if not info.codepoint or position.y_advance:
+                    return None
+                extents = hb_font.get_glyph_extents(info.codepoint)
+                if extents is None:
+                    return None
+                # Cached HarfBuzz fonts use 26.6 units at 1024 px. Their y
+                # axis points up; caption geometry uses baseline-relative y down.
+                if extents.width and extents.height:
+                    left = x+position.x_offset+extents.x_bearing
+                    top = -position.y_offset-extents.y_bearing
+                    right, bottom = left+extents.width, top-extents.height
+                    glyph_boxes.append((min(left,right),min(top,bottom),
+                                        max(left,right),max(top,bottom)))
+                x += position.x_advance
+            if not glyph_boxes:
+                return None
+            # Pillow bounds include leading/trailing advances as well as ink
+            # overhangs. Preserve that conservative horizontal convention.
+            boxes.append((math.floor(min(0,min(b[0] for b in glyph_boxes))/64),
+                          math.floor(min(b[1] for b in glyph_boxes)/64),
+                          math.ceil(max(x,max(b[2] for b in glyph_boxes))/64),
+                          math.ceil(max(b[3] for b in glyph_boxes)/64)))
+        return FontLineInkMetrics(self._line_ascent_ratios[face.key],tuple(boxes))
 
 
 class FontOutlineMatcher:
@@ -10406,6 +10705,167 @@ def matching_fragment_spans(index: tuple, target: str):
         offset = text.find(target,offset+1)
 
 
+def _word_echo_layout(e: Event) -> tuple:
+    """Match authored paragraph geometry independently of paint and position."""
+    return (e.style,e.name,e.margin_l,e.margin_r,e.margin_v,e.measurement,
+            text_layout_key(e))
+
+
+def _word_echo_families(events: list[Event]) -> Iterable[list[Event]]:
+    """Collect nearby frame copies before testing the entire displacement box."""
+    components = []
+    for e in sorted(events,key=lambda e:(e.start_s,e.end_s,e.source_index)):
+        pos = get_pos(e.text)
+        for component,end in reversed(components):
+            first = component[0]
+            if (e.start_s <= end[0]+1e-6 and
+                    all(abs(a-b) <= .25*text_height(first)
+                        for a,b in zip(pos,get_pos(first.text)))):
+                component.append(e)
+                end[0] = max(end[0],e.end_s)
+                break
+        else:
+            components.append(( [e], [e.end_s] ))
+    for component,_ in components:
+        yield component
+
+
+def _prove_word_echo_family(members: list[Event]) -> bool:
+    """Prove dense short fade frames or faint copies with repeated jitter."""
+    frames = {}
+    height = text_height(members[0])
+    positions = [get_pos(e.text) for e in members]
+    if any(max(p[axis] for p in positions)-min(p[axis] for p in positions)
+           > .06*height+1e-6 for axis in (0,1)):
+        return False
+    for e in members:
+        frames.setdefault((e.start_s,e.end_s),[]).append(e)
+    ordered = sorted(frames)
+    if (len(ordered) < 3 or len(members) < 8 or any(abs(a[1]-b[0]) > 1e-6
+                               for a,b in zip(ordered,ordered[1:]))):
+        return False
+    alphas,centers = [],[]
+    for interval in ordered:
+        copies = frames[interval]
+        values = {e.state.get('1a',0) for e in copies}
+        if len(values) != 1:
+            return False
+        alphas.append(values.pop())
+        centers.append(tuple(statistics.mean(get_pos(e.text)[axis] for e in copies)
+                             for axis in (0,1)))
+    fade = (alphas[0] <= 128 and alphas[-1] >= 224 and
+            alphas[-1]-alphas[0] >= 64 and
+            all(a <= b for a,b in zip(alphas,alphas[1:])))
+    reversals = 0
+    for axis in (0,1):
+        signs = [1 if b[axis] > a[axis] else -1 for a,b in zip(centers,centers[1:])
+                 if abs(b[axis]-a[axis]) > .001*height]
+        reversals = max(reversals,sum(a != b for a,b in zip(signs,signs[1:])))
+    return fade or (min(alphas) >= 128 and reversals >= 2)
+
+
+def _owned_word_echo_anchors(caption: Event, literal: str, word: str,
+                              metric: FontMetrics) -> list[float]:
+    """Disambiguate repeated literal occurrences with the retained exact font."""
+    unit = .06*text_height(caption)
+    glyphs = authored_glyph_positions(metric,caption.state,literal,
+                                      get_pos(caption.text)[0],unit)
+    if glyphs is None:
+        return []
+    index = index_fragment_spans(c for c,_ in glyphs)
+    # The shared index ignores spaces. Keep only actual contiguous literals;
+    # a word must not match letters on opposite sides of an authored space.
+    occurrences = set()
+    offset = literal.find(word)
+    while offset >= 0:
+        occurrences.add(sum(not c.isspace() for c in literal[:offset]))
+        offset = literal.find(word,offset+1)
+    anchors = []
+    for first,last in matching_fragment_spans(index,word):
+        if first not in occurrences:
+            continue
+        xs = [x for _,x in glyphs[first:last+1]]
+        fragments = [c for c,_ in glyphs[first:last+1]]
+        anchor = fit_fragment_anchor(metric,caption.state,xs,fragments,word,unit,
+                                     exact_size=True,allow_tracking=True)
+        if anchor is not None:
+            anchors.append(anchor)
+    return anchors
+
+
+def remove_owned_word_echoes(events: list[Event], visible_map: dict[int,str],
+                              captions: tuple[Event,...], sources: dict[int,Event],
+                              metric: FontMetrics | None, *, max_piece_duration: float=.16
+                              ) -> CoveredFragmentRemoval:
+    """Atomically remove original word frames owned by one accepted full line.
+
+    Exact font/layout/position, dense fade or jitter evidence, and one cue owner
+    are required. Missing fonts or competing ownership preserve the family.
+    Faint tails may follow the parent; they never extend its caption interval.
+    """
+    if not captions or metric is None or not metric.available:
+        return CoveredFragmentRemoval(events,[],0)
+    owners = {}
+    for caption in captions:
+        owners.setdefault(_word_echo_layout(caption),[]).append(caption)
+    owner_styles = {caption.style for caption in captions}
+    buckets = {}
+    for e in events:
+        source = sources.get(e.source_index)
+        literal = visible_map.get(e.source_index,'')
+        if source is not None and source.style in owner_styles and not source.state:
+            evaluated = event_evaluation(source)
+            source = dataclass_replace(source,state=evaluated.formatting,
+                                       continuation=evaluated.continuation)
+        if (source is None or not literal or any(c.isspace() for c in literal) or
+                source.duration <= 0 or source.duration > max_piece_duration+1e-6 or
+                source.start_s != e.start_s or source.end_s != e.end_s or
+                get_pos(source.text) is None or inline_layout_key(source) or
+                any(k in source.state for k in ('clip','iclip','org')) or
+                not unrotated_text_state(source.state) or source.state.get('p',0) or
+                source.state.get('borderstyle',1) != 1 or
+                not math.isfinite(text_height(source)) or text_height(source) <= 0 or
+                any(not math.isfinite(v) for v in get_pos(source.text))):
+            continue
+        layout = _word_echo_layout(source)
+        if layout not in owners:
+            continue
+        obj = static_object_key(source,source.styles)
+        if obj is None or len(obj[-1]) != 1 or obj[-1][0][1] or obj[-1][0][2] != literal:
+            continue
+        paint = tuple((k,source.state.get(k,DEFAULT_STATE.get(k))) for k in
+                      ('1c','2c','3c','4c','bord','xbord','ybord','shad','blur','be'))
+        buckets.setdefault((layout,literal,source.layer,paint),[]).append(source)
+    removed,anchors = set(),{}
+    for (layout,word,_,_),bucket in buckets.items():
+        for members in _word_echo_families(bucket):
+            if not _prove_word_echo_family(members):
+                continue
+            start,end = min(e.start_s for e in members),max(e.end_s for e in members)
+            matches = []
+            for caption in owners[layout]:
+                literal = visible_map.get(caption.source_index,'')
+                if (literal == word or start < caption.start_s-1e-6 or
+                        start >= caption.end_s or end > caption.end_s+.8+1e-6 or
+                        min(end,caption.end_s)-start < min(.16,.5*(end-start)) or
+                        any(e.end_s > caption.end_s+1e-6 and e.state.get('1a',0) < 128
+                            for e in members)):
+                    continue
+                key = (caption.source_index,word)
+                if key not in anchors:
+                    anchors[key] = _owned_word_echo_anchors(caption,literal,word,metric)
+                unit = .06*text_height(caption)
+                y = get_pos(caption.text)[1]
+                for x in anchors[key]:
+                    if all(abs(get_pos(e.text)[0]-x) <= unit+1e-6 and
+                           abs(get_pos(e.text)[1]-y) <= unit+1e-6 for e in members):
+                        matches.append(caption)
+            if len(matches) == 1:
+                removed.update(e.source_index for e in members)
+    return CoveredFragmentRemoval([e for e in events if e.source_index not in removed],
+                                   [],len(removed))
+
+
 def match_repeated_glyph_flashes(
     events: list[Event], words: dict[int, str], positions: dict[int, tuple[float, float] | None],
     metric: FontMetrics | None, *, font_report: FontProcessingReport | None=None,
@@ -11910,6 +12370,288 @@ def load_subtitle_events(path, encoding=None):
             list(document.events))
 
 
+@dataclass(frozen=True)
+class GlyphPhaseLife:
+    """One source-proved glyph position through its complete paint lifecycle."""
+    members: tuple[Event,...]
+    pose: Event
+    literal: str
+    start_s: float
+    end_s: float
+    core: tuple[float,float]
+
+
+def _index_glyph_phase_slots(parsed: dict[int,Event], metric: FontMetrics,
+                              max_piece_duration: float,
+                              font_report: FontProcessingReport | None) -> tuple[list,dict]:
+    """Normalize exact-font anchors, retaining rejected nearby text as blockers."""
+    profiles = {}
+    for e in parsed.values():
+        if e.kind != 'Dialogue' or e.duration <= 0:
+            continue
+        literal = OVERRIDE_RE.sub('',e.text)
+        if len(literal) != 1 or literal.isspace():
+            continue
+        profile = profiles.setdefault((e.style,e.name),[0,0])
+        profile[0] += bool(re.search(r'\\fad\s*\(',e.text,re.I))
+        profile[1] += e.duration <= max_piece_duration+1e-6
+    families = {key for key,(fades,frames) in profiles.items() if fades >= 8 and frames >= 12}
+    slots,spatial,obstacles,widths = [],{}, {},{}
+    forbidden = {'t','move','fade','clip','iclip','org','p','r','k','kf','ko','kt'}
+    for source in sorted(parsed.values(),key=lambda e:(e.start_s,e.end_s,e.source_index)):
+        family = (source.style,source.name)
+        if family not in families or source.kind != 'Dialogue' or source.duration <= 0:
+            continue
+        literal = OVERRIDE_RE.sub('',source.text)
+        if not literal.strip():
+            continue
+        evaluated = event_evaluation(source)
+        e = dataclass_replace(source,state=evaluated.formatting,continuation=evaluated.continuation)
+        pos = get_pos(e.text)
+        height = text_height(e)
+        alignment = int(e.state.get('an',5))
+        if not math.isfinite(height) or height <= 0 or alignment not in range(1,10):
+            continue
+        if pos is None:
+            obstacles.setdefault(family,[]).append([e,None,height])
+            continue
+        if any(not math.isfinite(v) for v in pos):
+            continue
+        # Rejected geometry is still evidence of a possible missing glyph.
+        approximate = (pos[0],pos[1]+((alignment-1)//3-1)*height/2)
+        obstacle = [e,approximate,height]
+        obstacles.setdefault(family,[]).append(obstacle)
+        prefix = re.match(r'(?:\{[^}]*\})*',e.text).end()
+        tokens = event_override_tokens(e)
+        if (len(literal) != 1 or literal.isspace() or unicodedata.combining(literal) or
+                unicodedata.bidirectional(literal) in {'R','AL','AN'} or
+                OVERRIDE_RE.search(e.text,prefix) or e.effect or
+                any(tag in forbidden for tag,value in tokens) or
+                not unrotated_text_state(e.state) or
+                any(abs(e.state.get(k,0)) > .001 for k in ('fax','fay','fsp','pbo')) or
+                any(not math.isfinite(e.state.get(k,0)) or e.state.get(k,0) <= 0
+                    for k in ('fs','fscx','fscy')) or
+                e.state.get('borderstyle',1) != 1 or
+                str(e.state.get('fn','')).startswith('@') or
+                not e.layer.lstrip('-').isdigit()):
+            continue
+        fade_values = [value for tag,value in tokens if tag=='fad']
+        fade = None
+        if fade_values:
+            if len(fade_values) != 1 or not re.fullmatch(r'\(\s*'+NUM+r'\s*,\s*'+NUM+r'\s*\)',fade_values[0]):
+                continue
+            fade = tuple(float(v)/1000 for v in fade_values[0][1:-1].split(','))
+            if any(not math.isfinite(v) or v < 0 for v in fade) or (fade[0]>0)==(fade[1]>0):
+                continue
+        elif e.duration > max_piece_duration+1e-6:
+            continue
+        key = (e.style,e.name,e.margin_l,e.margin_r,e.margin_v,e.measurement,
+               tuple((k,v) for k,v in text_layout_key(e) if k != 'an'))
+        width_key = (key,literal)
+        if width_key not in widths:
+            face = metric.matching_face(str(e.state.get('fn','')),e.state.get('b',0),bool(e.state.get('i',0)))
+            factor = metric.ass_em_scale(face) if face is not None else None
+            width = None
+            if face is not None and factor is not None and ord(literal) in face.cmap:
+                try:
+                    width = metric.measure(face,literal,bool(e.state.get('kerning',False)))*e.state.get('fs',20)*e.state.get('fscx',100)/100/1024*factor
+                except (OSError,ValueError,RuntimeError):
+                    pass
+            widths[width_key] = width
+            if width is None and font_report is not None:
+                font_report.missing_families.add(str(e.state.get('fn','')))
+        width = widths[width_key]
+        if width is None or not math.isfinite(width) or width <= 0:
+            continue
+        center = (pos[0]+(.5-((alignment-1)%3)/2)*width,approximate[1])
+        obstacle[1] = center
+        tags = ''.join('\\'+tag+value for tag,value in tokens if tag not in {'pos','an','a'})
+        canonical = replace_event(e,text='{'+tags+r'\an5'+('\\pos('+','.join(format(v,'.12g') for v in center)+')')+'}'+literal)
+        unit = .06*height
+        cell = (math.floor(center[0]/unit),math.floor(center[1]/unit))
+        candidates = {i for dx in (-1,0,1) for dy in (-1,0,1)
+                      for i in spatial.get((key,literal,cell[0]+dx,cell[1]+dy),[])
+                      if all(abs(a-b) <= unit+1e-6 for a,b in zip(center,get_pos(slots[i][0][0].text))) and
+                      (any(other_fade is not None and other_fade[0] and
+                           other.layer != canonical.layer and
+                           abs(other.start_s-canonical.start_s) <= 1e-6 and
+                           abs(other.end_s-canonical.end_s) <= 1e-6 and
+                           all(abs(a-b) <= .001*height+1e-6 for a,b in zip(center,get_pos(other.text)))
+                           for other,other_fade in slots[i])
+                       if fade is not None and fade[0] else
+                       any(abs(other.end_s-canonical.start_s) <= 1e-6 and
+                           (other_fade is None or other_fade[1] == 0)
+                           for other,other_fade in slots[i]))}
+        if len(candidates) > 1:
+            continue
+        if candidates:
+            index = candidates.pop()
+        else:
+            if fade is None or not fade[0]:
+                continue
+            index = len(slots);slots.append([])
+            spatial.setdefault((key,literal,*cell),[]).append(index)
+        slots[index].append((canonical,fade))
+    return slots,obstacles
+
+
+def _prove_glyph_phase_lives(slots: list, max_piece_duration: float) -> list[GlyphPhaseLife]:
+    """Walk unique touching entrance/frame/exit paths, then own their paint stack."""
+    lives = []
+    for slot in slots:
+        starts = {}
+        for e,fade in slot:
+            starts.setdefault((e.layer,round(e.start_s,6)),[]).append((e,fade))
+        paths = {}
+        for entry,fade in slot:
+            if fade is None or not fade[0] or fade[1]:
+                continue
+            path = [entry];current = entry;exit_event = None;exit_fade = None
+            while len(path) <= len(slot):
+                following = starts.get((entry.layer,round(current.end_s,6)),[])
+                if len(following) != 1:
+                    break
+                event,tail = following[0]
+                if tail is not None:
+                    if (tail[0] == 0 and tail[1] > 0 and
+                            all(abs(a-b) <= .001*text_height(entry)+1e-6
+                                for a,b in zip(get_pos(entry.text),get_pos(event.text)))):
+                        path.append(event);exit_event,exit_fade = event,tail
+                    break
+                if event.duration > max_piece_duration+1e-6:
+                    break
+                path.append(event);current = event
+            if exit_event is None or len(path)-2 < 1:
+                continue
+            start,end = entry.start_s,exit_event.end_s
+            core = (min(entry.end_s,start+fade[0]),max(exit_event.start_s,end-exit_fade[1]))
+            if core[1]-core[0] < .32-1e-6:
+                continue
+            paths.setdefault((start,end),[]).append((entry.layer,path,core))
+        for (start,end),layers in paths.items():
+            if len({layer for layer,path,core in layers}) != len(layers):
+                continue
+            readable = [p for p in layers if all(e.state.get('1a',0)<128 for e in p[1])]
+            if not readable:
+                continue
+            foreground = max(readable,key=lambda p:int(p[0]))
+            members = [e for layer,path,core in layers for e in path]
+            claimed = {e.source_index for e in members}
+            pulse_start,pulse_end = foreground[1][0].end_s,foreground[1][-1].start_s
+            extra = [e for e,fade in slot if e.source_index not in claimed and
+                     start < e.end_s and e.start_s < end]
+            # Only short lower paint layers wholly inside the highlight may
+            # be owned without their own complete entrance/exit path.
+            if any(e.duration > max_piece_duration+1e-6 or int(e.layer) >= int(foreground[0]) or
+                   e.start_s < pulse_start-1e-6 or e.end_s > pulse_end+1e-6 for e in extra):
+                continue
+            members += extra
+            pose = foreground[1][0]
+            positions = [get_pos(e.text) for e in members]
+            if any(max(p[a] for p in positions)-min(p[a] for p in positions) > .12*text_height(pose)+1e-6 for a in (0,1)):
+                continue
+            # Readable saturated source intervals provide colour dwell. Fade
+            # ramps cannot overweight a brief foreground against a long hold.
+            paint_events = []
+            for e in members:
+                fades = [v for tag,v in event_override_tokens(e) if tag=='fad']
+                a,b = e.start_s,e.end_s
+                if fades:
+                    ingress,tail = (float(v)/1000 for v in fades[0][1:-1].split(','))
+                    a,b = min(b,a+ingress),max(a,b-tail)
+                if b > a:
+                    paint_events.append(replace_event(e,start_s=a,end_s=b,start=format_time(a),end=format_time(b)))
+            paint = dict(select_static_state(pose.state,[],set(),pose.styles,pose.defaults,
+                paint_events=paint_events,continuation=pose.continuation).state)
+            contours = [e.state for e in members if e.state.get('3c')==paint.get('3c') and
+                        e.state.get('3a',0)==0 and max(e.state.get(k,e.state.get('bord',0)) for k in ('xbord','ybord'))>0]
+            if contours:
+                paint.update(bord=2,xbord=2,ybord=2,**{'3a':0})
+            tags = ''.join('\\'+tag+value for tag,value in event_override_tokens(pose) if tag!='fad')
+            tags += ''.join(render_tag(k,paint[k]) for k in ('1c','3c','1a','3a','bord','xbord','ybord') if k in paint)
+            chosen = replace_event(pose,text='{'+tags+'}'+OVERRIDE_RE.sub('',pose.text))
+            lives.append(GlyphPhaseLife(tuple(members),chosen,OVERRIDE_RE.sub('',pose.text),start,end,foreground[2]))
+    return lives
+
+
+def reconstruct_glyph_lifecycles(parsed: dict[int,Event], metric: FontMetrics | None, *,
+                                  max_piece_duration: float=.16,
+                                  font_report: FontProcessingReport | None=None) -> TextPhaseRowsResult:
+    """Replace only complete source-owned, exact-font letter phase rows.
+
+    Geometry/timing determine membership independently of colour. Every glyph
+    needs a readable entrance-to-exit path with explicit highlight frames.
+    Unclaimed nearby content and competing rows reject atomic replacement.
+    """
+    events = list(parsed.values())
+    if metric is None or not metric.available:
+        return TextPhaseRowsResult(events,0,[],{})
+    slots,obstacles = _index_glyph_phase_slots(parsed,metric,max_piece_duration,font_report)
+    lives = _prove_glyph_phase_lives(slots,max_piece_duration)
+    groups = {}
+    bands = {}
+    for life in sorted(lives,key=lambda l:get_pos(l.pose.text)[1]):
+        e = life.pose
+        key = (e.style,e.name,e.margin_l,e.margin_r,e.margin_v,e.measurement,text_layout_key(e))
+        y = get_pos(e.text)[1]
+        anchors = bands.setdefault(key,[])
+        if not anchors or abs(y-anchors[-1]) > .02*text_height(e):
+            anchors.append(y)
+        groups.setdefault((key,len(anchors)-1),[]).append(life)
+    runs = []
+    for group in groups.values():
+        run = []
+        for life in sorted(group,key=lambda l:(l.start_s,get_pos(l.pose.text)[0],l.end_s)):
+            if run:
+                first,last = run[0],run[-1]
+                x,y = get_pos(life.pose.text);lx,ly = get_pos(last.pose.text)
+                height = text_height(first.pose)
+                core_start = max(l.core[0] for l in run+[life]);core_end = min(l.core[1] for l in run+[life])
+                if (x <= lx+.02*height or abs(y-ly) > .02*height or
+                        life.end_s < last.end_s-.011 or core_end-core_start < .32-1e-6):
+                    runs.append(run);run=[]
+            run.append(life)
+        if run:runs.append(run)
+    proposals = []
+    for run in runs:
+        if len(run) < 4:
+            continue
+        ordered = [l.pose for l in run];fragments = [l.literal for l in run]
+        fit = recover_font_row(metric,ordered,fragments,max_size_error=.05,font_report=font_report)
+        if fit is None:
+            continue
+        literal,center,sx,sy,alignment = fit
+        core = (max(l.core[0] for l in run),min(l.core[1] for l in run))
+        members = {e.source_index for l in run for e in l.members}
+        xs = [get_pos(e.text)[0] for e in ordered];y = statistics.median(get_pos(e.text)[1] for e in ordered);height=text_height(ordered[0])
+        if any(e.source_index not in members and e.start_s < core[1] and e.end_s > core[0] and
+               (pos is None or abs(pos[1]-y) <= .15*height and
+                xs[0]-height <= pos[0] <= xs[-1]+height)
+               for e,pos,h in obstacles.get((ordered[0].style,ordered[0].name),[])):
+            continue
+        # Verify every glyph against the completed literal at the retained
+        # font size, not merely successive pairwise spacing fits.
+        if not matches_authored_glyph_positions(metric,ordered[0].state,xs,literal,center,.05*height):
+            continue
+        body = render_merged_caption(ordered,fragments,literal,animated=True,
+            an=alignment,pos=(center,y),fscx=sx,fscy=sy,fsp=0)
+        if body is None:
+            continue
+        start,end = min(l.start_s for l in run),max(l.end_s for l in run)
+        index = min(members)
+        caption = replace_event(ordered[0],text=body,source_index=index,
+            start=format_time(start),end=format_time(end),start_s=start,end_s=end,effect='')
+        row = TextRow(caption,[(e,word,get_pos(e.text)) for e,word in zip(ordered,fragments)],phase_core=core)
+        proposals.append((members,row,literal))
+    claims = collections.Counter(i for ids,row,literal in proposals for i in ids)
+    accepted = [(ids,row,literal) for ids,row,literal in proposals if all(claims[i]==1 for i in ids)]
+    removed = set().union(*(ids for ids,row,literal in accepted)) if accepted else set()
+    replacements = {row.base.source_index:row.base for ids,row,literal in accepted}
+    output = [replacements.get(e.source_index,e) for e in events if e.source_index not in removed or e.source_index in replacements]
+    return TextPhaseRowsResult(output,len(removed)-len(accepted),[row for ids,row,literal in accepted],
+                               {row.base.source_index:literal for ids,row,literal in accepted})
+
+
 def collect_source_text_rows(parsed: dict[int, Event], animated: set[int]) -> CollectedSourceText:
     """Record duplicated layout-stable rows before transformations lose timing.
 
@@ -13103,6 +13845,9 @@ def _prepare_source_text(
         timing_sources = working_by_line
         working_by_line, shrinking_effects = collapse_shrinking_glyph_rows(
             working_by_line,font_metrics,config.max_blur)
+        lifecycles = reconstruct_glyph_lifecycles(working_by_line,font_metrics,
+            max_piece_duration=config.short_duration,font_report=font_report)
+        working_by_line = {e.source_index:e for e in lifecycles.events}
         source_data = collect_source_text_rows(working_by_line,animated_sources)
         # Retain the pre-collapse timing snapshot, adopting resolved formatting
         # only where it still refers to the same authored working event.
@@ -13117,8 +13862,8 @@ def _prepare_source_text(
         reconstruction = reconstruct_text_rows(
             removal.events,source_data.words,{},None,animated_sources,
             source_rows=removal.rows,source_only=True, font_report=font_report)
-        source_events,source_rows = reconstruction.events,reconstruction.rows
-        source_effects += shrinking_effects
+        source_events,source_rows = reconstruction.events,reconstruction.rows+lifecycles.rows
+        source_effects += shrinking_effects+lifecycles.removed_count
         working_by_line = {e.source_index:e for e in source_events}
     return PreparedSourceText(working_by_line,timing_sources,source_rows,source_effects,vector_text_recovered)
 
@@ -13237,7 +13982,15 @@ def _consolidate_text_events(
     timing_sources = prepared.timing_sources
     stacked_text_copies_flattened = masked_decorations = 0
     progressive_reveals = 0
+    jitter_frames = jitter_stacks = word_echoes = 0
     if config.level == 1:
+        jitter = flatten_complete_line_jitter(
+            simplified_events,visible_map,styles,max_piece_duration=config.short_duration,
+            source_events=parsed_by_line)
+        simplified_events,jitter_frames,jitter_stacks = jitter.events,jitter.frames,jitter.stacks
+        echoes = remove_owned_word_echoes(simplified_events,visible_map,jitter.captions,
+            parsed_by_line,font_metrics,max_piece_duration=config.short_duration)
+        simplified_events,word_echoes = echoes.events,echoes.removed_effects
         reveal = collapse_progressive_text_reveals(
             simplified_events,visible_map)
         simplified_events,progressive_reveals = reveal.events,reveal.removed_count
@@ -13252,6 +14005,7 @@ def _consolidate_text_events(
             max_piece_duration=config.short_duration,source_events=parsed_by_line,
             font_metrics=font_metrics)
 
+    stacked_text_copies_flattened += jitter_stacks
     sign_copies_removed = 0
     if config.level == 1:
         simplified_events, sign_copies_removed = reduce_static_sign_copies(
@@ -13296,19 +14050,25 @@ def _consolidate_text_events(
         max_gap=config.short_gap,
         merge_near_static=config.level == 1,
     )
-    text_effect_sequences_frozen = 0
+    text_effect_sequences_frozen = jitter_frames
     # Counter names remain compatible with older batch reports.
     staggered_rows = fullwidth_merged = 0
     progressive_rows = progressive_reveals
     overlaid_letters = covered_fragments = cue_overlaps_trimmed = 0
     if config.level == 1:
-        simplified_events, text_effect_sequences_frozen = flatten_text_effect_sequences(
+        simplified_events, sequence_frames = flatten_text_effect_sequences(
             simplified_events, visible_map, styles, animated_sources,
             source_events=parsed_by_line,font_metrics=font_metrics, font_report=font_report)
+        text_effect_sequences_frozen += sequence_frames
         full_lines = remove_letters_over_full_lines(
             simplified_events,visible_map,parsed_by_line,collect_rows=True,font_metrics=font_metrics)
         simplified_events,overlaid_letters = full_lines.events,full_lines.removed_count
         authored_rows = full_lines.row_additions
+        current = {e.source_index:e for e in simplified_events}
+        authored_rows = authored_rows+[dataclass_replace(row,base=current[row.base.source_index])
+            for row in source_rows if row.phase_core is not None and
+            row.base.source_index in current and
+            visible_map.get(row.base.source_index) == OVERRIDE_RE.sub('',row.base.text)]
         if full_lines.source_updates:
             successors = {id(parsed_by_line[index]):event for index,event in full_lines.source_updates.items()}
             parsed_by_line.update(full_lines.source_updates)
@@ -13327,7 +14087,7 @@ def _consolidate_text_events(
         covered = remove_covered_fragment_effects(
             simplified_events, visible_map, row_evidence+authored_rows, animated_sources,parsed_by_line,font_metrics)
         simplified_events,row_evidence = covered.events,covered.rows
-        covered_fragments = covered.removed_effects+source_effects
+        covered_fragments = covered.removed_effects+source_effects+word_echoes
         cue_families = collect_faded_cue_families(
             simplified_events,row_evidence,timing_sources)
         simplified_events, cue_overlaps_trimmed = trim_faded_cue_overlaps(
@@ -15621,6 +16381,60 @@ def _print_support_report(
               f"(limit {config.scroll_concurrency_limit}; 0 disables removal)")
 
 
+def normalize_shadow_lettering(events: list[Event]) -> tuple[list[Event], int]:
+    """Replace static nearly coincident shadow lettering with primary paint.
+
+    Run only after caption support proofs have finished. A foreground at
+    alpha FE/FF contributes at most 1/255 opacity; discard that faint copy
+    using the existing faint-paint convention. Preserve the actual shadow
+    colour, alpha and anchor. Ordinary shadows, strokes and multiple text
+    spans are outside this normalization.
+    """
+    output, count = [], 0
+    for event in events:
+        state = event.state
+        if (event.kind != 'Dialogue' or state.get('p', 0) or
+                state.get('1a', 0) < 254 or state.get('4a', 0) >= 254 or
+                inline_layout_key(event)):
+            output.append(event)
+            continue
+        obj = static_object_key(event, event.styles)
+        if obj is None or len(obj[-1]) != 1 or obj[-1][0][1]:
+            output.append(event)
+            continue
+        state = dict(obj[-1][0][0].formatting)
+        pos = state.get('pos')
+        dx, dy = (state.get(k, state.get('shad', 0)) for k in ('xshad', 'yshad'))
+        color = str(state.get('4c', '000000')).upper()
+        if (state.get('p', 0) or state.get('1a', 0) < 254 or
+                state.get('4a', 0) >= 254 or state.get('borderstyle', 1) != 1 or
+                pos is None or 'clip' in state or 'iclip' in state or
+                str(state.get('fn', '')).startswith('@') or
+                any(state.get(k, 0) for k in ('frz', 'frx', 'fry', 'fax', 'fay', 'blur', 'be')) or
+                any(state.get(k, state.get('bord', 0)) != 0 for k in ('xbord', 'ybord')) or
+                not all(math.isfinite(v) for v in (*pos, dx, dy, event.unit)) or
+                not 0 < max(abs(dx), abs(dy)) <= .05 * event.unit or
+                not re.fullmatch(r'[0-9A-F]{6}', color)):
+            output.append(event)
+            continue
+        paint = {'1c': color, '1a': state.get('4a', 0), '4a': 255,
+                 'shad': 0, 'xshad': 0, 'yshad': 0}
+        tags = ''.join(render_tag(k, v) for k, v in paint.items())
+        # The proved single text span has no later formatting. Append the
+        # replacement after all leading overrides so resets/global alpha
+        # cannot override the transferred paint. Keep authored text verbatim.
+        boundary = re.match(r'(?:\{[^}]*\})*', event.text).end()
+        # ASS uses the first position tag, so replace that authored tag
+        # instead of appending another one. Preserve subpixel precision.
+        position = r'\pos('+','.join(format(v, '.15g') for v in (pos[0]+dx, pos[1]+dy))+')'
+        prefix = re.sub(r'\\pos\([^)]*\)', lambda _: position,
+                        event.text[:boundary], count=1, flags=re.I)
+        text = prefix+'{'+tags+'}'+event.text[boundary:]
+        output.append(replace_event(event, text=text))
+        count += 1
+    return output, count
+
+
 def simplify_ass(
     path: Path, output: Path, config: SimplifyConfig, *, font_metrics: FontMetrics | None=None,
     font_report: FontProcessingReport | None=None, outline_matcher: FontOutlineMatcher | None=None,
@@ -15649,8 +16463,10 @@ def simplify_ass(
     text_result = _process_text_and_vectors(text_source,config,font_metrics, font_report=font_report, outline_matcher=outline_matcher)
     captions = _normalize_text_result(text_source,text_result)
     supports,scroll_report = _reconstruct_caption_backdrops(source,captions,config,font_metrics)
-    write_subtitle_document(output,captions,supports.events,final_newline=True)
+    output_events, shadow_lettering = normalize_shadow_lettering(supports.events)
+    write_subtitle_document(output,captions,output_events,final_newline=True)
     stats = _summarize_caption_supports(text_result.statistics,supports,font_metrics)
+    stats['shadow_lettering_normalized'] = shadow_lettering
     _print_support_report(supports,scroll_report,config)
     return stats
 

@@ -1,0 +1,172 @@
+[
+  {
+    "helper": "_canonicalize_mask_contours",
+    "source_lines": [
+      14,
+      31
+    ],
+    "captured_names_reversibly_mapped": true,
+    "saved_body_ast_sha256": "4e8e1fe0bf5cb0f6db9adf39be7de403cfda2390d0ae77a660ad54d20decffef",
+    "saved_helper_matches_extracted_algorithm": true
+  },
+  {
+    "helper": "_prepare_masked_glyphs",
+    "source_lines": [
+      33,
+      48
+    ],
+    "captured_names_reversibly_mapped": true,
+    "saved_body_ast_sha256": "e622772d43d667be66667c8ede6a15a84c19df23633348181195fd0221e847fb",
+    "saved_helper_matches_extracted_algorithm": true
+  },
+  {
+    "helper": "_index_masked_texture_peers",
+    "source_lines": [
+      53,
+      85
+    ],
+    "captured_names_reversibly_mapped": true,
+    "saved_body_ast_sha256": "1da18952682bf0a7e4559c7349c8ea5251f9a1261a3e9e1489421b3f9f472327",
+    "saved_helper_matches_extracted_algorithm": true
+  },
+  {
+    "helper": "_parse_glyph_mask",
+    "source_lines": [
+      91,
+      116
+    ],
+    "captured_names_reversibly_mapped": true,
+    "saved_body_ast_sha256": "b65e070c8fcf35bdb400cd9a3ddbc184202863cd8e419ebea47a9250dcdc2b0e",
+    "saved_helper_matches_extracted_algorithm": true
+  },
+  {
+    "helper": "_match_masked_shadow_texture",
+    "source_lines": [
+      117,
+      139
+    ],
+    "captured_names_reversibly_mapped": true,
+    "saved_body_ast_sha256": "b67efaefb92a904f96f15ae0022a66f1c8507bcc93b23924d1c2a4e8605f2e8d",
+    "saved_helper_matches_extracted_algorithm": true
+  },
+  {
+    "helper": "_masked_glyph_candidates",
+    "source_lines": [
+      140,
+      163
+    ],
+    "captured_names_reversibly_mapped": true,
+    "saved_body_ast_sha256": "4458ae8c6fd3acc09e7b22d44b47e906ef9cd75a10e0bc41b2ff128a2ccac6d8",
+    "saved_helper_matches_extracted_algorithm": true
+  },
+  {
+    "helper": "_masked_placement_matches",
+    "source_lines": [
+      166,
+      171
+    ],
+    "captured_names_reversibly_mapped": true,
+    "saved_body_ast_sha256": "299337669a8abab2c3c2f70afb8d1e772c1671c5e0650b10672d5f439459cd54",
+    "saved_helper_matches_extracted_algorithm": true
+  },
+  {
+    "helper": "_same_masked_text_copy",
+    "source_lines": [
+      164,
+      181
+    ],
+    "captured_names_reversibly_mapped": true,
+    "saved_body_ast_sha256": "d03e184079ce16c46f8a2e96162189577377481dc2f1c7a802d90721fbda91cf",
+    "saved_helper_matches_extracted_algorithm": true
+  },
+  {
+    "helper": "_masked_glyph_outline",
+    "source_lines": [
+      182,
+      219
+    ],
+    "captured_names_reversibly_mapped": true,
+    "saved_body_ast_sha256": "755e5515cb80c614dc1e2309e2c255a0db6ae85d56bf6f925faab4b6b4c2e49e",
+    "saved_helper_matches_extracted_algorithm": true
+  },
+  {
+    "helper": "_prepare_masked_outline_model",
+    "source_lines": [
+      225,
+      233
+    ],
+    "captured_names_reversibly_mapped": true,
+    "saved_body_ast_sha256": "401de2b5c93083bf45df90a4c34a50e8db010845abc86fa8d82a16dd89836d76",
+    "saved_helper_matches_extracted_algorithm": true
+  },
+  {
+    "helper": "_fit_masked_outline_segment",
+    "source_lines": [
+      235,
+      257
+    ],
+    "captured_names_reversibly_mapped": true,
+    "saved_body_ast_sha256": "1f8d5893b40c985726a3edca6388a883847ed4993abf3877252afc5382009c8d",
+    "saved_helper_matches_extracted_algorithm": true
+  },
+  {
+    "helper": "_match_masked_glyph_contours",
+    "source_lines": [
+      220,
+      262
+    ],
+    "captured_names_reversibly_mapped": true,
+    "saved_body_ast_sha256": "1c31388120426e627c2956a08001880104f89fae61ca960c08aa88790770de6d",
+    "saved_helper_matches_extracted_algorithm": true
+  },
+  {
+    "helper": "_match_masked_glyph_bases",
+    "source_lines": [
+      161,
+      262
+    ],
+    "captured_names_reversibly_mapped": true,
+    "saved_body_ast_sha256": "22660f4f04dff59dab9ab3457e82c9b9c7856ee1c600b0334dc69892ab78c998",
+    "saved_helper_matches_extracted_algorithm": true
+  },
+  {
+    "helper": "_remove_masked_texture_companions",
+    "source_lines": [
+      269,
+      283
+    ],
+    "captured_names_reversibly_mapped": true,
+    "saved_body_ast_sha256": "7b2350c7fd30688ae8704803da7aede8588c7225655a7c60c4825ca6d36077bb",
+    "saved_helper_matches_extracted_algorithm": true
+  },
+  {
+    "helper": "_apply_masked_glyph_proof",
+    "source_lines": [
+      263,
+      283
+    ],
+    "captured_names_reversibly_mapped": true,
+    "saved_body_ast_sha256": "79aa575ff41fdf54f751613861df4f50e59bbf2e5416ef9f1d754378ca368dc3",
+    "saved_helper_matches_extracted_algorithm": true
+  },
+  {
+    "helper": "_follow_proven_shadow_mask_phases",
+    "source_lines": [
+      284,
+      295
+    ],
+    "captured_names_reversibly_mapped": true,
+    "saved_body_ast_sha256": "f7c9a3cfcc193634dedcac8dec695f2089e06b29fc1ab1f222943ad28c602930",
+    "saved_helper_matches_extracted_algorithm": true
+  },
+  {
+    "helper": "_close_masked_glyph_fonts",
+    "source_lines": [
+      296,
+      297
+    ],
+    "captured_names_reversibly_mapped": true,
+    "saved_body_ast_sha256": "2ac782a787316c300dbc77c7a87351eae9350c339370656463e495d4a45cf5a6",
+    "saved_helper_matches_extracted_algorithm": true
+  }
+]
