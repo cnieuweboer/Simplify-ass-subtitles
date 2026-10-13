@@ -1,5 +1,9 @@
 # Final caption/backdrop layers — v183
 
+This document records the v183 correction and historical validation.
+[CAPTION_BACKGROUND_OWNERSHIP.md](CAPTION_BACKGROUND_OWNERSHIP.md) describes its
+v188 consolidation and explicit ownership handoff.
+
 The first conversion of Sword S01E03 hides “(Cat Beastmen Style)” beneath its
 paper panel. Sword S01E02 track 5 similarly hides the smaller VIT/MAG sign text.
 Earlier layer checks run before final support reconstruction and nearly

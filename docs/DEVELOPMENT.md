@@ -204,3 +204,7 @@ static-phase merger and explicit reconstruction/support handoffs (v186).
 See [REDUNDANT_TEXT_COPIES.md](REDUNDANT_TEXT_COPIES.md) for strict redundant-record
 matching shared between early and final stages, separate representative sign
 paint selection, and the reconstruction handoff (v187).
+
+See [CAPTION_BACKGROUND_OWNERSHIP.md](CAPTION_BACKGROUND_OWNERSHIP.md) for shared
+measured containment, explicit enclosing-panel ownership and its final-layer
+handoff (v188).

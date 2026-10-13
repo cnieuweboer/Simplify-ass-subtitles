@@ -170,3 +170,15 @@ explicit updates. The pipeline applies them; shared-interval rounds retain
 pending generated text in a private overlay. The unused SubtitleDocument.raw
 member is removed. FINAL_STRUCTURAL_REVIEW.md records final contracts and
 verification. Separate API and pass-local index candidates remain deferred.
+
+## Caption/background handoff — v188
+
+`CaptionSupportResult.ownership` owns its list of frozen
+`CaptionPanelOwnership` bindings. Each binding borrows its panel and caption
+records, catalogs, caches and original-contour evidence read-only. Frozen bindings
+do not make those borrowed Event objects immutable. Final layer edits use
+successors and return new proof bindings. A hidden panel can survive in proof
+context after its output fill is removed, preserving the distinction between
+the owned background and an independent card. Rebuilt support associations do
+not authorize new ownership. These proofs live only in the support result;
+serialization does not persist them or add role flags to Event/font resources.

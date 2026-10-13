@@ -98,3 +98,15 @@ whole-record matching and coverage replace the two-character proxy; they do not
 claim that a fragment has become a complete line. Final cleanup still selects no
 new paint. See REDUNDANT_TEXT_COPIES.md. Caption/background ownership and final
 static-tag compaction remain separate releases.
+
+## Caption/background ownership follow-up — v188
+
+Support selection and final layering share measured current/original-contour
+containment. Explicit enclosing relationships survive shadow normalization,
+layer successors and hidden-fill removal. Reassociation cannot turn adjacency
+or an independent masking card into ownership. Redundant-fill removal has its
+own coverage proof. Earlier authored source-order restoration remains distinct
+because an anchor/source-order proof is not measured whole-caption enclosure;
+legacy arbitrary-vector occlusion is not caption ownership either. Admission
+bounds and established corpus behavior are preserved. See
+[CAPTION_BACKGROUND_OWNERSHIP.md](CAPTION_BACKGROUND_OWNERSHIP.md).

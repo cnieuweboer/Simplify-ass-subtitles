@@ -31,13 +31,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 def fixture(*, upper_tags='', upper_end=4, upper_style='Default', upper_actor='owner',
             upper_layer=1,
             upper_path='m 0 0 l 300 0 300 150 0 150', upper_pos=(100,100), low_width=300,
-            lower_tags='', shadow=False):
+            lower_tags='', shadow=False, fontsize=40):
     def row(layer,tags,text,style='Default',actor='owner',end=4):
         return f'Dialogue: {layer},0:00:01.00,{s.format_time(end)},{style},{actor},0,0,0,,{{{tags}}}{text}\n'
     rectangle=rf'\an7\pos(100,100)\p1\bord0\shad0{lower_tags}'
     upper=rf'\an7\pos({upper_pos[0]},{upper_pos[1]})\p1\bord0\shad0{upper_tags}'
     small=r'\pos(120,180)'+(r'\1a&HFE&\4a&H00&\4c&H123456&\xshad-.01' if shadow else '')
-    doc=s._resolve_document_state(s.parse_subtitle_document(HEADER+
+    doc=s._resolve_document_state(s.parse_subtitle_document(HEADER.replace('Volkhov,40,',f'Volkhov,{fontsize},')+
         row(0,rectangle,f'm 0 0 l {low_width} 0 {low_width} 150 0 150')+
         row(upper_layer,upper,upper_path,upper_style,upper_actor,upper_end)+
         row(2,r'\pos(120,120)','Top')+row(0,small,'Small')))
@@ -104,6 +104,93 @@ check('different overlaid panel remains a mask even with full glyph containment'
 again=s.settle_caption_backdrop_layers(out,out.events,metrics)
 check('masked caption does not acquire a new panel owner on another call',again.events[-1].layer=='0')
 
+# Selection ownership is separate from general caption/support associations.
+base,evs=fixture(shadow=True)
+proof=s._caption_panel_ownership(base.kept,base.associated,metrics)
+base=s.dataclass_replace(base,ownership=proof)
+before=deepcopy(base)
+out=s.settle_caption_backdrop_layers(base,evs,metrics)
+small=next(e for e in out.events if s.OVERRIDE_RE.sub('',e.text)=='Small')
+relation=next(r for r in out.ownership if r.caption is small)
+check('removed fill retains original panel ownership evidence',relation.panel is base.kept[0] and relation.panel not in out.kept)
+check('ownership follows the promoted caption successor',relation.caption.layer=='2')
+check('proof lists and input relationships remain borrowed',[vars(r.panel) for r in base.ownership]==[vars(r.panel) for r in before.ownership] and base.ownership==before.ownership)
+check('explicit ownership gives stable final layers',
+      [e.fields() for e in s.settle_caption_backdrop_layers(out,out.events,metrics).events]==[e.fields() for e in out.events])
+base,evs=fixture()
+base=s.dataclass_replace(base,ownership=[])
+out=s.settle_caption_backdrop_layers(base,evs,metrics)
+check('mere reassociation cannot create a background owner',out.events==evs and out.kept==base.kept and out.ownership==[])
+base,evs=fixture(upper_path='m 0 0 l 400 0 400 150 0 150')
+base=s.dataclass_replace(base,ownership=s._caption_panel_ownership(base.kept,base.associated,metrics))
+for repeat in range(3):
+    out=s.settle_caption_backdrop_layers(base,evs,metrics)
+    check('independent card preserves original ownership '+str(repeat),out.events[-1].layer=='0' and
+          next(r for r in out.ownership if r.caption is out.events[-1]).panel is base.ownership[0].panel)
+    base,evs=out,out.events
+for name,kwargs,expected in [
+    ('same footprint different paint',dict(upper_tags=r'\1c&H123456&'), '2'),
+    ('subpixel panel offset',dict(upper_pos=(101,100)), '2'),
+    ('rounding bound panel offset',dict(upper_pos=(102,100)), '2'),
+    ('independent shifted card',dict(upper_pos=(103,100)), '0'),
+    ('different polygon enclosing ink',dict(upper_path='m 0 0 l 300 0 320 150 0 150'), '0'),
+]:
+    base,evs=fixture(**kwargs)
+    base=s.dataclass_replace(base,ownership=s._caption_panel_ownership(base.kept,base.associated,metrics))
+    out=s.settle_caption_backdrop_layers(base,evs,metrics)
+    check(name+': footprint ownership determines visibility',out.events[-1].layer==expected)
+base,evs=fixture()
+# A simplified rectangle cannot prove ink outside its original source contour.
+invalid=s.dataclass_replace(base.kept[0],evidence=s.EventEvidence(((100,100),(140,100),(140,130),(100,130))))
+box=s.caption_bounds(base.events[-1],metrics);points=s.coverage_geometry(invalid)[0]
+check('original contour bounds shared by support and final proof',not s.caption_panel_contains(invalid,points,base.events[-1],box))
+check('original contour excludes enclosing ownership',not s._caption_panel_ownership([invalid],{invalid.source_index:[base.events[-1]]},metrics))
+# Retention needs positive overlap, while promotion needs the complete lifetime.
+base,evs=fixture(upper_end=2)
+proof=s._caption_panel_ownership(base.kept,base.associated,metrics)
+check('partial support can own only its occupied interval',any(r.panel is base.kept[1] for r in proof))
+out=s.settle_caption_backdrop_layers(s.dataclass_replace(base,ownership=proof),evs,metrics)
+check('partial support ownership does not authorize full-lifetime promotion',out.events[-1].layer=='0')
+
+for name,options in [('lower blur',dict(lower_tags=r'\blur6')),('upper blur',dict(upper_tags=r'\blur6')),
+                     ('lower edge blur',dict(lower_tags=r'\be1')),('upper edge blur',dict(upper_tags=r'\be1'))]:
+    base,evs=fixture(**options)
+    out=s.settle_caption_backdrop_layers(base,evs,metrics)
+    check(name+': unsupported fill coverage preserves both panels',len(out.kept)==2)
+for size in (24,40,48):
+    base,evs=fixture(fontsize=size)
+    out=s.settle_caption_backdrop_layers(base,evs,metrics)
+    check('font size '+str(size)+': measured ownership generalizes',out.events[-1].layer=='2')
+base,evs=fixture(upper_path='m 0 0 l 300 0 320 150 0 150')
+low=s.replace_event(base.kept[0],text=base.kept[1].text)
+base=s.dataclass_replace(base,events=[low,*base.events[1:]],kept=[low,base.kept[1]])
+out=s.settle_caption_backdrop_layers(base,base.events,metrics)
+check('identical nonrectangular footprint retains caption ownership',out.events[-1].layer=='2')
+check('nonrectangular fill not removed by rectangular coverage proof',len(out.kept)==2)
+
+# A same-layer card painted AFTER text is an intentional mask. Reassociation
+# used to let that card acquire the text on the next final-layer invocation.
+base,evs=fixture(upper_layer=0,upper_path='m 0 0 l 400 0 400 150 0 150')
+ordered=[evs[0],evs[-1],evs[1],evs[2]]
+base=s.dataclass_replace(base,events=ordered,ownership=s._caption_panel_ownership(base.kept,base.associated,metrics))
+original_owner=base.kept[0]
+for repeat in range(3):
+    out=s.settle_caption_backdrop_layers(base,ordered,metrics)
+    small=next(e for e in out.events if s.OVERRIDE_RE.sub('',e.text)=='Small')
+    check('later same-layer card keeps text masked '+str(repeat),small.layer=='0')
+    check('later same-layer card never adopts the text '+str(repeat),
+          next(r for r in out.ownership if r.caption is small).panel is original_owner)
+    base,ordered=out,out.events
+spec187=importlib.util.spec_from_file_location('caption_owner_v187',ROOT/'tests/references/simplify_ass_v187.py')
+reference187=importlib.util.module_from_spec(spec187);sys.modules[spec187.name]=reference187;spec187.loader.exec_module(reference187)
+oldbase=reference187.CaptionSupportResult([evs[0],evs[-1],evs[1],evs[2]],
+    [evs[0],evs[1]],[],{evs[0].source_index:[evs[-1]],evs[1].source_index:[evs[2]]},set(),{'drawing_duplicates_removed':0})
+first=reference187.settle_caption_backdrop_layers(oldbase,oldbase.events,metrics)
+second=reference187.settle_caption_backdrop_layers(first,first.events,metrics)
+check('v187 reproduction: reassociation exposes independent masked text',
+      next(e for e in first.events if s.OVERRIDE_RE.sub('',e.text)=='Small').layer=='0' and
+      next(e for e in second.events if s.OVERRIDE_RE.sub('',e.text)=='Small').layer=='1')
+
 spec=importlib.util.spec_from_file_location('caption_layer_v182',ROOT/'tests/references/simplify_ass_v182.py')
 reference=importlib.util.module_from_spec(spec);sys.modules[spec.name]=reference;spec.loader.exec_module(reference)
 reference_metrics=reference.FontMetrics([ROOT/'fonts'])
@@ -112,12 +199,17 @@ for name,at,style,text in [('Sword-S01E03',121.3,'ZahuSigns','(Cat Beastmen Styl
     source=ROOT/'test-data/corpus'/(name+'.original.ass');source_hash=hashlib.sha256(source.read_bytes()).hexdigest()
     paths=[DEST/(name+f'.pass{i}.ass') for i in (1,2,3)]
     current=source
+    captured_supports=[]
+    rebuild=s._rebuild_caption_supports
+    def capture_supports(*args,**kwargs):
+        result=rebuild(*args,**kwargs);captured_supports.append(result);return result
     for path in paths:
         report=s.FontProcessingReport()
-        with contextlib.redirect_stdout(io.StringIO()):
+        with contextlib.redirect_stdout(io.StringIO()),patch.object(s,'_rebuild_caption_supports',capture_supports):
             s.simplify_ass(current,path,s.SimplifyConfig(),font_metrics=metrics,font_report=report)
         check(name+': all required fonts available '+path.name,not report.missing_families)
         current=path
+    check(name+': production carries enclosing ownership before final paint',all(r.ownership is not None and r.ownership for r in captured_supports))
     captions=[]
     for path in paths:
         es=s.load_subtitle_events(path)[1]
