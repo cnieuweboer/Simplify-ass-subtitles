@@ -57,9 +57,18 @@ python remove_subtitles.py
 python remove_subtitles.py -i media -o cleaned --recursive
 ```
 
-At manual selection, enter `1,3` to remove those subtitles or `k 1,3` to keep
-those subtitles and remove all others. Blank input cancels. Files with none
-of the selected keep tracks have all subtitles removed; review the preview.
+At manual selection:
+
+```text
+1,3         Remove groups 1 and 3
+jp          Remove all Japanese subtitles (ja/jpn also work)
+k eng, ger  Keep only English and German subtitles
+k eng, 3    Keep all English subtitles and group 3
+```
+
+Language codes select all names and formats; `eng` includes regional tags such
+as `en-US`. Blank input cancels. Files with none of the selected keep tracks
+have all subtitles removed; review the preview.
 
 Automatic removal requires a matching original of the same language in each
 MKV. At the removal preview, enter `m` to switch to manual selection.

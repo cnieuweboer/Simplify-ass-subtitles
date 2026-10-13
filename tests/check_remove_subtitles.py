@@ -82,6 +82,51 @@ class RemovalChecks(unittest.TestCase):
         self.assertIn("KEEP ID 3", output.getvalue())
         self.assertIn("REMOVE ID 4", output.getvalue())
 
+    def test_language_aliases_select_all_names_formats_and_regions(self):
+        catalog = [remove.subtitle_key(t) for t in (
+            track(1, "English", "en", "S_TEXT/ASS"),
+            track(2, "Signs", "eng", "S_TEXT/UTF8"),
+            track(3, "English US", "en-US"),
+            track(4, "German", "de"),
+            track(5, "German regional", "de-DE", "S_TEXT/UTF8"),
+            track(6, "German legacy", "ger"),
+            track(7, "Japanese", "ja"),
+            track(8, "Japanese legacy", "jpn", "S_TEXT/UTF8"),
+        )]
+        for answer in ("k eng, ger", "K EN DEU", "k en,de"):
+            self.assertEqual(remove.parse_selection(answer, catalog), (set(catalog[:6]), True))
+        for answer in ("jp", "ja", "JPN"):
+            self.assertEqual(remove.parse_selection(answer, catalog), (set(catalog[6:]), False))
+        self.assertEqual(remove.parse_selection("eng-US", catalog), ({catalog[2]}, False))
+        self.assertEqual(remove.parse_selection("k eng, 4", catalog), (set(catalog[:4]), True))
+
+    def test_other_iso_aliases_and_invalid_language_selections(self):
+        catalog = [remove.subtitle_key(t) for t in (
+            track(1, "French", "fr"), track(2, "Chinese", "zh-Hant"), track(3, "Dutch", "nl"))]
+        self.assertEqual(remove.parse_selection("fre, chi dut", catalog), (set(catalog), False))
+        for answer in ("eng", "xyz", "k eng", "fr;nl", "k", "0", "k fr,"):
+            with self.subTest(answer=answer), self.assertRaises(ValueError):
+                remove.parse_selection(answer, catalog)
+
+    def test_language_keep_removes_all_subtitles_in_nonmatching_episode(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            first, second = root / "one.mkv", root / "two.mkv"
+            first.touch()
+            second.touch()
+            english = track(1, "Signs", "en")
+            japanese = track(2, "Japanese", "ja")
+            infos = [{"tracks": [english, japanese]}, {"tracks": [japanese]}]
+            with patch.object(remove.shutil, "which", return_value="mkvmerge"), \
+                 patch.object(remove, "identify", side_effect=infos), \
+                 patch.object(remove, "remux", return_value=True) as remux, \
+                 patch("builtins.input", side_effect=["k eng", "y"]), \
+                 patch("sys.stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(remove.main([folder]), 0)
+            self.assertEqual(len(remux.call_args_list), 2)
+            self.assertEqual([call.args[3] for call in remux.call_args_list], [{2}, {2}])
+            self.assertIn("ALL subtitles will be removed", output.getvalue())
+
     def test_recursion_excludes_output_trees(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
