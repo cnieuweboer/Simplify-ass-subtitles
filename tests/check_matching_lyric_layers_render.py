@@ -128,7 +128,7 @@ def definitions(path):
     return {node.name: node for node in executable_ast(ast.parse(path.read_text())).body
             if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
 old = definitions(ROOT / 'tests/references/simplify_ass_v181.py')
-new = definitions(ROOT / 'simplify_ass.py')
+new = definitions(ROOT / 'tests/references/simplify_ass_v182.py')
 check('no unrelated runtime definitions added or removed', old.keys() == new.keys())
 check('runtime changes limited to matching pass and font dependency wiring',
       {name for name in old if ast.dump(old[name]) != ast.dump(new[name])} ==

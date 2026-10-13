@@ -1,5 +1,9 @@
 # Final shadow lettering normalization — v174
 
+For the v183 follow-up that settles caption layers after this normalization,
+see [CAPTION_BACKDROP_LAYERS.md](CAPTION_BACKDROP_LAYERS.md). The historical
+normalizer and its paint/position selection remain unchanged.
+
 The Sword S01E01 progressive skill scene uses an almost transparent primary
 glyph (ASS alpha FE) and a practically coincident opaque shadow for its visible
 letters. The simplified output retained both components. At 3:59 libass emitted

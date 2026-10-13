@@ -4,6 +4,10 @@ This investigation compares running the converter once and running it again on
 its own output. It does not compare the extraction and cached-input test wrappers.
 Production code is unchanged.
 
+The first follow-up release, v183, implements final caption/backdrop layering;
+see [CAPTION_BACKDROP_LAYERS.md](CAPTION_BACKDROP_LAYERS.md). The observations
+below describe the original v182 investigation.
+
 ## What the second conversion improves
 
 All 22 lyric-layer fixtures and nine full corpus outputs were converted again,

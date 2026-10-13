@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.12.182",
+  "version": "2026.10.13.183",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -323,6 +323,11 @@
     },
     {
       "script": "tests/check_matching_lyric_layers_render.py",
+      "status": "current",
+      "category": "render"
+    },
+    {
+      "script": "tests/check_caption_backdrop_layers_render.py",
       "status": "current",
       "category": "render"
     }

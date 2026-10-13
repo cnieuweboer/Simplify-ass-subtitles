@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.12.182"
+__version__ = "2026.10.13.183"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -16575,6 +16575,134 @@ def _reconstruct_caption_backdrops(
     return supports,scroll_report
 
 
+def settle_caption_backdrop_layers(
+    supports: CaptionSupportResult, events: list[Event], font_metrics: FontMetrics | None,
+) -> CaptionSupportResult:
+    """Settle final opaque captions above already proved local backgrounds.
+
+    Late shadow normalization can make a caption readable after the text-stage
+    layer proof. Only retained enclosing panels, full-lifetime exact-font
+    coverage and identical style/actor authorize promotion. Adjacent decorations,
+    fullscreen fills and unmeasured supports keep their source order.
+    """
+    if font_metrics is None or not font_metrics.available:
+        return dataclass_replace(supports, events=events)
+
+    def contains(panel: Event, points: list, caption: Event, box: tuple | None) -> bool:
+        return (box is not None and panel.style == caption.style and panel.name == caption.name and
+                polygon_covers_box(points, box) and
+                polygon_covers_box(list(panel.evidence.original_contour_points or points), box))
+
+    panels = []
+    for panel in supports.kept:
+        geometry = coverage_geometry(panel)
+        if (geometry is None or not geometry[2] or is_fullscreen_background(panel) or
+                static_object_key(panel, panel.styles) is None):
+            continue
+        points = geometry[0]
+        # A shape must already back a measured caption. An arrow associated
+        # through adjacency alone cannot become a background for other text.
+        if any(any(c.isalnum() for c in OVERRIDE_RE.sub('', caption.text)) and
+               caption.layer.lstrip('-').isdigit() and int(panel.layer) <= int(caption.layer) and
+               contains(panel, points, caption, caption_bounds(caption, font_metrics))
+               for caption in supports.associated.get(panel.source_index, ())):
+            panels.append((panel, points))
+    if not panels:
+        return dataclass_replace(supports, events=events)
+    families = {}
+    owners = {}
+    for panel, points in panels:
+        families.setdefault((panel.style, panel.name), []).append((panel, points))
+        normalized,_ = normalize_shadow_lettering(list(supports.associated.get(panel.source_index, ())))
+        for caption in normalized:
+            owners.setdefault(tuple(caption.fields()), []).append((panel, points))
+
+    def rectangle(points):
+        xs, ys = {x for x,y in points}, {y for x,y in points}
+        return len(xs) == len(ys) == 2 and set(points) == {(x,y) for x in xs for y in ys}
+
+    def same_panel(panel, points, owner, owner_points):
+        if panel is owner or points == owner_points:
+            return True
+        if not rectangle(points) or not rectangle(owner_points):
+            return False
+        # Stroke expansion and subpixel normalization can slightly alter the
+        # same rectangle's footprint. Different overlaid cards are masks,
+        # even when both contain this caption's glyph box.
+        tolerance = max(2., 2*min(panel.unit, owner.unit))
+        bounds = lambda ps: (min(x for x,y in ps), min(y for x,y in ps),
+                             max(x for x,y in ps), max(y for x,y in ps))
+        return all(abs(a-b) <= tolerance for a,b in zip(bounds(points),bounds(owner_points)))
+
+    settled = []
+    drawing_order = {tuple(event.fields()): index for index,event in enumerate(events) if event.state.get('p', 0)}
+    for index,event in enumerate(events):
+        if (event.kind != 'Dialogue' or event.state.get('p', 0) or
+                not event.layer.lstrip('-').isdigit() or event.state.get('1a', 0) != 0 or
+                (event.style, event.name) not in families or
+                tuple(event.fields()) not in owners or
+                not any(c.isalnum() for c in OVERRIDE_RE.sub('', event.text)) or
+                get_pos(event.text) is None or static_object_key(event, event.styles) is None):
+            settled.append(event)
+            continue
+        box = caption_bounds(event, font_metrics)
+        layer = int(event.layer)
+        # Preserve an independent card/mask already painted above this text.
+        # Promoting merely to its layer can also expose a later text record.
+        if box is not None and any(
+            (int(panel.layer), drawing_order.get(tuple(panel.fields()), -1)) > (layer, index) and
+            min(panel.end_s,event.end_s) > max(panel.start_s,event.start_s) and
+            (not any(same_panel(panel,points,owner,owner_points)
+                     for owner,owner_points in owners[tuple(event.fields())]) or
+             panel.start_s > event.start_s+.001 or panel.end_s < event.end_s-.001) and
+            min(x for x,y in points) < box[2] and max(x for x,y in points) > box[0] and
+            min(y for x,y in points) < box[3] and max(y for x,y in points) > box[1]
+            for panel,points in families[event.style,event.name]):
+            settled.append(event)
+            continue
+        for panel, points in families[event.style, event.name]:
+            if (panel.start_s <= event.start_s + .001 and panel.end_s >= event.end_s - .001 and
+                    any(same_panel(panel, points, owner, owner_points)
+                        for owner, owner_points in owners[tuple(event.fields())]) and
+                    contains(panel, points, event, box)):
+                layer = max(layer, int(panel.layer) + 1)
+        settled.append(replace_event(event, layer=str(layer)) if layer != int(event.layer) else event)
+
+    # Remove a lower rectangular support only when a retained opaque rectangle
+    # covers all of its fill for its entire lifetime. Partial masks remain.
+    hidden = set()
+    for lower, low_points in panels:
+        if not rectangle(low_points) or any(lower.state.get(k, lower.state.get(base, 0)) != 0
+                for k,base in (('xbord','bord'),('ybord','bord'),('xshad','shad'),('yshad','shad'))):
+            continue
+        for upper, up_points in panels:
+            if (int(upper.layer) <= int(lower.layer) or upper.style != lower.style or upper.name != lower.name or
+                    upper.start_s > lower.start_s or upper.end_s < lower.end_s or not rectangle(up_points)):
+                continue
+            if (min(x for x,y in up_points) <= min(x for x,y in low_points) and
+                    max(x for x,y in up_points) >= max(x for x,y in low_points) and
+                    min(y for x,y in up_points) <= min(y for x,y in low_points) and
+                    max(y for x,y in up_points) >= max(y for x,y in low_points)):
+                hidden.add(tuple(lower.fields()))
+                break
+    kept = [panel for panel in supports.kept if tuple(panel.fields()) not in hidden]
+    settled = [event for event in settled if not (event.state.get('p', 0) and tuple(event.fields()) in hidden)]
+    associated = {panel.source_index: [event for event in settled
+        if event.kind == 'Dialogue' and not event.state.get('p', 0) and
+        event.layer.lstrip('-').isdigit() and int(panel.layer) <= int(event.layer) and
+        event.style == panel.style and event.name == panel.name and
+        min(event.end_s, panel.end_s) > max(event.start_s, panel.start_s) and
+        contains(panel, geometry[0], event, caption_bounds(event, font_metrics))]
+        for panel in kept if (geometry := coverage_geometry(panel)) is not None}
+    # Preserve associations for non-enclosing arrows/fullscreen/fallback shapes.
+    for panel in kept:
+        if not associated.get(panel.source_index):
+            associated[panel.source_index] = list(supports.associated.get(panel.source_index, ()))
+    counts = dict(supports.counts)
+    counts['drawing_duplicates_removed'] += len(supports.kept) - len(kept)
+    return dataclass_replace(supports, events=settled, kept=kept, associated=associated, counts=counts)
+
+
 def _summarize_caption_supports(
     stats: dict[str,int],
     supports: CaptionSupportResult,
@@ -16802,6 +16930,8 @@ def simplify_ass(
     captions = _normalize_text_result(text_source,text_result)
     supports,scroll_report = _reconstruct_caption_backdrops(source,captions,config,font_metrics)
     output_events, shadow_lettering = normalize_shadow_lettering(supports.events)
+    supports = settle_caption_backdrop_layers(supports, output_events, font_metrics)
+    output_events = supports.events
     output_events, normalized_colors = normalize_near_text_colors(output_events)
     write_subtitle_document(output,captions,output_events,final_newline=True)
     stats = _summarize_caption_supports(text_result.statistics,supports,font_metrics)
