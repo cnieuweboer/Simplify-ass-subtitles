@@ -4,7 +4,7 @@ Simplify ASS/SSA subtitles and manage subtitle tracks and fonts in MKV files.
 
 | Script | Task |
 | --- | --- |
-| `simplify_ass.bat` | Simplify embedded ASS/SSA subtitles |
+| `simplify_subtitles.py` | Simplify embedded ASS/SSA subtitles |
 | `subtitle_flags.py` | Set or clear default and forced flags **in place** |
 | `remove_subtitles.py` | Remove selected or added simplified subtitles |
 | `sync_fonts.py` | Remove unused fonts and optionally add missing fonts |
@@ -22,19 +22,33 @@ python -m pip install Pillow fonttools uharfbuzz
 `sync_fonts.py` needs fonttools; the simplifier also needs Pillow and uharfbuzz.
 The flag and removal tools use Python's standard library.
 
-The three standalone Python tools work on Windows, Linux, and macOS.
+The end-user Python tools work on Windows, Linux, and macOS.
 Use `python3` instead of `python` where needed. Double-clicking a Python file
 requires a Python file association.
 
-Without arguments, they scan beside the script. Removal and font sync write to
-`output/` under the input folder, preserving originals and skipping existing
-outputs. Flag changes edit the originals.
+Without arguments, they scan beside the script. Simplification, removal, and
+font sync write to `output/` under the input folder, preserving originals and
+skipping existing outputs. Flag changes edit the originals.
 
 ## Simplify subtitles
 
-On Windows, double-click `simplify_ass.bat`; keep `simplify_ass.ps1` and
-`simplify_ass.py` beside it. Keep-original mode allows removing added simplified
-tracks later; replaced originals cannot be recovered by these tools.
+Keep `simplify_ass.py` beside `simplify_subtitles.py`.
+
+```console
+python simplify_subtitles.py
+python simplify_subtitles.py -i media -o cleaned -f fonts --recursive
+python simplify_subtitles.py -i media --replace-originals --process-all-tracks
+python simplify_subtitles.py -i media --scroll-concurrency-limit 32
+```
+
+The menu offers adding simplified tracks or replacing originals, with either
+all ASS/SSA tracks or the default thresholds: **>50,000 bytes and >10% fewer
+events**. Unchanged MKVs are copied; marked simplified tracks are skipped.
+Scrolling-text dropping is disabled by default (`0`); enable it explicitly
+with `--scroll-concurrency-limit`. `-f` adds fonts alongside embedded fonts.
+
+Use `--yes` to run without prompts (default: keep originals, filtered tracks)
+and `--report run.json` for a JSON report.
 
 For individual subtitle files:
 
@@ -43,7 +57,7 @@ python simplify_ass.py input.ass --fonts-dir fonts
 python simplify_ass.py input.ass --font-mkv episode.mkv
 ```
 
-Default output: `input.simple.ass`. Current converter version: **2026.10.13.189**.
+Default output: `input.simple.ass`. Current converter version: **2026.10.14.190**.
 
 ## Subtitle flags
 
