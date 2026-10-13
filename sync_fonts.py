@@ -522,13 +522,14 @@ def local_font_catalog(directory, cache):
     return catalog
 
 
-def scan_local_fonts(inspections):
+def scan_local_fonts(inspections, fonts_dir=None):
     """Finish local-font validation and exact matching before any prompts."""
     catalogs, cache = {}, {}
     for source, scan in inspections.items():
-        if source.parent not in catalogs:
-            catalogs[source.parent] = local_font_catalog(source.parent, cache)
-        catalog = catalogs[source.parent]
+        directory = fonts_dir if fonts_dir is not None else source.parent
+        if directory not in catalogs:
+            catalogs[directory] = local_font_catalog(directory, cache)
+        catalog = catalogs[directory]
         scan["local_fonts"] = catalog
         scan["local_matches"] = {
             key: [item for item in catalog if any(face_matches(face, key) for face in item["faces"])]
@@ -962,6 +963,8 @@ def main(argv=None):
                         help="Folder containing MKVs and loose fonts (default: beside this script)")
     parser.add_argument("-o", "--output-dir", type=Path,
                         help="Output folder (default: INPUT/output)")
+    parser.add_argument("-f", "--fonts-dir", type=Path,
+                        help="Folder containing loose fonts (default: input folder)")
     parser.add_argument("--preview", action="store_true", help="Analyze without remuxing")
     parser.add_argument("--log", action="store_true", help="Write per-file font reports (off by default)")
     args = parser.parse_args(argv)
@@ -969,8 +972,12 @@ def main(argv=None):
         parser.error("Specify the input folder either positionally or with -i, not both.")
     directory = (args.input_dir or args.directory or Path(__file__).resolve().parent).resolve()
     output = args.output_dir.resolve() if args.output_dir else directory / "output"
+    fonts_dir = args.fonts_dir.resolve() if args.fonts_dir else directory
     if not directory.is_dir():
         print("Input directory does not exist: " + str(directory))
+        return 2
+    if not fonts_dir.is_dir():
+        print("Font directory does not exist: " + str(fonts_dir))
         return 2
     if output == directory:
         print("Output directory must differ from the input directory.")
@@ -1010,8 +1017,8 @@ def main(argv=None):
             if args.log:
                 (output / (source.name + ".fonts.txt")).write_text(
                     f"Input: {source}\nERROR during font scan: {error}\n", encoding="utf-8")
-    print("\n[Scan local fonts]")
-    scan_local_fonts(inspections)
+    print("\n[Scan local fonts] " + str(fonts_dir))
+    scan_local_fonts(inspections, fonts_dir)
     print("\n[Options]")
     plans = choose_plans(inspections, args.preview)
     for index, (source, inspection) in enumerate(inspections.items(), 1):

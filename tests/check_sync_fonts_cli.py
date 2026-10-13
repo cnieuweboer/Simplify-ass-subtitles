@@ -15,7 +15,7 @@ spec.loader.exec_module(sync)
 
 
 class FontSyncCliChecks(unittest.TestCase):
-    def run_main(self, argv, source, script, output):
+    def run_main(self, argv, source, script, output, fonts_dir=None):
         inspection = {"missing": set(), "log": []}
         with patch.object(sync, "__file__", str(script)), \
              patch.object(sync, "find_tool", side_effect=lambda name: name), \
@@ -26,7 +26,7 @@ class FontSyncCliChecks(unittest.TestCase):
              patch("sys.stdout", new_callable=io.StringIO):
             self.assertEqual(sync.main(argv), 0)
         inspect.assert_called_once_with(source, "mkvmerge", "mkvextract")
-        self.assertEqual(catalog.call_args.args[0], source.parent)
+        self.assertEqual(catalog.call_args.args[0], fonts_dir or source.parent)
         self.assertEqual(process.call_args.args[:5], (source, output, "mkvmerge", False, False))
         self.assertTrue(output.is_dir())
 
@@ -58,6 +58,28 @@ class FontSyncCliChecks(unittest.TestCase):
             source.touch()
             self.run_main([folder], source, root / "scripts" / "sync_fonts.py", root / "output")
 
+    def test_separate_font_folder(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            media, fonts = root / "media", root / "fonts"
+            media.mkdir()
+            fonts.mkdir()
+            source = media / "episode.mkv"
+            source.touch()
+            self.run_main(["-i", str(media), "-f", str(fonts)], source,
+                          root / "sync_fonts.py", media / "output", fonts)
+
+    def test_font_catalog_is_shared_across_mkvs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            inspections = {root / name: {"missing": set()} for name in ("one.mkv", "two.mkv")}
+            catalog = [{"path": root / "font.ttf"}]
+            with patch.object(sync, "local_font_catalog", return_value=catalog) as read:
+                sync.scan_local_fonts(inspections, root / "fonts")
+            read.assert_called_once()
+            for inspection in inspections.values():
+                self.assertIs(inspection["local_fonts"], catalog)
+
     def test_reject_invalid_paths_and_conflicting_inputs(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -67,6 +89,8 @@ class FontSyncCliChecks(unittest.TestCase):
                  patch("sys.stderr", new_callable=io.StringIO), \
                  patch.object(sync, "find_tool") as tool:
                 self.assertEqual(sync.main(["-i", str(root / "missing")]), 2)
+                self.assertEqual(sync.main(["-i", folder, "-f", str(root / "missing")]), 2)
+                self.assertEqual(sync.main(["-i", folder, "-f", str(blocked)]), 2)
                 self.assertEqual(sync.main(["-i", folder, "-o", folder]), 2)
                 self.assertEqual(sync.main(["-i", folder, "-o", str(blocked)]), 2)
                 with self.assertRaises(SystemExit) as raised:

@@ -43,7 +43,7 @@ PowerShell.
 python simplify_ass.py input.ass --fonts-dir fonts
 python simplify_ass.py input.ass --font-mkv episode.mkv
 python sync_fonts.py /path/to/media --preview
-python sync_fonts.py -i /path/to/media -o /path/to/cleaned
+python sync_fonts.py -i /path/to/media -f /path/to/fonts -o /path/to/cleaned
 python subtitle_flags.py /path/to/media
 python remove_subtitles.py /path/to/media --recursive
 ```
@@ -127,7 +127,9 @@ a Windows console pauses at the end so results or missing-dependency messages
 remain visible. `sync_fonts.bat` is no longer needed.
 
 Use `-i` / `--input-dir` to choose the folder containing MKVs and loose fonts,
-and `-o` / `--output-dir` to choose the output folder. The default output follows
+`-f` / `--fonts-dir` to select a separate folder of loose fonts, and `-o` /
+`--output-dir` to choose the output folder. Without `-f`, fonts are read from
+the input folder. Font scanning is not recursive. The default output follows
 the chosen input folder. Existing positional input syntax, `--preview`, and
 `--log` remain supported; logging is off by default. Relative command-line
 paths are resolved from the working directory. Invocations with arguments do
