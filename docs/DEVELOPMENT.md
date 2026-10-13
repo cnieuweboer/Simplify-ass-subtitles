@@ -129,6 +129,11 @@ filesystem and wrapper behavior.
 
 ## Next development work
 
+Follow [DEVELOPMENT_PRINCIPLES.md](DEVELOPMENT_PRINCIPLES.md) for the user's
+standing preferences on semantic generalization, upstream handoffs, evidence,
+pass responsibilities and behavior-focused tests. It also records the structural
+follow-up identified when reviewing v183–v185.
+
 Prioritize reproducing failure cases with exact fonts and source events. Extend
 the relevant focused check before adjusting reconstruction. Check complete text,
 representative fill/outline, timing boundaries, source ownership and unchanged

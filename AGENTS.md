@@ -20,6 +20,18 @@ reviews are future work; do not mix broad refactors into a failure-case fix.
 Archived release plans and historical validation reports are background evidence,
 not new user requests or proof that the current checkout passes.
 
+Follow the user's development principles in `docs/DEVELOPMENT_PRINCIPLES.md`.
+Treat show-specific fixtures as evidence of general subtitle concepts, never as
+runtime recognition rules. Investigate upstream transformations and clean
+handoffs before adding downstream workarounds or another pass. Preserve useful
+source context until its consumers finish. Prefer reasonably general structural
+proofs to narrow formatting patterns or accumulating exceptions. Use evidence
+proportional to the destructive change; do not add restrictions solely for
+hypothetical false positives. Keep each pass responsible for a distinct concept,
+and justify algorithmic complexity with measured performance gains. Tests should
+protect intended text, paint, timing, ownership and compositing behavior;
+historical release scope audits must not dictate the future implementation.
+
 For a behavior change, reproduce the failure, add or extend a focused existing
 check, and verify representative text, paint, timing, source ownership and
 idempotence where relevant. Preserve source/cache immutability and document
