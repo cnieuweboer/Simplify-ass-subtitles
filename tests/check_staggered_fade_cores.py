@@ -141,7 +141,8 @@ spec.loader.exec_module(reference)
 source = ROOT/'test-data/Attack-on-Titan-S02E01-opening-source.ass'
 digest = hashlib.sha256(source.read_bytes()).hexdigest()
 with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()), patch.object(
-        s,'synchronize_faded_cue_handoffs',lambda context,pairs,proven: {}):
+        s,'synchronize_faded_cue_handoffs',lambda context,pairs,proven: {}), patch.object(
+        s,'merge_late_static_phases',lambda events,font_metrics:(events,0)):
     results = []
     statistics = []
     for engine in (reference,s):
@@ -173,6 +174,8 @@ with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.Stri
 check('real source untouched',hashlib.sha256(source.read_bytes()).hexdigest()==digest)
 
 # A second actual subtitle has the same staggered-fade overlap defect.
+# Keep this v179 timing oracle isolated from v185 final phase joins; the new
+# unmodified full conversion is checked by check_late_static_phases_render.
 source = ROOT/'test-data/Overlord-22m06-source.ass'
 digest = hashlib.sha256(source.read_bytes()).hexdigest()
 protected = {}
@@ -184,7 +187,8 @@ def capture_cores(events, rows, sources):
             protected[(after.base.style,s.OVERRIDE_RE.sub('',after.base.text))] = after.phase_core
     return successors
 with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()), patch.object(
-        s,'synchronize_faded_cue_handoffs',lambda context,pairs,proven: {}):
+        s,'synchronize_faded_cue_handoffs',lambda context,pairs,proven: {}), patch.object(
+        s,'merge_late_static_phases',lambda events,font_metrics:(events,0)):
     paths,statistics = [],[]
     for engine in (reference,s):
         path = Path(folder)/(engine.__version__+'.ass')

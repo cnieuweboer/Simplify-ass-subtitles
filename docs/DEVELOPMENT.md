@@ -60,7 +60,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 67 current scripts. The runner uses three workers for
+The suite inventory lists 68 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
@@ -189,3 +189,6 @@ reporting and statistics-name checks remain independent of the wrapper catalog.
 See [LATE_COMPLETE_COPIES.md](LATE_COMPLETE_COPIES.md) for final complete-caption
 deduplication after lyric proofs (v184), its strict paint/geometry admission and
 focused/corpus validation.
+
+See [LATE_STATIC_PHASES.md](LATE_STATIC_PHASES.md) for exact final phase joins
+(v185), their lifetime-specific compositing proof and Overlord validation.

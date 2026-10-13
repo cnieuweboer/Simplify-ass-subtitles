@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.13.184"
+__version__ = "2026.10.13.185"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -16969,6 +16969,102 @@ def remove_late_complete_copies(events: list[Event]) -> tuple[list[Event], int]:
     return [event for index, event in enumerate(events) if index not in removed], len(removed)
 
 
+def _merge_late_static_phase_round(events: list[Event], font_metrics: FontMetrics | None) -> tuple[list[Event], int]:
+    """Join touching static phases using final paint and actual output order.
+
+    No gaps, overlaps, geometry drift or representative paint selection. A
+    same-layer peer between records must be provably spatially disjoint. Source
+    indices belong to different reconstruction stages, so list order is the
+    authority; retained records keep their original source identities.
+    """
+    groups, layers, boxes = {}, {}, {}
+    for index, event in enumerate(events):
+        if event.kind == 'Dialogue':
+            layers.setdefault(event.layer, []).append(index)
+        key = static_object_key(event, event.styles)
+        if key is not None and all(not drawing for _, drawing, _ in key[-1]):
+            groups.setdefault(key, []).append(index)
+
+    def box(index):
+        if index not in boxes:
+            event = events[index]
+            # Unknown/moving/drawing/blurred or automatically wrapped ink
+            # cannot prove that changing record order is harmless.
+            key = static_object_key(event, event.styles)
+            eligible = (key is not None and all(not drawing for _, drawing, _ in key[-1])
+                        and (event.state.get('q', event.measurement.script_wrap_mode) == 2
+                             or len(OVERRIDE_RE.sub('', event.text)) == 1)
+                        and event.state.get('borderstyle', 1) == 1
+                        and not any(event.state.get(k, 0) for k in
+                                    ('blur', 'be', 'fsp', 'u', 's', 'shad', 'xshad', 'yshad')))
+            boxes[index] = caption_bounds(event, font_metrics) if eligible else None
+        return boxes[index]
+
+    replacements, removed = {}, set()
+    for indices in groups.values():
+        ordered = sorted(indices, key=lambda i: (events[i].start_s, events[i].end_s, i))
+        overlapping, active = set(), []
+        for index in ordered:
+            active = [i for i in active if events[i].end_s > events[index].start_s]
+            if active:
+                overlapping.update(active)
+                overlapping.add(index)
+            active.append(index)
+        anchor = ordered[0]
+        current, members = events[anchor], {anchor}
+        for index in ordered[1:]:
+            event = events[index]
+            can_join = (current.end == event.start and index not in overlapping
+                        and not members.intersection(overlapping))
+            if can_join:
+                trial = members | {index}
+                first = min(trial)
+                # Moving a later record into the first record's slot changes
+                # order only during that later record's own lifetime. A peer
+                # which ended at the handoff is not a compositing conflict.
+                for phase in trial:
+                    for peer in layers[event.layer]:
+                        if (not first < peer < phase or peer in trial
+                                or min(events[peer].end_s, events[phase].end_s)
+                                <= max(events[peer].start_s, events[phase].start_s)):
+                            continue
+                        a, b = box(first), box(peer)
+                        if (a is None or b is None or not
+                                (a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1])):
+                            can_join = False
+                            break
+                    if not can_join:
+                        break
+            if can_join:
+                members.add(index)
+                first = min(members)
+                current = replace_event(events[first], start=current.start, start_s=current.start_s,
+                                        end=event.end, end_s=event.end_s)
+                anchor = first
+            else:
+                replacements[min(members)] = current
+                removed.update(members - {min(members)})
+                anchor, current, members = index, event, {index}
+        replacements[min(members)] = current
+        removed.update(members - {min(members)})
+    return [replacements.get(i, event) for i, event in enumerate(events) if i not in removed], len(removed)
+
+
+def merge_late_static_phases(events: list[Event], font_metrics: FontMetrics | None) -> tuple[list[Event], int]:
+    """Settle only exact touching phases; each round strictly reduces records.
+
+    Joining a peer can remove an obsolete ordering obstacle for another
+    family. Recheck the equivalent surviving order until this narrow proof
+    stops contributing, without repeating paint selection or lyric proofs.
+    """
+    removed = 0
+    while True:
+        events, count = _merge_late_static_phase_round(events, font_metrics)
+        removed += count
+        if not count:
+            return events, removed
+
+
 def simplify_ass(
     path: Path, output: Path, config: SimplifyConfig, *, font_metrics: FontMetrics | None=None,
     font_report: FontProcessingReport | None=None, outline_matcher: FontOutlineMatcher | None=None,
@@ -17002,11 +17098,13 @@ def simplify_ass(
     output_events = supports.events
     output_events, normalized_colors = normalize_near_text_colors(output_events)
     output_events, late_copies = remove_late_complete_copies(output_events)
+    output_events, late_phases = merge_late_static_phases(output_events, font_metrics)
     supports = dataclass_replace(supports, events=output_events)
     write_subtitle_document(output,captions,output_events,final_newline=True)
     stats = _summarize_caption_supports(text_result.statistics,supports,font_metrics)
     stats['shadow_lettering_normalized'] = shadow_lettering
     stats['deduped'] += late_copies
+    stats['static_merged'] += late_phases
     if normalized_colors:
         stats['text_colors_normalized'] = normalized_colors
     _print_support_report(supports,scroll_report,config)

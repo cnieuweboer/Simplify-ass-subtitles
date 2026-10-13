@@ -106,7 +106,8 @@ for case in experiment['cases']:
 check('all 18 known leftovers cleaned in first conversion',reductions==18)
 def definitions(path):
     return {n.name:n for n in executable_ast(ast.parse(path.read_text())).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
-old,new=definitions(ROOT/'tests/references/simplify_ass_v183.py'),definitions(ROOT/'simplify_ass.py')
+# Historical v184 scope audit; live copy checks above still use current code.
+old,new=definitions(ROOT/'tests/references/simplify_ass_v183.py'),definitions(ROOT/'tests/references/simplify_ass_v184.py')
 check('only new late-copy helper added',new.keys()-old.keys()=={'remove_late_complete_copies'} and not old.keys()-new.keys())
 check('only final pipeline modified',{name for name in old if ast.dump(old[name])!=ast.dump(new[name])}=={'simplify_ass'})
 (DEST/'checks.json').write_text(json.dumps(dict(version=s.__version__,checks=len(checks),fixtures_reduced=reductions),indent=2)+'\n')

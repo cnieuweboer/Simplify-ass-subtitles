@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.13.184",
+  "version": "2026.10.13.185",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -333,6 +333,11 @@
     },
     {
       "script": "tests/check_late_complete_copies.py",
+      "status": "current",
+      "category": "render"
+    },
+    {
+      "script": "tests/check_late_static_phases_render.py",
       "status": "current",
       "category": "render"
     }
