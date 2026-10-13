@@ -4,7 +4,9 @@ Production tests call the current API directly. Only historical modules receive
 API adapters; mocks dispatch existing recorded/failure doubles at the extracted
 function boundary instead of requiring production methods on FontMetrics.
 """
-import functools, inspect, sys
+import functools, inspect, sys, importlib.util, types
+from pathlib import Path
+from contextlib import contextmanager
 from unittest.mock import patch
 
 ROW_NAMES = {'recover':'recover_font_row', 'recover_tracked':'recover_tracked_font_row',
@@ -13,6 +15,34 @@ ROW_NAMES = {'recover':'recover_font_row', 'recover_tracked':'recover_tracked_fo
     'fit_fullwidth_run':'fit_fullwidth_run'}
 _reports = {}
 _reference_rows = {}
+
+@contextmanager
+def historical_static_phase_policy(module):
+    """Keep old whole-file oracles at their original finalization boundary.
+
+    Rebind only immutable v185 finalization/merging code to the live module so
+    pass-specific capture/ownership checks still call current implementations.
+    New stage handoffs and merging are tested by unmodified v186 conversions.
+    """
+    name = 'historical_static_phase_v185'
+    if name not in sys.modules:
+        path = Path(__file__).resolve().parents[1]/'tests/references/simplify_ass_v185.py'
+        spec = importlib.util.spec_from_file_location(name,path)
+        reference = importlib.util.module_from_spec(spec)
+        sys.modules[name] = reference
+        spec.loader.exec_module(reference)
+    reference = sys.modules[name]
+    def bind(function):
+        bound = types.FunctionType(function.__code__,module.__dict__,function.__name__,
+                                   function.__defaults__,function.__closure__)
+        bound.__kwdefaults__ = function.__kwdefaults__
+        return bound
+    original_merge = bind(reference.merge_static_timed_copies)
+    def merge(events,styles,*,font_metrics=None,text_only=False):
+        return (events,0) if text_only else original_merge(events,styles)
+    with patch.object(module,'_finalize_text_layout',bind(reference._finalize_text_layout)), patch.object(
+            module,'merge_static_timed_copies',merge):
+        yield
 
 def font_test_report(metric):
     import simplify_ass as current
@@ -45,8 +75,7 @@ def install_row_test_doubles(module, *, historical_fade_timing=False):
         def historical_conversion(*args,**kwargs):
             with patch.object(module,'derive_staggered_fade_cores',
                               lambda events,rows,sources: rows), patch.object(
-                    module,'synchronize_faded_cue_handoffs',lambda context,pairs,proven: {},create=True), patch.object(
-                    module,'merge_late_static_phases',lambda events,font_metrics:(events,0),create=True):
+                    module,'synchronize_faded_cue_handoffs',lambda context,pairs,proven: {},create=True), historical_static_phase_policy(module):
                 return simplify(*args,**kwargs)
         module.simplify_ass = historical_conversion
     if getattr(module,'_row_test_doubles_installed',False):return

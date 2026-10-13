@@ -5,6 +5,7 @@ from copy import deepcopy
 from unittest.mock import patch
 from io import StringIO
 import ast, contextlib, hashlib, importlib.util, inspect, json, random, sys, tempfile
+from font_geometry_test_helpers import historical_static_phase_policy
 import simplify_ass as current
 from event_evidence_test_helpers import event_comparison_fields
 from font_geometry_audit import normalized_row_algorithm, normalized_font_caller
@@ -98,8 +99,7 @@ check('vector diagnostic preserves untrimmed family',local.missing_families=={' 
 conversion_cases=[]
 with tempfile.TemporaryDirectory() as directory, patch.object(
         current,'derive_staggered_fade_cores',lambda events,rows,sources: rows), patch.object(
-        current,'synchronize_faded_cue_handoffs',lambda context,pairs,proven: {}), patch.object(
-        current,'merge_late_static_phases',lambda events,font_metrics:(events,0)):
+        current,'synchronize_faded_cue_handoffs',lambda context,pairs,proven: {}), historical_static_phase_policy(current):
     # This release-equivalence audit retains pre-v180 fade timing. Real
     # staggered timing is covered by check_staggered_fade_cores instead.
     # Final v185 phase joins are independently checked by the unmodified

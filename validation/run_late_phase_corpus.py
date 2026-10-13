@@ -19,9 +19,9 @@ for case in json.loads((ROOT/'test-data/corpus-manifest.json').read_text()):
  new_meta=json.loads(output.with_suffix('.json').read_text())
  assert new_meta['missing_families']==[],('Missing font; stop',case['name'],new_meta['missing_families'])
  old=s.load_subtitle_events(baseline)[1];new=s.load_subtitle_events(output)[1]
- expected,count=s.merge_late_static_phases(old,metrics)
+ expected,count=s.merge_static_timed_copies(old,old[0].styles,font_metrics=metrics,text_only=True)
  assert [e.fields() for e in expected]==[e.fields() for e in new],(case['name'],'unrelated output changed')
- assert s.merge_late_static_phases(new,metrics)==(new,0),('Late phases not settled',case['name'])
+ assert s.merge_static_timed_copies(new,new[0].styles,font_metrics=metrics,text_only=True)==(new,0),('Late phases not settled',case['name'])
  diffs={k:(meta['statistics'].get(k),new_meta['statistics'].get(k)) for k in meta['statistics'].keys()|new_meta['statistics'].keys()
   if meta['statistics'].get(k)!=new_meta['statistics'].get(k)}
  assert not diffs.keys()-{'static_merged','output'},(case['name'],'unrelated counter changed',diffs)

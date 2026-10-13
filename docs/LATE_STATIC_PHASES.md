@@ -1,5 +1,9 @@
 # Late static phase merging — v185
 
+The v186 consolidation replaces the separate late implementation with a shared
+merger; see [STATIC_PHASE_MERGING.md](STATIC_PHASE_MERGING.md). The description
+and results below record v185. Current functional checks use the shared merger.
+
 Standard simplification now settles exact touching text phases after caption
 support reconstruction, shadow-lettering restoration, color normalization and
 late complete-copy cleanup. This catches fragments generated too late for the

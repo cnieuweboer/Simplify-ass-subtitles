@@ -40,7 +40,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-68-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+69-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it

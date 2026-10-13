@@ -13,6 +13,8 @@ assert metrics.matching_face('Volkhov',0,False) is not None,'Missing Volkhov reg
 def check(name,condition):
  assert condition,name
  checks.append(name)
+def merge(events,owner):
+ return s.merge_static_timed_copies(events,events[0].styles if events else {},font_metrics=owner,text_only=True)
 def parsed(rows):return list(s._resolve_document_state(s.parse_subtitle_document(HEADER+''.join(rows))).events.values())
 def pair(tags='',x=100,layer=0,times=((1,2),(2,4)),first_tags=''):
  return parsed([event('same',100,0,times[0],first_tags),event('same',x,layer,times[1],tags)])
@@ -22,22 +24,22 @@ def verify_timeline(old,new,name):
   mid=(left+right)/2
   def paints(es):return collections.Counter(s.static_object_key(e,e.styles) for e in es if e.kind=='Dialogue' and e.start_s<=mid<e.end_s)
   check(name+f': exact paint/multiplicity over {left}-{right}',paints(old)==paints(new))
-es=pair();before=deepcopy(es);out,n=s.merge_late_static_phases(es,metrics)
+es=pair();before=deepcopy(es);out,n=merge(es,metrics)
 check('touching identical holds join',n==1 and len(out)==1 and out[0].start_s==1 and out[0].end_s==4)
 check('cache/history/context borrowed by timing successor',out[0].state is es[0].state and out[0].continuation is es[0].continuation and out[0].measurement is es[0].measurement)
 check('records styles caches and source fields immutable',[vars(e) for e in es]==[vars(e) for e in before])
 verify_timeline(es,out,'simple join')
-check('idempotent',s.merge_late_static_phases(out,metrics)==(out,0))
+check('idempotent',merge(out,metrics)==(out,0))
 for name,options in [('gap',dict(times=((1,2),(2.01,4)))),('overlap',dict(times=((1,2.01),(2,4)))),
  ('color',dict(tags=r'\1c&HFEFFFF&')),('outline',dict(tags=r'\3c&HFFFFFF&')),('border',dict(tags=r'\bord1')),
  ('layer',dict(layer=1)),('anchor',dict(x=100.01)),('font',dict(tags=r'\fnOther')),
  ('size',dict(tags=r'\fs40.01')),('emphasis',dict(tags=r'\b1')),('spacing',dict(tags=r'\fsp.01')),
  ('fade',dict(tags=r'\fad(10,10)',first_tags=r'\fad(10,10)')),
  ('transform',dict(tags=r'\t(\frz5)',first_tags=r'\t(\frz5)'))]:
- es=pair(**options);check(name+' remains separate',s.merge_late_static_phases(es,metrics)==(es,0))
+ es=pair(**options);check(name+' remains separate',merge(es,metrics)==(es,0))
 for name,tags in [('inline gradient',r''),('partial opacity',r'\alpha&H80&')]:
  literal=r'sa{\1c&H123456&}me' if name=='inline gradient' else 'same'
- es=parsed([event(literal,100,0,t,tags) for t in ((1,2),(2,4))]);out,n=s.merge_late_static_phases(es,metrics)
+ es=parsed([event(literal,100,0,t,tags) for t in ((1,2),(2,4))]);out,n=merge(es,metrics)
  check(name+' identical phases join unchanged',n==1);verify_timeline(es,out,name)
 for name,peer,expected in [
  ('peer ended at handoff',event('Foreground',100,0,(1,2)),1),
@@ -54,18 +56,18 @@ for name,peer,expected in [
  ('active drawing peer',event('m 0 0 l 10 0 10 10',400,0,(1,4),r'\p1'),0),
  ('drawing ended at handoff',event('m 0 0 l 10 0 10 10',100,0,(1,2),r'\p1'),1),
  ('unknown inline layout',event(r'Fore{\fs60}ground',400,0,(1,4)),0)]:
- es=parsed([event('same',100,0,(1,2)),peer,event('same',100,0,(2,4))]);out,n=s.merge_late_static_phases(es,metrics)
+ es=parsed([event('same',100,0,(1,2)),peer,event('same',100,0,(2,4))]);out,n=merge(es,metrics)
  check(name,n==expected)
- check(name+': stable on repeat',s.merge_late_static_phases(out,metrics)==(out,0))
- if name=='spatially separate peer':check('unavailable measurements preserve uncertain order',s.merge_late_static_phases(es,None)==(es,0))
+ check(name+': stable on repeat',merge(out,metrics)==(out,0))
+ if name=='spatially separate peer':check('unavailable measurements preserve uncertain order',merge(es,None)==(es,0))
 # Real source IDs are not an ordering authority after support reconstruction.
 es=parsed([event('same',100,0,(1,2)),event('Foreground',100,0,(2,4)),event('same',100,0,(2,4))])
 for e in es:e.source_index=7
-check('colliding source identities do not hide foreground',s.merge_late_static_phases(es,metrics)==(es,0))
+check('colliding source identities do not hide foreground',merge(es,metrics)==(es,0))
 es=parsed([event('same',100,0,(2,4)),event('Foreground',100,0,(1,2)),event('same',100,0,(1,2))])
-check('reverse source order checks displaced earlier lifetime',s.merge_late_static_phases(es,metrics)==(es,0))
+check('reverse source order checks displaced earlier lifetime',merge(es,metrics)==(es,0))
 es=parsed([event('same',100,0,(2,4)),event('Foreground',100,0,(2,4)),event('same',100,0,(1,2))])
-out,n=s.merge_late_static_phases(es,metrics)
+out,n=merge(es,metrics)
 check('reverse source order joins when peer is already above retained first slot',n==1 and out[0].start_s==1 and out[1] is es[1])
 
 spec=importlib.util.spec_from_file_location('phase_v184',ROOT/'tests/references/simplify_ass_v184.py')
@@ -79,14 +81,14 @@ for engine,path,owner in [(old_engine,old_path,old_engine.FontMetrics([ROOT/'fon
  if engine is old_engine:old_stats=stats
  else:new_stats=stats
 old=s.load_subtitle_events(old_path)[1];new=s.load_subtitle_events(new_path)[1]
-expected,count=s.merge_late_static_phases(old,metrics)
+expected,count=merge(old,metrics)
 check('27 late joins; 2221 to 2194 parsed records',count==27 and len(old)==2221 and len(new)==2194)
 check('only final exact static joins change output',[e.fields() for e in expected]==[e.fields() for e in new])
 check('existing static merge counter records contribution',new_stats['static_merged']==old_stats['static_merged']+27)
 check('final dialogue count correct',new_stats['output']==sum(e.kind=='Dialogue' for e in new))
 check('max concurrency unchanged',new_stats['max_concurrent_out']==old_stats['max_concurrent_out'])
 check('source unchanged',hashlib.sha256(source.read_bytes()).hexdigest()==source_hash)
-check('no more late phase merges on output',s.merge_late_static_phases(new,metrics)==(new,0))
+check('no more late phase merges on output',merge(new,metrics)==(new,0))
 verify_timeline(old,new,'Overlord')
 # Match every atomic ending interval whose active record order differs. Include
 # handoff boundaries: a join cannot bridge a gap or repaint an intentional phase.
@@ -107,7 +109,8 @@ for at in sorted(samples):
  check(f'Overlord pixel-identical at {at:.3f}',ImageChops.difference(a,b).getbbox() is None)
 check('all merged-phase boundaries preserved',all(e.start_s in {x.start_s for x in old} and e.end_s in {x.end_s for x in old} for e in new))
 def definitions(path):return {n.name:n for n in executable_ast(ast.parse(path.read_text())).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
-a,b=definitions(ROOT/'tests/references/simplify_ass_v184.py'),definitions(ROOT/'simplify_ass.py')
+# Historical release scope is independent of current merger consolidation.
+a,b=definitions(ROOT/'tests/references/simplify_ass_v184.py'),definitions(ROOT/'tests/references/simplify_ass_v185.py')
 check('only two bounded phase helpers added',b.keys()-a.keys()=={'_merge_late_static_phase_round','merge_late_static_phases'} and not a.keys()-b.keys())
 check('only final pipeline wiring changed',{name for name in a if ast.dump(a[name])!=ast.dump(b[name])}=={'simplify_ass'})
 (DEST/'checks.json').write_text(json.dumps(dict(version=s.__version__,checks=len(checks),late_joins=count,render_samples=len(samples),runtime_sha256=hashlib.sha256((ROOT/'simplify_ass.py').read_bytes()).hexdigest()),indent=2)+'\n')

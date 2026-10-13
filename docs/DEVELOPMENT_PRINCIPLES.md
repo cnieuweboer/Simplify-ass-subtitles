@@ -83,3 +83,7 @@ the late implementation into earlier source-dependent stages.
 The recent releases solve their demonstrated failure classes. They do not
 establish general whole-file second-conversion idempotence: differing styling
 phases, final tag spelling and other previously documented behavior remain.
+
+The v186 follow-up implements a shared phase merger and explicit stage ownership;
+see [STATIC_PHASE_MERGING.md](STATIC_PHASE_MERGING.md). The assessment above
+remains a historical review of v183–v185.

@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.13.185"
+__version__ = "2026.10.13.186"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -12226,57 +12226,141 @@ def static_object_key(e: Event, styles: dict, *,
             tuple(runs)) if runs else None
 
 
-def merge_static_timed_copies(events: list[Event], styles: dict) -> tuple[list[Event], int]:
-    """Join touching identical positioned objects; never bridge a visible gap.
+def _merge_static_phase_round(
+    events: list[Event], styles: dict, font_metrics: FontMetrics | None, *,
+    text_only: bool, row_sources: set[int] | None,
+) -> tuple[list[Event], int]:
+    """Join touching static phases using final paint and actual output order.
 
-    Preserve overlapping copies and same-layer compositing order. There is
-    no glyph-count, font-name, duration, color or show-specific threshold.
+    No gaps, overlaps, geometry drift or representative paint selection. A
+    same-layer peer between records must be provably spatially disjoint. Source
+    indices belong to different reconstruction stages, so list order is the
+    authority; retained records keep their original source identities.
     """
-    groups, layers = {}, {}
-    untouched = []
-    for e in events:
-        if e.kind == "Dialogue":
-            layers.setdefault(e.layer, []).append(e)
-        key = static_object_key(e, styles)
-        if key is None:
-            untouched.append(e)
-        else:
-            groups.setdefault(key, []).append(e)
-    output, removed = list(untouched), 0
-    for group in groups.values():
-        ordered = sorted(group, key=lambda e: (e.start_s, e.end_s, e.source_index))
-        # Mark all overlapping copies: their compositing multiplicity matters.
-        overlapping = set()
-        active = []
-        for e in ordered:
-            active = [other for other in active if other.end_s > e.start_s]
+    groups, layers, boxes = {}, {}, {}
+    for index, event in enumerate(events):
+        try:
+            layer = int(event.layer)
+        except ValueError:
+            # An invalid layer cannot establish a renderer ordering relation.
+            layer = None
+        if event.kind == 'Dialogue':
+            layers.setdefault(layer, []).append(index)
+        if layer is None:
+            continue
+        key = static_object_key(event, styles)
+        if key is not None and (not text_only or all(not drawing for _, drawing, _ in key[-1])):
+            key = (layer,) + key[1:]
+            if row_sources is not None:
+                # Shared-interval reconstruction groups by row and eligibility.
+                # Identical paint cannot erase a boundary between those roles.
+                eligible = event.lyric or event.source_index in row_sources
+                key += ((event.row if eligible else None, eligible),)
+            groups.setdefault(key, []).append(index)
+
+    # Malformed peers still obstruct ordering; do not silently omit them.
+    unknown = layers.get(None, ())
+    if unknown:
+        for layer, peers in layers.items():
+            if layer is not None:
+                peers.extend(unknown)
+
+    def box(index):
+        if index not in boxes:
+            event = events[index]
+            # Unknown/moving/drawing/blurred or automatically wrapped ink
+            # cannot prove that changing record order is harmless.
+            key = static_object_key(event, styles)
+            eligible = (key is not None and all(not drawing for _, drawing, _ in key[-1])
+                        and (event.state.get('q', event.measurement.script_wrap_mode) == 2
+                             or len(OVERRIDE_RE.sub('', event.text)) == 1)
+                        and event.state.get('borderstyle', 1) == 1
+                        and not any(event.state.get(k, 0) for k in
+                                    ('blur', 'be', 'fsp', 'u', 's', 'shad', 'xshad', 'yshad')))
+            boxes[index] = caption_bounds(event, font_metrics) if eligible else None
+        return boxes[index]
+
+    replacements, removed = {}, set()
+    for indices in groups.values():
+        ordered = sorted(indices, key=lambda i: (events[i].start_s, events[i].end_s, i))
+        overlapping, active = set(), []
+        for index in ordered:
+            active = [i for i in active if events[i].end_s > events[index].start_s]
             if active:
-                overlapping.add(e.source_index)
-                overlapping.update(other.source_index for other in active)
-            active.append(e)
-        current = ordered[0]
-        members = {current.source_index}
-        for e in ordered[1:]:
-            touching = current.end == e.start
-            can_join = touching and e.source_index not in overlapping and not (members & overlapping)
+                overlapping.update(active)
+                overlapping.add(index)
+            active.append(index)
+        first = ordered[0]
+        current, members = events[first], {first}
+        for index in ordered[1:]:
+            event = events[index]
+            can_join = (current.end == event.start and index not in overlapping
+                        and not members.intersection(overlapping))
             if can_join:
-                low, high = min(*members, e.source_index), max(*members, e.source_index)
-                # A peer between source records could switch from being above
-                # to below the object after records are combined.
-                can_join = not any(low < peer.source_index < high
-                    and peer.source_index not in members
-                    and min(peer.end_s, e.end_s) > max(peer.start_s, current.start_s)
-                    for peer in layers[e.layer])
+                trial = members | {index}
+                first = min(trial)
+                pending_row = row_sources is not None and (
+                    events[first].lyric or events[first].source_index in row_sources)
+                # Moving a later record into the first record's slot changes
+                # order only during that later record's own lifetime. A peer
+                # which ended at the handoff is not a compositing conflict.
+                for phase in trial:
+                    for peer in layers[int(event.layer)]:
+                        if (not first < peer < phase or peer in trial
+                                or min(events[peer].end_s, event.end_s if pending_row else events[phase].end_s)
+                                <= max(events[peer].start_s, current.start_s if pending_row else events[phase].start_s)):
+                            continue
+                        # Pending row reconstruction can change text spacing
+                        # and ownership even for spatially disjoint peers.
+                        # Keep its whole-row slot boundaries until it finishes.
+                        if pending_row:
+                            can_join = False
+                            break
+                        a, b = box(first), box(peer)
+                        if (a is None or b is None or not
+                                (a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1])):
+                            can_join = False
+                            break
+                    if not can_join:
+                        break
             if can_join:
-                members.add(e.source_index)
-                current = replace_event(current, end=e.end, end_s=e.end_s,
-                                  source_index=min(members))
-                removed += 1
+                members.add(index)
+                first = min(members)
+                current = replace_event(events[first], start=current.start, start_s=current.start_s,
+                                        end=event.end, end_s=event.end_s)
             else:
-                output.append(current)
-                current, members = e, {e.source_index}
-        output.append(current)
-    return sorted(output, key=lambda e: e.source_index), removed
+                replacements[min(members)] = current
+                removed.update(members - {min(members)})
+                current, members = event, {index}
+        replacements[min(members)] = current
+        removed.update(members - {min(members)})
+    return [replacements.get(i, event) for i, event in enumerate(events) if i not in removed], len(removed)
+
+
+def merge_static_timed_copies(
+    events: list[Event], styles: dict, *, font_metrics: FontMetrics | None=None,
+    text_only: bool=False, row_sources: set[int] | None=None,
+) -> tuple[list[Event], int]:
+    """Settle exact touching phases without changing paint, gaps or overlaps.
+
+    Use actual list order at every stage, retaining each survivor's source
+    identity and borrowed cache/evidence. Invoke after consumers of individual
+    phase evidence have finished, or supply row_sources to preserve the row
+    and animation eligibility still needed by shared-interval reconstruction.
+    Canonical identical phases then remain a valid handoff. Final caption support
+    ownership is already committed, so that caller requests text-only merging;
+    the text/vector stage retains its existing drawing-phase admission.
+    Every contributing round strictly reduces records. A join can remove an
+    obsolete ordering obstacle for another family, so settle this one proof
+    without repeating effect selection or source reconstruction.
+    """
+    removed = 0
+    while True:
+        events, count = _merge_static_phase_round(events, styles, font_metrics,
+                                                  text_only=text_only, row_sources=row_sources)
+        removed += count
+        if not count:
+            return events, removed
 
 
 def read_subtitle(path: Path, encoding: str | None = None) -> str:
@@ -14471,10 +14555,14 @@ def _finalize_text_layout(
         if final_rows_merged:
             simplified_events = compact_static_overrides(simplified_events,config.max_blur)
 
+    # Canonicalize exact static phases before common-visibility reconstruction.
+    # Preserve its row/eligibility boundaries rather than dropping source roles
+    # or feeding the consumer unnecessary subdivisions of identical paint.
     static_merged = 0
-    # Join final touching static objects after all layout and timing changes.
     if config.level in (1,2):
-        simplified_events, static_merged = merge_static_timed_copies(simplified_events, styles)
+        simplified_events, static_merged = merge_static_timed_copies(
+            simplified_events, styles, font_metrics=font_metrics,
+            row_sources=animated_sources if config.level == 1 else None)
 
     # Run after all source/effect/timing proofs. Core rows must never be
     # mistaken for complete source cues and trimmed through retained tails.
@@ -16969,101 +17057,6 @@ def remove_late_complete_copies(events: list[Event]) -> tuple[list[Event], int]:
     return [event for index, event in enumerate(events) if index not in removed], len(removed)
 
 
-def _merge_late_static_phase_round(events: list[Event], font_metrics: FontMetrics | None) -> tuple[list[Event], int]:
-    """Join touching static phases using final paint and actual output order.
-
-    No gaps, overlaps, geometry drift or representative paint selection. A
-    same-layer peer between records must be provably spatially disjoint. Source
-    indices belong to different reconstruction stages, so list order is the
-    authority; retained records keep their original source identities.
-    """
-    groups, layers, boxes = {}, {}, {}
-    for index, event in enumerate(events):
-        if event.kind == 'Dialogue':
-            layers.setdefault(event.layer, []).append(index)
-        key = static_object_key(event, event.styles)
-        if key is not None and all(not drawing for _, drawing, _ in key[-1]):
-            groups.setdefault(key, []).append(index)
-
-    def box(index):
-        if index not in boxes:
-            event = events[index]
-            # Unknown/moving/drawing/blurred or automatically wrapped ink
-            # cannot prove that changing record order is harmless.
-            key = static_object_key(event, event.styles)
-            eligible = (key is not None and all(not drawing for _, drawing, _ in key[-1])
-                        and (event.state.get('q', event.measurement.script_wrap_mode) == 2
-                             or len(OVERRIDE_RE.sub('', event.text)) == 1)
-                        and event.state.get('borderstyle', 1) == 1
-                        and not any(event.state.get(k, 0) for k in
-                                    ('blur', 'be', 'fsp', 'u', 's', 'shad', 'xshad', 'yshad')))
-            boxes[index] = caption_bounds(event, font_metrics) if eligible else None
-        return boxes[index]
-
-    replacements, removed = {}, set()
-    for indices in groups.values():
-        ordered = sorted(indices, key=lambda i: (events[i].start_s, events[i].end_s, i))
-        overlapping, active = set(), []
-        for index in ordered:
-            active = [i for i in active if events[i].end_s > events[index].start_s]
-            if active:
-                overlapping.update(active)
-                overlapping.add(index)
-            active.append(index)
-        anchor = ordered[0]
-        current, members = events[anchor], {anchor}
-        for index in ordered[1:]:
-            event = events[index]
-            can_join = (current.end == event.start and index not in overlapping
-                        and not members.intersection(overlapping))
-            if can_join:
-                trial = members | {index}
-                first = min(trial)
-                # Moving a later record into the first record's slot changes
-                # order only during that later record's own lifetime. A peer
-                # which ended at the handoff is not a compositing conflict.
-                for phase in trial:
-                    for peer in layers[event.layer]:
-                        if (not first < peer < phase or peer in trial
-                                or min(events[peer].end_s, events[phase].end_s)
-                                <= max(events[peer].start_s, events[phase].start_s)):
-                            continue
-                        a, b = box(first), box(peer)
-                        if (a is None or b is None or not
-                                (a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1])):
-                            can_join = False
-                            break
-                    if not can_join:
-                        break
-            if can_join:
-                members.add(index)
-                first = min(members)
-                current = replace_event(events[first], start=current.start, start_s=current.start_s,
-                                        end=event.end, end_s=event.end_s)
-                anchor = first
-            else:
-                replacements[min(members)] = current
-                removed.update(members - {min(members)})
-                anchor, current, members = index, event, {index}
-        replacements[min(members)] = current
-        removed.update(members - {min(members)})
-    return [replacements.get(i, event) for i, event in enumerate(events) if i not in removed], len(removed)
-
-
-def merge_late_static_phases(events: list[Event], font_metrics: FontMetrics | None) -> tuple[list[Event], int]:
-    """Settle only exact touching phases; each round strictly reduces records.
-
-    Joining a peer can remove an obsolete ordering obstacle for another
-    family. Recheck the equivalent surviving order until this narrow proof
-    stops contributing, without repeating paint selection or lyric proofs.
-    """
-    removed = 0
-    while True:
-        events, count = _merge_late_static_phase_round(events, font_metrics)
-        removed += count
-        if not count:
-            return events, removed
-
 
 def simplify_ass(
     path: Path, output: Path, config: SimplifyConfig, *, font_metrics: FontMetrics | None=None,
@@ -17098,7 +17091,8 @@ def simplify_ass(
     output_events = supports.events
     output_events, normalized_colors = normalize_near_text_colors(output_events)
     output_events, late_copies = remove_late_complete_copies(output_events)
-    output_events, late_phases = merge_late_static_phases(output_events, font_metrics)
+    output_events, late_phases = merge_static_timed_copies(
+        output_events, captions.styles, font_metrics=font_metrics, text_only=True)
     supports = dataclass_replace(supports, events=output_events)
     write_subtitle_document(output,captions,output_events,final_newline=True)
     stats = _summarize_caption_supports(text_result.statistics,supports,font_metrics)
