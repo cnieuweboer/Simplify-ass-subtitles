@@ -1,44 +1,50 @@
-# Drag-and-drop helpers
+# Optional drag-and-drop targets
 
-Keep this folder beside `subtitle_flags.py`, `remove_subtitles.py`, and
-`sync_fonts.py`. Python 3.10+ and the tools' usual dependencies are required.
+Copy the target you want **beside its corresponding Python script**.
+The `dnd helper` folder is just a place to download them from; it does not need
+to be installed beside the scripts. Python 3.10+ and the usual dependencies
+are required.
 
-Drop **folders containing MKVs** onto the target for the desired tool.
-Each folder gets its own scan and options. Defaults are the same as running
-the Python tool on that folder; removal/font outputs go to its `output/`.
+Drop **folders containing MKVs** onto a target. The selected tool scans those
+folders normally; removal/font outputs go to each input folder's `output/`.
 
 ## Windows
 
-Drop a folder onto one of the three `.bat` files in `windows/`.
+Copy `windows/remove_subtitles.bat` beside `remove_subtitles.py`
+(and similarly for the other tools), then drop a folder onto the BAT.
 
 ## macOS
 
-Run once from Terminal:
+Build the Finder droplets once:
 
 ```sh
 sh "dnd helper/macos/setup-macos.command"
 ```
 
-This builds three AppleScript `.app` droplets in `macos/`. Drop folders onto
-those apps in Finder. Menus open in Terminal; approve Terminal control if macOS
-asks. Double-clicking an app opens a folder picker.
+Copy the desired generated `.app` from `macos/` beside its Python script.
+Drop folders onto the app; menus open in Terminal. Approve Terminal control
+if macOS asks. Double-clicking the app opens a folder picker.
 
 ## Linux
 
-```sh
-sh "dnd helper/linux/setup-linux.sh"
-```
-
-This creates three `.desktop` launchers in `linux/`. Allow launching/trust them
-if your file manager asks. Rerun setup after moving the repository or changing
-your Python installation.
-
-Folder drops onto launchers depend on the desktop/file manager. Linux has no
-universal drag target, and `.py` files usually are not drop targets. If drops
-are unsupported, use a file manager's **Open With** launcher selection or:
+Create launchers next to whichever Python tools are installed in your chosen
+folder:
 
 ```sh
-python3 "dnd helper/dnd_helper.py" remove_subtitles /path/to/media --pause
+sh "dnd helper/linux/setup-linux.sh" /path/to/python/tools
 ```
 
-Native Windows/Finder/desktop integration needs testing on the target OS.
+Alternatively, copy `setup-linux.sh` beside the Python scripts and run it
+without a folder argument. Setup creates a `.sh` wrapper and a `.desktop`
+target for each tool found. Allow launching/trust the targets if requested,
+then drop folders onto them. Rerun setup after moving their folder.
+
+Drag-and-drop support depends on the desktop/file manager; Linux has no
+universal drop handler. If necessary, use **Open With** or run the optional
+wrapper directly:
+
+```sh
+sh /path/to/python/tools/remove_subtitles.sh /path/to/media
+```
+
+Native Windows/macOS drag-and-drop still needs testing on those systems.
