@@ -132,8 +132,11 @@ def manual_selection(catalog):
     print("\nOption 2: Available subtitles across all scanned MKVs")
     for number, (name, language, codec) in enumerate(catalog, 1):
         print(f"  {number}. [{language}] {name or '(unnamed)'} [{codec}]")
+    print("\nSelect subtitles to remove using numbers or listed languages (1,3 or en,ja).")
+    print("Use the k prefix to keep only selected subtitles (k 1,3 or k en,ja).")
+    print("Blank or q to cancel.")
     while True:
-        answer = input("Select subtitles: numbers or languages (1,3 or en,ja); k to keep; blank or q to cancel: ")
+        answer = input("\nSelection: ")
         try:
             return parse_selection(answer, catalog)
         except ValueError as error:
