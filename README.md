@@ -42,11 +42,35 @@ PowerShell.
 python simplify_ass.py input.ass --fonts-dir fonts
 python simplify_ass.py input.ass --font-mkv episode.mkv
 python sync_fonts.py /path/to/media --preview
+python subtitle_flags.py /path/to/media
 ```
 
 The converter writes `input.simple.ass` by default. Exact fonts help prove line
 geometry; uncertain fragments are retained. Use `--help` for all options.
 Current converter version: **2026.10.13.188**.
+
+### Subtitle default and forced flags
+
+`subtitle_flags.py` combines the four default/forced flag scripts in a Python
+menu, using only the standard library and MKVToolNix. Run it on Windows, Linux,
+or macOS. Without a folder argument it scans beside the script; with an argument
+it scans that folder. Subfolders are not scanned.
+
+It scans all MKVs first, then asks which flags to clear and whether to set default
+and forced flags together, separately, or neither. When setting flags, select
+from a combined numbered list using commas or spaces. Entries are grouped by
+track name, language (IETF tag when available), and subtitle format. Every matching
+track is selected, including duplicate tracks within one file. Blank selections
+set no flags; `q` cancels any menu. A final summary asks before editing.
+
+Clearing happens before setting. Flags not cleared or selected are preserved,
+and files without a selected track still receive requested clearing. Multiple
+default or forced tracks are allowed. `mkvpropedit` writes flags **in place**;
+there is no remux or output folder. Subtitle flags are verified after each edit.
+Unreadable files are reported and skipped; editing failures are reported while
+remaining files continue, with a nonzero exit status if any file failed. An
+editing or verification failure does not roll back an in-place change.
+The four original `.bat` flag scripts remain available for existing workflows.
 
 ## Development
 
