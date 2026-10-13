@@ -1,17 +1,17 @@
-"""Fresh v191 comparisons against the verified v190 corpus plus the new failure."""
+"""Fresh v192 comparisons against the verified v191 corpus plus the new failure."""
 from pathlib import Path
 import hashlib,json,os,subprocess,sys
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 import simplify_ass as s
-DEST=ROOT/'validation/settled-glow-corpus/windows';DEST.mkdir(parents=True,exist_ok=True)
+DEST=ROOT/'validation/glow-boundary-corpus/windows';DEST.mkdir(parents=True,exist_ok=True)
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 env=os.environ.copy();env['ASS_REGRESSION_FONT_BACKEND']='windows';env['PYTHONPATH']=str(ROOT/'validation/backend_startup')
 records=[]
 for case in json.loads((ROOT/'test-data/corpus-manifest.json').read_text()):
  source=ROOT/case['source'];assert sha(source)==case['sha256']
- baseline=ROOT/'validation/glow-pulse-corpus/windows'/(case['name']+'.ass')
+ baseline=ROOT/'validation/settled-glow-corpus/windows'/(case['name']+'.ass')
  old=json.loads(baseline.with_suffix('.json').read_text())
- assert old['engine_sha256']==sha(ROOT/'tests/references/simplify_ass_v190.py')
+ assert old['engine_sha256']==sha(ROOT/'tests/references/simplify_ass_v191.py')
  assert old['source_sha256']==sha(source) and old['output_sha256']==sha(baseline) and old['missing_families']==[]
  output=DEST/baseline.name
  subprocess.run([sys.executable,str(ROOT/'validation/measure_one.py'),'--engine',str(ROOT/'simplify_ass.py'),'--source',str(source),'--fonts',str(ROOT/'fonts'),'--output',str(output)],cwd=ROOT,env=env,check=True,stdout=subprocess.DEVNULL)
@@ -28,4 +28,12 @@ output=DEST/'Goblin-Slayer-S01E02-track6.ass'
 subprocess.run([sys.executable,str(ROOT/'validation/measure_one.py'),'--engine',str(ROOT/'simplify_ass.py'),'--source',str(source),'--fonts',str(ROOT/'fonts'),'--output',str(output)],cwd=ROOT,env=env,check=True)
 new=json.loads(output.with_suffix('.json').read_text());assert not new['missing_families']
 assert new['engine_sha256']==sha(ROOT/'simplify_ass.py')
-print('Nine established corpus outputs unchanged; new failure converted with exact fonts')
+baseline=ROOT/'validation/settled-glow-corpus/windows/Goblin-Slayer-S01E02-track6.ass'
+old=json.loads(baseline.with_suffix('.json').read_text())
+assert old['engine_sha256']==sha(ROOT/'tests/references/simplify_ass_v191.py')
+assert old['source_sha256']==sha(source) and old['output_sha256']==sha(baseline)
+old_events=s.load_subtitle_events(baseline)[1];new_events=s.load_subtitle_events(output)[1]
+affected={'OP - R','OP - R Chant'}
+assert [e.fields() for e in old_events if e.style not in affected]==[e.fields() for e in new_events if e.style not in affected]
+assert len(new_events)<len(old_events)
+print('Nine established corpus outputs unchanged; corrected opening/chant lifecycles; all other supplied-track styles unchanged')

@@ -12,7 +12,7 @@ checks=[]
 def check(name,value):
  assert value,name
  checks.append(name)
-def fixture(*,reverse=False,whole=False,fill='C7F5B2',glow='1AC60D',base='FFFFFF',mutation=''):
+def fixture(*,reverse=False,whole=False,fill='C7F5B2',glow='1AC60D',base='FFFFFF',mutation='',boundaries=''):
  text=HEADER.replace('1,2,0,7,','1,0,0,5,')
  words=['Sun','moon','stars'];starts=[0,700,1400]
  if reverse:starts=starts[::-1]
@@ -38,6 +38,26 @@ def fixture(*,reverse=False,whole=False,fill='C7F5B2',glow='1AC60D',base='FFFFFF
    if mutation=='paint-changing echo' and j==1:tags=tags.replace(r'\blur8',r'\blur8\1c&HABCDEF&')
    if mutation=='whole scaled':tags+=r'\fscx105\fscy105'
    text+=event(literal,px,4,(1+begin/1000,1+finish/1000),tags)
+ if boundaries:
+  for j,word in enumerate(words):
+   x=100+j*150
+   text+=event(word,x+1,2,(1,4),r'\an5\alpha&H50&\1c&H000000&\blur1.5')
+   for entering in (True,False):
+    if boundaries=='exit only' and entering:continue
+    if boundaries=='missing word' and j==1:continue
+    times=(.75,1) if entering else (4,4.4)
+    if boundaries=='gap':times=(.70,.95) if entering else (4.05,4.45)
+    color='123456' if boundaries=='changed paint' and j==1 else base
+    px=x+20 if boundaries=='wrong anchor' and j==1 else x
+    tags=f'\\an5\\alpha&H{("FF" if entering else "10")}&\\1c&H{color}&\\blur0.9\\t(\\alpha&H{("10" if entering else "FF")}&\\blur3)'
+    if boundaries=='animated geometry' and j==1:tags=tags.replace('\\blur3','\\blur3\\fscx120')
+    text+=event(word,px,4,times,tags)
+    if boundaries=='ambiguous' and j==1:text+=event(word,px,4,times,tags)
+    # Both already-collapsed glow paint and retained offset backing have
+    # independent source fades. They must follow the same proved lifecycle.
+    for layer,anchor,alpha,color,blur in [(3,x,'30',glow,8),(2,x+1,'50','000000',1.5)]:
+     tags=f'\\an5\\alpha&H{("FF" if entering else alpha)}&\\1c&H{color}&\\blur{blur}\\t(\\alpha&H{(alpha if entering else "FF")}&\\blur10)'
+     text+=event(word,anchor,layer,times,tags)
  # A separate nearby caption must never become an owned effect.
  text+=event('Independent',550,5,(1,4),r'\an5\1c&H123456&')
  document=s._resolve_document_state(s.parse_subtitle_document(text));source=document.events
@@ -78,6 +98,42 @@ for label,kwargs in [
    return Image.frombytes('RGB',(640,360),r.stdout)
   a,b=frame(1200),frame(3500);check('native static hold',ImageChops.difference(a,b).getbbox() is None)
   check('native green pixels',sum(g>r*1.15 and g>b*1.15 for r,g,b in a.getdata())>100)
+for boundary in ['both','exit only','missing word','gap','changed paint','wrong anchor','animated geometry','ambiguous']:
+ _,source,events,visible=fixture(boundaries=boundary);before=deepcopy((source,events,visible))
+ result=s.flatten_stacked_text_copies(events,visible,set(source),source_events=source,font_metrics=metric,collect_rows=True)
+ parents=[e for e in result.events if e.layer=='4']
+ accepted=boundary in {'both','exit only'}
+ check(boundary+': boundary ownership',len(parents)==3 if accepted else len(parents)>3)
+ check(boundary+': immutable boundaries',before==(source,events,visible))
+ check(boundary+': counter accounting',result.removed_count+result.phase_merged==len(events)-len(result.events))
+ check(boundary+': protected core',len(result.rows)==3 and all(r.phase_core==(1,4) for r in result.rows) if accepted else not result.rows)
+ if accepted:
+  check(boundary+': complete lifetime',all((e.start_s,e.end_s)==((.75,4.4) if boundary=='both' else (1,4.4)) for e in parents))
+  check(boundary+': settled paint throughout',all(e.state['1a']==0 and 0<e.state['3a']<255 for e in parents))
+  check(boundary+': collapsed glow boundaries removed',not any(e.layer=='3' for e in result.events))
+  shadows=[e for e in result.events if e.layer=='2']
+  check(boundary+': backing lifetime and own paint',len(shadows)==3 and all(e.state['1a']==80 and e.state['1c']=='000000' and (e.start_s,e.end_s)==(parents[0].start_s,parents[0].end_s) for e in shadows))
+  families=s.collect_faded_cue_families(result.events,result.rows,source)
+  check(boundary+': overlap evidence handoff',len(families)==1 and families[0].core==(1,4))
+  again=s.flatten_stacked_text_copies(result.events,visible,set(source),source_events=source,font_metrics=metric)[0]
+  check(boundary+': repeated coordination stable',again==result.events)
+  repeated=s.replace_event(parents[0],source_index=30000,start=parents[0].end,end=s.format_time(parents[0].end_s+2),start_s=parents[0].end_s,end_s=parents[0].end_s+2)
+  pair=[parents[0],repeated];words={e.source_index:s.OVERRIDE_RE.sub('',e.text) for e in pair}
+  check(boundary+': repeated word cue separation',s.coalesce_lyric_phases(pair,words,phase_groups={e.source_index:e.source_index for e in pair})[1]==0)
+
+  # A later complete cue overlaps only in the flattened boundary phases.
+  later=[s.replace_event(e,source_index=e.source_index+20000,start=s.format_time(e.start_s+3.3),
+          end=s.format_time(e.end_s+3.3),start_s=e.start_s+3.3,end_s=e.end_s+3.3) for e in parents]
+  later_rows=[s.TextRow(e,[(e,s.OVERRIDE_RE.sub('',e.text),s.get_pos(e.text))],phase_core=(4.3,7.3)) for e in later]
+  combined=parents+later;rows=result.rows+later_rows
+  families=s.collect_faded_cue_families(combined,rows,source)
+  trimmed,count=s.trim_faded_cue_overlaps(combined,rows,source,cue_families=families)
+  check(boundary+': fade collision removed',count==1 and max(e.end_s for e in trimmed[:3])==min(e.start_s for e in trimmed[3:]))
+  check(boundary+': every core preserved',all(e.start_s<=1 and e.end_s>=4 for e in trimmed[:3]) and all(e.start_s<=4.3 and e.end_s>=7.3 for e in trimmed[3:]))
+  changed=[s.dataclass_replace(r,phase_core=(3.9,7.3)) for r in later_rows]
+  families=s.collect_faded_cue_families(combined,result.rows+changed,source)
+  check(boundary+': contradictory core rejected',s.trim_faded_cue_overlaps(combined,result.rows+changed,source,cue_families=families)[1]==0)
+
 for mutation in ['missing letter','wrong position','paint-changing echo','cycle','gradient','moving','competing glow','scrolling','changed current literal']:
  _,source,events,visible=fixture(mutation=mutation)
  out,count=s.flatten_stacked_text_copies(events,visible,set(source),source_events=source,font_metrics=metric)
@@ -102,7 +158,7 @@ for original in originals:
  if original.style!='OP - R' or s._returning_glow_highlight(original) is None:continue
  word=s.OVERRIDE_RE.sub('',original.text)
  check('real held word paint '+str(original.source_index),any(
-  e.start_s==original.start_s and e.end_s==original.end_s and
+  e.start_s<=original.start_s and e.end_s>=original.end_s and
   word in s.OVERRIDE_RE.sub('',e.text).replace(' ','') and
   e.state.get('1c')!='C7F5B2' and e.state.get('3a',0)>0 and int(e.state['1c'][2:4],16)>=int(e.state['1c'][4:],16) for e in es))
 (DEST/'checks.json').write_text(json.dumps(dict(version=s.__version__,checks=len(checks)),indent=2)+'\n')

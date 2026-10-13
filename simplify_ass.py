@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.14.191"
+__version__ = "2026.10.14.192"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -648,6 +648,16 @@ class StackedTextContext:
     font_metrics: FontMetrics | None = None
     glow_paint: dict[int,GlowPulsePaint] = field(default_factory=dict)
     owned_glow_fragments: set[int] = field(default_factory=set)
+    glow_captions: dict[int,Event] = field(default_factory=dict)
+    glow_collapsed: dict[int,list[int]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class StackedTextResult:
+    events: list[Event]
+    removed_count: int
+    phase_merged: int
+    rows: list[TextRow]
 
 
 @dataclass(frozen=True)
@@ -2740,7 +2750,8 @@ def select_static_sign_paint(events: list[Event], visible_map: dict[int, str]) -
     return [e for e in events if e.source_index not in removed], len(removed)
 
 
-def coalesce_lyric_phases(events: list[Event], visible_map: dict[int, str]) -> tuple[list[Event], int]:
+def coalesce_lyric_phases(events: list[Event], visible_map: dict[int, str], *,
+                          phase_groups: dict[int,int] | None = None) -> tuple[list[Event], int]:
     """Join glyph phases with sustained colours, keeping lyric rows separate."""
     groups: dict[tuple, list[Event]] = {}
     starts: dict[tuple, set[tuple]] = {}
@@ -2749,7 +2760,8 @@ def coalesce_lyric_phases(events: list[Event], visible_map: dict[int, str]) -> t
     for e in events:
         pos = get_pos(e.text)
         visible = visible_map.get(e.source_index, "")
-        if (e.kind != "Dialogue" or not e.lyric or pos is None):
+        admitted = e.lyric if phase_groups is None else e.source_index in phase_groups
+        if (e.kind != "Dialogue" or not admitted or pos is None):
             output.append(e)
             continue
         row = (e.style, e.name, e.layer, e.row)
@@ -2763,6 +2775,8 @@ def coalesce_lyric_phases(events: list[Event], visible_map: dict[int, str]) -> t
             continue
         key = (e.style, e.name, e.layer, e.margin_l, e.margin_r, e.margin_v,
                round(pos[0] / e.unit, 1) * e.unit, round(pos[1] / e.unit, 1) * e.unit, visible, text_layout_key(e), placement_key(e))
+        if phase_groups is not None:
+            key += (phase_groups[e.source_index],)
         groups.setdefault(key, []).append(e)
     # Identical letters can occupy the same position in consecutive lyrics.
     # A change in the surrounding glyphs marks a real lyric boundary.
@@ -4731,9 +4745,14 @@ def _render_stacked_text_caption(key: tuple, group: list[Event], proof: StackedT
         outline_states=outlines,measurement=chosen.measurement,
         source_glow_outline=glow.outline if glow is not None else None,
         source_glow_alpha=glow.outline_alpha if glow is not None else 0)
-    return [replace_event(chosen, text=text, layer=chosen.layer if proof.shadow_text or glow is not None else "0", effect="",
+    caption = replace_event(chosen, text=text, layer=chosen.layer if proof.shadow_text or glow is not None else "0", effect="",
                         source_index=min(e.source_index for e in group),
-                        lyric=chosen.lyric or proof.static_shadow_text)],len(group)-1,profile
+                        lyric=chosen.lyric or proof.static_shadow_text)
+    if glow is not None:
+        context.glow_captions[chosen.source_index] = caption
+        context.glow_collapsed[chosen.source_index] = [e.source_index for e in group
+                                                     if e.source_index != chosen.source_index]
+    return [caption],len(group)-1,profile
 
 
 def _flatten_stacked_text_group(context: StackedTextContext, key: tuple,
@@ -4750,12 +4769,152 @@ def _flatten_stacked_text_group(context: StackedTextContext, key: tuple,
     return _render_stacked_text_caption(key,group,proof,context)
 
 
+def _glow_boundary_phase(source: Event, held: Event, entering: bool) -> bool:
+    """Prove one stationary opacity leg joins the held source's primary paint."""
+    if (_glow_source_geometry(source) != _glow_source_geometry(held) or
+            _glow_source_geometry(source) is None or
+            any(source.state.get(k) != held.state.get(k) for k in ('1c','3c','4c'))):
+        return False
+    values = [value for tag,value in event_override_tokens(source) if tag == 't']
+    if len(values) != 1:
+        return False
+    transform = parse_effect_transform(values[0],source.duration,
+        {'alpha','1a','2a','3a','4a','c','1c','blur','be'},allow_instant=True)
+    if (transform is None or transform[0] > 50 or
+            abs(transform[1]-source.duration*1000) > 50):
+        return False
+    final,continuation = source.state.copy(),source.continuation
+    for tag,value in transform[2]:
+        continuation = apply_override(final,tag,value,source.styles,source.defaults,continuation)
+    if any(final.get(k) != source.state.get(k) for k in ('1c','3c','4c')):
+        return False
+    before,after = source.state.get('1a',0),final.get('1a',0)
+    return ((before >= 254 and after == held.state.get('1a',0)) if entering else
+            (before == held.state.get('1a',0) and after >= 254))
+
+
+def _handoff_glow_boundaries(context: StackedTextContext, events: list[Event],
+                              visible_map: dict[int,str]) -> tuple[list[Event],int,int,list[TextRow]]:
+    """Give complete boundary families settled paint and explicit phase ownership.
+
+    Source opacity animation proves the boundary; temporal proximity alone does
+    not. Retained offset backing paint follows its own held formatting. The
+    existing phase merger owns joining, while returned rows preserve the core
+    for reconstruction/overlap trimming. Sources and visibility remain borrowed.
+    """
+    if not context.glow_captions or context.source_events is None:
+        return events,0,0,[]
+    sources = context.source_events
+    current = {e.source_index:e for e in events}
+    families = {(e.style,e.name) for e in context.glow_captions.values()}
+    buckets = {}
+    for source in sources.values():
+        if source.kind != 'Dialogue' or (source.style,source.name) not in families:
+            continue
+        word = OVERRIDE_RE.sub('',source.text)
+        buckets.setdefault((source.style,source.name,word),[]).append(source)
+    resolved = {}
+    def resolve(e):
+        if e.source_index not in resolved:
+            evaluation = evaluate_effective_state(e.text,e.defaults,e.styles)
+            resolved[e.source_index] = dataclass_replace(e,state=evaluation.formatting,
+                continuation=evaluation.continuation)
+        return resolved[e.source_index]
+    rows = {}
+    for index,caption in context.glow_captions.items():
+        held = resolve(sources[index])
+        key = (held.style,held.name,held.start,held.end,_glow_source_geometry(held),get_pos(held.text)[1])
+        rows.setdefault(key,[]).append((held,caption))
+    replacements,phase_groups,proof_rows,removed = {},{},[],set()
+    for row in rows.values():
+        proposals = {}
+        for entering in (True,False):
+            matched = []
+            for held,caption in row:
+                word = OVERRIDE_RE.sub('',held.text)
+                peers = buckets[held.style,held.name,word]
+                candidates = [resolve(e) for e in peers if e.layer == held.layer and
+                    get_pos(e.text) == get_pos(held.text) and
+                    abs((e.end_s-held.start_s) if entering else (e.start_s-held.end_s)) <= .011 and
+                    e.source_index in current and
+                    OVERRIDE_RE.sub('',current[e.source_index].text) == word and
+                    _glow_boundary_phase(resolve(e),held,entering)]
+                if len(candidates) != 1:
+                    matched = [];break
+                matched.append((held,caption,candidates[0]))
+            if not matched or len({(p.start,p.end) for held,caption,p in matched}) != 1:
+                continue
+            for held,caption,phase in matched:
+                proposals.setdefault(held.source_index,[]).append(phase)
+        if not proposals:
+            continue
+        for held,caption in row:
+            phases = proposals[held.source_index]
+            word = OVERRIDE_RE.sub('',held.text)
+            # Each component is assigned its own family: a repeated word in a
+            # different cue must never inherit this cue's lifetime or core.
+            components = [(held,caption)]
+            # The caption already replaces these exact coextensive paint
+            # copies. Their matching boundary legs belong to that same stack,
+            # rather than becoming a second outlined caption after freezing.
+            for index in context.glow_collapsed.get(held.source_index,[]):
+                component = resolve(sources[index])
+                for boundary in phases:
+                    peers = [resolve(e) for e in buckets[held.style,held.name,word]
+                        if e.start == boundary.start and e.end == boundary.end and
+                           e.layer == component.layer and get_pos(e.text) == get_pos(component.text) and
+                           e.source_index in current and
+                           OVERRIDE_RE.sub('',current[e.source_index].text) == word and
+                           _glow_boundary_phase(resolve(e),component,boundary.end_s <= held.start_s+.011)]
+                    if len(peers) == 1:
+                        removed.add(peers[0].source_index)
+
+            for e in buckets[held.style,held.name,word]:
+                if (e.source_index == held.source_index or e.start != held.start or e.end != held.end or
+                        e.source_index not in current or not e.layer.lstrip('-').isdigit() or
+                        int(e.layer) >= int(held.layer) or get_pos(e.text) is None or
+                        math.dist(get_pos(e.text),get_pos(held.text)) > .1*text_height(held)):
+                    continue
+                component = resolve(e)
+                rendered = current[e.source_index]
+                if (rendered.layer == e.layer and OVERRIDE_RE.sub('',rendered.text) == word and
+                        _glow_source_geometry(component) == _glow_source_geometry(held)):
+                    components.append((component,rendered))
+            for component,rendered in components:
+                members = []
+                for boundary in phases:
+                    peers = [resolve(e) for e in buckets[held.style,held.name,word]
+                        if e.start == boundary.start and e.end == boundary.end and
+                           e.layer == component.layer and get_pos(e.text) == get_pos(component.text) and
+                           e.source_index in current and
+                           OVERRIDE_RE.sub('',current[e.source_index].text) == word and
+                           _glow_boundary_phase(resolve(e),component,boundary.end_s <= held.start_s+.011)]
+                    if len(peers) == 1:
+                        members.append(peers[0])
+                if not members:
+                    continue
+                phase_groups[rendered.source_index] = component.source_index
+                for phase in members:
+                    phase_groups[phase.source_index] = component.source_index
+                    replacements[phase.source_index] = replace_event(current[phase.source_index],text=rendered.text)
+                if component is held:
+                    first = min([rendered.source_index]+[p.source_index for p in members])
+                    proof_rows.append((first,rendered,held.start_s,held.end_s))
+    output = [replacements.get(e.source_index,e) for e in events if e.source_index not in removed]
+    output,merged = coalesce_lyric_phases(output,visible_map,phase_groups=phase_groups)
+    actual = {e.source_index:e for e in output}
+    rows = [TextRow(actual[index],[(held,OVERRIDE_RE.sub('',held.text),get_pos(held.text))],
+                    phase_core=(start,end)) for index,held,start,end in proof_rows if index in actual]
+    return output,len(removed),merged,rows
+
+
 def flatten_stacked_text_copies(events: list[Event],
                                    visible_map: dict[int,str],
                                    animated_sources: set[int] | None = None, *,
                                    max_piece_duration: float = .16,
                                    source_events: dict[int,Event] | None = None,
-                                   font_metrics: FontMetrics | None = None) -> tuple[list[Event], int]:
+                                   font_metrics: FontMetrics | None = None,
+                                   collect_rows: bool = False) -> tuple[list[Event], int] | StackedTextResult:
     """Replace stacked static copies of the same text with one.
 
     This is for standard simplification: color gradients, clipped stripes, shadows and
@@ -4782,7 +4941,9 @@ def flatten_stacked_text_copies(events: list[Event],
     if outline_profiles:
         output = normalize_karaoke_completion_paint(
             output,visible_map,source_events,outline_profiles=outline_profiles)
-    return output,removed
+    output,boundaries_removed,phases,rows = _handoff_glow_boundaries(context,output,visible_map)
+    removed += boundaries_removed
+    return StackedTextResult(output,removed,phases,rows) if collect_rows else (output,removed+phases)
 
 
 def remove_fragmented_font_decorations(events: list[Event], visible_map: dict[int,str],
@@ -10388,6 +10549,8 @@ def reconstruct_text_rows(
     Borrow event, source-row and shared-map inputs. Return final events/rows
     and proved visibility updates; the caller applies the updates explicitly.
     """
+    phase_cores = {row.base.source_index:row.phase_core for row in (source_rows or [])
+                   if row.phase_core is not None and not row.virtual and not static_only}
     source_rows = [row for row in (source_rows or []) if row.confirmed and not static_only]
     if source_only:
         return _normalize_source_row_paint(events,source_rows)
@@ -10407,8 +10570,16 @@ def reconstruct_text_rows(
               if e.source_index not in edits.removed]
     if not static_only:
         _collect_virtual_row_evidence(output,context,edits,protected)
+    rows = list(edits.row_evidence.values())
+    # Joining words changes the representative source ID. Carry only complete
+    # core evidence, protecting the union of every constituent held interval.
+    rows = [dataclass_replace(row,phase_core=(
+                min(phase_cores[e.source_index][0] for e,word,pos in row.pieces),
+                max(phase_cores[e.source_index][1] for e,word,pos in row.pieces)))
+            if row.pieces and all(e.source_index in phase_cores for e,word,pos in row.pieces)
+            else row for row in rows]
     return RowReconstructionResult(output,edits.merged_count,edits.duplicate_count,
-                                   list(edits.row_evidence.values()),edits.visibility_updates)
+                                   rows,edits.visibility_updates)
 
 
 
@@ -13583,6 +13754,27 @@ def collect_faded_cue_families(events: list[Event], rows: list[TextRow],
             family = CueFadeFamily(members,(min(core[0],previous.core[0]),
                                             max(core[1],previous.core[1])),family.xspan)
         candidates[identity] = family
+    # Phase coordinators may already have proved a settled core without an
+    # opaque source \fad (for example separate opacity-transform legs). Adopt
+    # that evidence only for complete, unchanged current cue groups.
+    explicit = {}
+    for e in events:
+        pos = get_pos(e.text)
+        if pos is not None and opaque_text_effect_state(e.state) and unrotated_text_state(e.state):
+            explicit.setdefault((text_cue_lane(e,pos,e.state),e.start,e.end),[]).append(e)
+    for members in explicit.values():
+        evidence = [provenance.get(e.source_index,[]) for e in members]
+        if not all(len(rs) == 1 and rs[0].base.text == e.text and rs[0].phase_core is not None
+                   and e.start_s <= rs[0].phase_core[0] < rs[0].phase_core[1] <= e.end_s
+                   for e,rs in zip(members,evidence)):
+            continue
+        cores = [rs[0].phase_core for rs in evidence]
+        xs = [pos[0] for rs in evidence for piece,word,pos in rs[0].pieces]
+        if not xs:
+            continue
+        core = (min(c[0] for c in cores),max(c[1] for c in cores))
+        identity = tuple(sorted(e.source_index for e in members))
+        candidates[identity] = CueFadeFamily(tuple(members),core,(min(xs),max(xs)))
     claims = collections.Counter(index for identity in candidates for index in identity)
     return [family for identity,family in candidates.items()
             if all(claims[index] == 1 for index in identity)]
@@ -14754,6 +14946,7 @@ def _consolidate_text_events(
     source_effects = prepared.effects_removed
     timing_sources = prepared.timing_sources
     stacked_text_copies_flattened = masked_decorations = 0
+    glow_phases = 0
     progressive_reveals = 0
     jitter_frames = jitter_stacks = word_echoes = 0
     if config.level == 1:
@@ -14773,10 +14966,13 @@ def _consolidate_text_events(
         dropped_drawings += font_decorations
         simplified_events, masked_decorations = remove_masked_glyph_effects(
             simplified_events, visible_map, font_metrics, animated_sources)
-        simplified_events, stacked_text_copies_flattened = flatten_stacked_text_copies(
+        stacks = flatten_stacked_text_copies(
             simplified_events, visible_map, animated_sources,
             max_piece_duration=config.short_duration,source_events=parsed_by_line,
-            font_metrics=font_metrics)
+            font_metrics=font_metrics,collect_rows=True)
+        simplified_events,stacked_text_copies_flattened = stacks.events,stacks.removed_count
+        glow_phases = stacks.phase_merged
+        source_rows = source_rows+stacks.rows
 
     stacked_text_copies_flattened += jitter_stacks
     sign_copies_removed = 0
@@ -14787,6 +14983,7 @@ def _consolidate_text_events(
     # Reconstruct each glyph's complete lifetime before trying to assemble rows.
     simplified_events, phase_merged = coalesce_lyric_phases(
         simplified_events, visible_map)
+    phase_merged += glow_phases
     joined_blanks, _ = coalesce_lyric_phases(blank_events, visible_map)
     for e in joined_blanks:
         pos = get_pos(e.text)
