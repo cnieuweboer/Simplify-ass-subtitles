@@ -84,10 +84,12 @@ of added simplified tracks without importing any other project scripts.
 ```console
 python remove_subtitles.py
 python remove_subtitles.py /path/to/media --recursive
-python remove_subtitles.py /path/to/media --output-dir /path/to/cleaned
+python remove_subtitles.py -i /path/to/media -o /path/to/cleaned
 ```
 
-With no folder argument it scans beside the script. Use `--recursive` to scan
+With no input folder it scans beside the script. Set the input with `-i` /
+`--input-dir` or the existing positional argument, and the output with `-o` /
+`--output-dir`. Use `--recursive` to scan
 subfolders. Output folders are excluded from scanning; the default destination
 is the input folder's `output/`, preserving relative subfolder paths.
 

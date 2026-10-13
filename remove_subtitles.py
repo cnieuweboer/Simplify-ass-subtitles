@@ -229,12 +229,16 @@ def remux(tool, item, target, removed):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("folder", nargs="?", type=Path, default=Path(__file__).resolve().parent,
+    parser.add_argument("folder", nargs="?", type=Path,
+                        help="folder of MKVs (legacy positional syntax; default: beside this script)")
+    parser.add_argument("-i", "--input-dir", type=Path,
                         help="folder of MKVs (default: beside this script)")
     parser.add_argument("--recursive", action="store_true", help="include subfolders, excluding output folders")
-    parser.add_argument("--output-dir", type=Path, help="output folder (default: INPUT/output)")
+    parser.add_argument("-o", "--output-dir", type=Path, help="output folder (default: INPUT/output)")
     args = parser.parse_args(argv)
-    root = args.folder.resolve()
+    if args.folder is not None and args.input_dir is not None:
+        parser.error("Specify the input folder either positionally or with -i, not both.")
+    root = (args.input_dir or args.folder or Path(__file__).resolve().parent).resolve()
     output = args.output_dir.resolve() if args.output_dir else root / "output"
     if not root.is_dir():
         print(f"ERROR: Not a directory: {root}")

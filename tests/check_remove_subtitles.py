@@ -84,6 +84,35 @@ class RemovalChecks(unittest.TestCase):
                 self.assertEqual(path.read_bytes(), b"source")
                 self.assertFalse(Path(folder, "output").exists())
 
+    def test_input_and_output_aliases(self):
+        for input_option, output_option in (("-i", "-o"), ("--input-dir", "--output-dir")):
+            with tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                media = root / "media"
+                media.mkdir()
+                source = media / "episode.mkv"
+                source.touch()
+                output = root / "cleaned"
+                info = {"tracks": [track(3)]}
+                with patch.object(remove.shutil, "which", return_value="mkvmerge"), \
+                     patch.object(remove, "identify", return_value=info) as identify, \
+                     patch.object(remove, "remux", return_value=True) as remux, \
+                     patch("builtins.input", side_effect=["1", "y"]), \
+                     patch("sys.stdout", new_callable=io.StringIO):
+                    self.assertEqual(remove.main([input_option, str(media),
+                                                  output_option, str(output)]), 0)
+                identify.assert_called_once_with("mkvmerge", source)
+                self.assertEqual(remux.call_args.args[1].path, source)
+                self.assertEqual(remux.call_args.args[2], output / source.name)
+
+    def test_conflicting_input_forms_are_rejected(self):
+        with patch("sys.stderr", new_callable=io.StringIO), \
+             patch.object(remove, "find_files") as scan:
+            with self.assertRaises(SystemExit) as raised:
+                remove.main(["media", "--input-dir", "other-media"])
+            self.assertEqual(raised.exception.code, 2)
+            scan.assert_not_called()
+
     def test_no_pairs_skips_option_one_and_cancel_is_read_only(self):
         with tempfile.TemporaryDirectory() as folder:
             Path(folder, "episode.mkv").touch()
