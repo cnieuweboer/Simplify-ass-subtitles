@@ -106,17 +106,20 @@ def manual_selection(catalog):
     for number, (name, language, codec) in enumerate(catalog, 1):
         print(f"  {number}. [{language}] {name or '(unnamed)'} [{codec}]")
     while True:
-        answer = input("Select tracks to remove (commas/spaces; blank or q to cancel): ").strip()
+        answer = input("Select subtitles: 1,3 to remove; k 1,3 to keep; blank or q to cancel: ").strip()
         if not answer or answer.lower() == "q":
             raise EOFError
+        keep = bool(re.match(r"(?i)^k(?:\s|$)", answer))
+        if keep:
+            answer = answer[1:].strip()
         if not re.fullmatch(r"[0-9]+(?:[\s,]+[0-9]+)*", answer):
-            print("Enter numbers separated by commas or spaces.")
+            print("Enter numbers separated by commas or spaces; prefix with k to keep them.")
             continue
         numbers = {int(token) for token in re.split(r"[\s,]+", answer)}
         if any(number < 1 or number > len(catalog) for number in numbers):
             print("A number is outside the list.")
             continue
-        return {catalog[number - 1] for number in numbers}
+        return {catalog[number - 1] for number in numbers}, keep
 
 
 def removal_mode():
@@ -130,17 +133,28 @@ def removal_mode():
         print("Enter 1 or 2.")
 
 
-def preview(items, root, output, automatic, selected, failures):
+def preview(items, root, output, automatic, selected, failures, keep=False):
     print("\nReview removals before remuxing:")
+    if keep:
+        print("Keep selected subtitle groups; remove all other subtitles in matching files.")
     plan = []
     for item in items:
-        removed = set(item.pairs) if automatic else {
-            track["id"] for track in item.info["tracks"]
-            if track["type"] == "subtitles" and subtitle_key(track) in selected}
+        subtitles = [track for track in item.info["tracks"] if track["type"] == "subtitles"]
+        matching = {track["id"] for track in subtitles if subtitle_key(track) in selected}
         relative = item.path.relative_to(root)
+        if keep and not matching:
+            print(f"  {relative}: none of the selected keep tracks found; skipped.")
+            continue
+        if automatic:
+            removed = set(item.pairs)
+        elif keep:
+            removed = {track["id"] for track in subtitles} - matching
+        else:
+            removed = matching
         target = output / relative
         if not removed:
-            print(f"  {relative}: no matching tracks; skipped.")
+            print(f"  {relative}: " + ("all subtitles already match the keep selection; skipped."
+                                      if keep else "no matching tracks; skipped."))
             continue
         if target.exists() or target.is_symlink():
             print(f"  {relative}: existing output; skipped ({target}).")
@@ -270,15 +284,15 @@ def main(argv=None):
             print("No subtitle tracks found.")
             return int(bool(failures))
         automatic = removal_mode() if any(item.pairs for item in items) else False
-        selected = set() if automatic else manual_selection(catalog)
+        selected, keep = (set(), False) if automatic else manual_selection(catalog)
         while True:
-            plan = preview(items, root, output, automatic, selected, failures)
+            plan = preview(items, root, output, automatic, selected, failures, keep)
             prompt = "Remux these files? (y/N; m for manual selection): " if automatic else \
                      "Remux these files? (y/N; m to revise selection): "
             answer = input(prompt).strip().lower()
             if answer == "m":
                 automatic = False
-                selected = manual_selection(catalog)
+                selected, keep = manual_selection(catalog)
                 continue
             if answer not in ("y", "yes"):
                 print("Cancelled. No files changed.")

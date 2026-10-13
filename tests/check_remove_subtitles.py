@@ -47,7 +47,38 @@ class RemovalChecks(unittest.TestCase):
         self.assertEqual(a, remove.subtitle_key(track(17)))
         with patch("builtins.input", side_effect=["0", "3", "abc", "1,2 1"]), \
              patch("sys.stdout", new_callable=io.StringIO):
-            self.assertEqual(remove.manual_selection([a, b]), {a, b})
+            self.assertEqual(remove.manual_selection([a, b]), ({a, b}, False))
+
+    def test_keep_selection_and_empty_input(self):
+        catalog = [remove.subtitle_key(track(1)), remove.subtitle_key(track(2, codec="S_TEXT/UTF8"))]
+        with patch("builtins.input", side_effect=["k", "k 0", "k 3", "k 1,2 1"]), \
+             patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(remove.manual_selection(catalog), (set(catalog), True))
+        for answer in ("", "q"):
+            with patch("builtins.input", return_value=answer), \
+                 patch("sys.stdout", new_callable=io.StringIO):
+                with self.assertRaises(EOFError):
+                    remove.manual_selection(catalog)
+
+    def test_keep_preview_skips_missing_and_keeps_duplicate_groups(self):
+        root = Path("/media")
+        kept = track(2)
+        info = {"tracks": [track(0, kind="video"), track(1, kind="audio"), kept,
+                           track(3), track(4, codec="S_TEXT/UTF8")]}
+        missing = {"tracks": [track(7, "French", "fr")]}
+        items = [remove.ScannedFile(root / "match.mkv", info, (), {}),
+                 remove.ScannedFile(root / "missing.mkv", missing, (), {}),
+                 remove.ScannedFile(root / "unchanged.mkv", {"tracks": [kept]}, (), {})]
+        with patch("sys.stdout", new_callable=io.StringIO) as output:
+            plan = remove.preview(items, root, root / "output", False,
+                                  {remove.subtitle_key(kept)}, 0, keep=True)
+        self.assertEqual(len(plan), 1)
+        self.assertEqual(plan[0][2], {4})
+        self.assertIn("none of the selected keep tracks found; skipped", output.getvalue())
+        self.assertIn("all subtitles already match the keep selection; skipped", output.getvalue())
+        self.assertIn("KEEP ID 2", output.getvalue())
+        self.assertIn("KEEP ID 3", output.getvalue())
+        self.assertIn("REMOVE ID 4", output.getvalue())
 
     def test_recursion_excludes_output_trees(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -65,7 +96,9 @@ class RemovalChecks(unittest.TestCase):
         info = {"tracks": [track(3), track(9, "English (Simplified)")]}
         for answers, wanted in ((["2", "m", "1", "y"], {3}),
                                 (["2", "n"], None),
-                                (["1", "2", "y"], {9})):
+                                (["1", "2", "y"], {9}),
+                                (["1", "k 1", "y"], {9}),
+                                (["2", "m", "k 1", "y"], {9})):
             with tempfile.TemporaryDirectory() as folder:
                 path = Path(folder, "episode.mkv")
                 path.write_bytes(b"source")
