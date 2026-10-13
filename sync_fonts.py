@@ -1002,7 +1002,7 @@ def main(argv=None):
     output.mkdir(parents=True, exist_ok=True)
     counts = collections.Counter()
     inspections = {}
-    print("Scanning all MKVs and subtitle font references before asking...")
+    print("Scanning MKVs and subtitle font references...")
     for index, source in enumerate(sources, 1):
         print(f"\n[Scan {index}/{len(sources)}] {source.name}")
         if (output / source.name).exists():
