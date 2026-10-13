@@ -60,7 +60,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 66 current scripts. The runner uses three workers for
+The suite inventory lists 67 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
@@ -185,3 +185,7 @@ powershell.exe -NoProfile -File tests/windows/check_reporting.ps1
 PowerShell 7 can also run these checks using `pwsh`. Linux checks do not validate
 Windows extraction, job management or filesystem behavior. The existing Python
 reporting and statistics-name checks remain independent of the wrapper catalog.
+
+See [LATE_COMPLETE_COPIES.md](LATE_COMPLETE_COPIES.md) for final complete-caption
+deduplication after lyric proofs (v184), its strict paint/geometry admission and
+focused/corpus validation.

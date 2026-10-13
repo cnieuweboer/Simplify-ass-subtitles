@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.13.183"
+__version__ = "2026.10.13.184"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -16901,6 +16901,74 @@ def normalize_near_text_colors(events: list[Event]) -> tuple[list[Event], int]:
     return output, count
 
 
+def remove_late_complete_copies(events: list[Event]) -> tuple[list[Event], int]:
+    """Remove static, wholly covered complete copies after all lyric proofs.
+
+    Compare every literal span, including paint, parser history and document
+    context. Only the anchor may differ, within the existing six-percent text
+    height bound. Require equal layers and preserve intervening compositing.
+    Retained records alone provide coverage, so offset chains cannot drift.
+    Borrow records, styles and formatting caches without modifying them.
+    """
+    groups: dict[tuple, list[tuple[int, Event]]] = {}
+    layers: dict[str, list[int]] = {}
+    heights: dict[int, float] = {}
+    wrapping: set[int] = set()
+    for index, event in enumerate(events):
+        if event.kind == 'Dialogue':
+            layers.setdefault(event.layer, []).append(index)
+        pos = get_pos(event.text)
+        if (pos is None or not all(math.isfinite(v) for v in pos)
+                or has_translucent_paint(event)):
+            continue
+        key = static_object_key(event, event.styles)
+        if key is None:
+            continue
+        runs, span_heights = [], []
+        for signature, drawing, payload in key[-1]:
+            state = dict(signature.formatting)
+            if (drawing or state.get('pos') != pos or state.get('clip') is not None
+                    or state.get('iclip') is not None):
+                break
+            span_heights.append(max(event.unit, abs(state.get('fs', 20) * state.get('fscy', 100) / 100)))
+            if state.get('q', event.measurement.script_wrap_mode) != 2:
+                wrapping.add(index)
+            runs.append((StaticSpanSignature(tuple((k, v) for k, v in signature.formatting
+                                                  if k != 'pos'), signature.continuation), payload))
+        else:
+            # Lone glyphs remain phase/fragments work, outside complete-copy cleanup.
+            if sum(c.isalnum() for _, payload in runs for c in payload) >= 2:
+                heights[index] = min(span_heights)
+                groups.setdefault(key[:-1] + (tuple(runs),), []).append((index, event))
+
+    removed: set[int] = set()
+    for group in groups.values():
+        retained: list[tuple[int, Event]] = []
+        for index, event in sorted(group, key=lambda item: (-item[1].duration, item[0])):
+            x, y = get_pos(event.text)
+            for other_index, other in retained:
+                ox, oy = get_pos(other.text)
+                radius = .06 * min(heights[index], heights[other_index])
+                if (not math.isfinite(radius) or other.start_s > event.start_s
+                        or other.end_s < event.end_s or abs(x - ox) > radius
+                        or abs(y - oy) > radius
+                        # Translating an automatically wrapped line can change
+                        # its available width and actual rendered line breaks.
+                        or ((x != ox or y != oy) and (index in wrapping or other_index in wrapping))):
+                    continue
+                low, high = sorted((index, other_index))
+                peers = layers[event.layer]
+                if any(peer not in removed and events[peer].start_s < event.end_s
+                       and events[peer].end_s > event.start_s
+                       for peer in peers[bisect_right(peers, low):bisect_left(peers, high)]):
+                    continue
+                removed.add(index)
+                break
+            else:
+                retained.append((index, event))
+    return [event for index, event in enumerate(events) if index not in removed], len(removed)
+
+
 def simplify_ass(
     path: Path, output: Path, config: SimplifyConfig, *, font_metrics: FontMetrics | None=None,
     font_report: FontProcessingReport | None=None, outline_matcher: FontOutlineMatcher | None=None,
@@ -16933,9 +17001,12 @@ def simplify_ass(
     supports = settle_caption_backdrop_layers(supports, output_events, font_metrics)
     output_events = supports.events
     output_events, normalized_colors = normalize_near_text_colors(output_events)
+    output_events, late_copies = remove_late_complete_copies(output_events)
+    supports = dataclass_replace(supports, events=output_events)
     write_subtitle_document(output,captions,output_events,final_newline=True)
     stats = _summarize_caption_supports(text_result.statistics,supports,font_metrics)
     stats['shadow_lettering_normalized'] = shadow_lettering
+    stats['deduped'] += late_copies
     if normalized_colors:
         stats['text_colors_normalized'] = normalized_colors
     _print_support_report(supports,scroll_report,config)

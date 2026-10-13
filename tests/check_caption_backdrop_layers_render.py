@@ -152,7 +152,8 @@ for name,at,style,text in [('Sword-S01E03',121.3,'ZahuSigns','(Cat Beastmen Styl
 
 def definitions(path):
     return {node.name:node for node in executable_ast(ast.parse(path.read_text())).body if isinstance(node,(ast.FunctionDef,ast.ClassDef))}
-old,new=definitions(ROOT/'tests/references/simplify_ass_v182.py'),definitions(ROOT/'simplify_ass.py')
+# Keep the historical v183 scope audit bounded; live behavior checks above use current code.
+old,new=definitions(ROOT/'tests/references/simplify_ass_v182.py'),definitions(ROOT/'tests/references/simplify_ass_v183.py')
 check('only final-layer helper added',new.keys()-old.keys()=={'settle_caption_backdrop_layers'} and not old.keys()-new.keys())
 check('only final pipeline wiring changed',{name for name in old if ast.dump(old[name])!=ast.dump(new[name])}=={'simplify_ass'})
 (DEST/'checks.json').write_text(json.dumps(dict(version=s.__version__,checks=len(checks)),indent=2)+'\n')

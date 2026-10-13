@@ -6,7 +6,8 @@ Production code is unchanged.
 
 The first follow-up release, v183, implements final caption/backdrop layering;
 see [CAPTION_BACKDROP_LAYERS.md](CAPTION_BACKDROP_LAYERS.md). The observations
-below describe the original v182 investigation.
+below describe the original v182 investigation. The v184 follow-up implements
+bounded late complete-copy cleanup; see [LATE_COMPLETE_COPIES.md](LATE_COMPLETE_COPIES.md).
 
 ## What the second conversion improves
 
