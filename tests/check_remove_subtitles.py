@@ -60,7 +60,7 @@ class RemovalChecks(unittest.TestCase):
                 with self.assertRaises(EOFError):
                     remove.manual_selection(catalog)
 
-    def test_keep_preview_skips_missing_and_keeps_duplicate_groups(self):
+    def test_keep_preview_removes_nonmatching_tracks_and_keeps_duplicate_groups(self):
         root = Path("/media")
         kept = track(2)
         info = {"tracks": [track(0, kind="video"), track(1, kind="audio"), kept,
@@ -72,9 +72,11 @@ class RemovalChecks(unittest.TestCase):
         with patch("sys.stdout", new_callable=io.StringIO) as output:
             plan = remove.preview(items, root, root / "output", False,
                                   {remove.subtitle_key(kept)}, 0, keep=True)
-        self.assertEqual(len(plan), 1)
+        self.assertEqual(len(plan), 2)
         self.assertEqual(plan[0][2], {4})
-        self.assertIn("none of the selected keep tracks found; skipped", output.getvalue())
+        self.assertEqual(plan[1][2], {7})
+        self.assertIn("No selected keep tracks found: ALL subtitles will be removed.", output.getvalue())
+        self.assertIn("REMOVE ID 7", output.getvalue())
         self.assertIn("all subtitles already match the keep selection; skipped", output.getvalue())
         self.assertIn("KEEP ID 2", output.getvalue())
         self.assertIn("KEEP ID 3", output.getvalue())

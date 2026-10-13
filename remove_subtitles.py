@@ -136,15 +136,12 @@ def removal_mode():
 def preview(items, root, output, automatic, selected, failures, keep=False):
     print("\nReview removals before remuxing:")
     if keep:
-        print("Keep selected subtitle groups; remove all other subtitles in matching files.")
+        print("Keep selected subtitle groups; remove all other subtitles from every file.")
     plan = []
     for item in items:
         subtitles = [track for track in item.info["tracks"] if track["type"] == "subtitles"]
         matching = {track["id"] for track in subtitles if subtitle_key(track) in selected}
         relative = item.path.relative_to(root)
-        if keep and not matching:
-            print(f"  {relative}: none of the selected keep tracks found; skipped.")
-            continue
         if automatic:
             removed = set(item.pairs)
         elif keep:
@@ -160,6 +157,8 @@ def preview(items, root, output, automatic, selected, failures, keep=False):
             print(f"  {relative}: existing output; skipped ({target}).")
             continue
         print(f"\n  {relative} -> {target}")
+        if keep and not matching:
+            print("    No selected keep tracks found: ALL subtitles will be removed.")
         for track in item.info["tracks"]:
             if track["type"] != "subtitles":
                 continue
