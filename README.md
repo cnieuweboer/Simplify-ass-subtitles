@@ -61,13 +61,13 @@ At manual selection:
 
 ```text
 1,3         Remove groups 1 and 3
-jp          Remove all Japanese subtitles (ja/jpn also work)
-k eng, ger  Keep only English and German subtitles
-k eng, 3    Keep all English subtitles and group 3
+ja       Remove subtitles listed as [ja]
+k en, de Keep subtitles listed as [en] or [de]
+k en, 3  Keep [en] subtitles and group 3
 ```
 
-Language codes select all names and formats; `eng` includes regional tags such
-as `en-US`. Blank input cancels. Files with none of the selected keep tracks
+Use the exact language codes shown in the list; `[en]` and `[en-US]` are
+separate selections. Codes select all matching names and formats. Blank input cancels. Files with none of the selected keep tracks
 have all subtitles removed; review the preview.
 
 Automatic removal requires a matching original of the same language in each

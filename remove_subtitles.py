@@ -101,47 +101,6 @@ def find_files(root, output, recursive):
     return sorted(files, key=lambda path: str(path.relative_to(root)).casefold())
 
 
-# ISO 639-1 / 639-2 language equivalents, including bibliographic aliases.
-# Embedded here so the script remains portable and needs no language package.
-LANGUAGE_GROUPS = """
-aa aar | ab abk | af afr | ak aka | am amh | ar ara | an arg | as asm
-av ava | ae ave | ay aym | az aze | ba bak | bm bam | be bel | bn ben
-bh bih | bi bis | bo bod tib | bs bos | br bre | bg bul | ca cat | cs ces cze
-ch cha | ce che | cu chu | cv chv | kw cor | co cos | cr cre | cy cym wel
-da dan | de deu ger | dv div | dz dzo | el ell gre | en eng | eo epo | et est
-eu eus baq | ee ewe | fo fao | fa fas per | fj fij | fi fin | fr fra fre | fy fry
-ff ful | gd gla | ga gle | gl glg | gv glv | gn grn | gu guj | ht hat
-ha hau | he heb | hz her | hi hin | ho hmo | hr hrv | hu hun | hy hye arm
-ig ibo | io ido | ii iii | iu iku | ie ile | ia ina | id ind | ik ipk
-is isl ice | it ita | jv jav | ja jpn | kl kal | kn kan | ks kas | ka kat geo
-kr kau | kk kaz | km khm | ki kik | rw kin | ky kir | kv kom | kg kon
-ko kor | kj kua | ku kur | lo lao | la lat | lv lav | li lim | ln lin
-lt lit | lb ltz | lu lub | lg lug | mh mah | ml mal | mr mar | mk mkd mac
-mg mlg | mt mlt | mn mon | mi mri mao | ms msa may | my mya bur | na nau | nv nav
-nr nbl | nd nde | ng ndo | ne nep | nl nld dut | nn nno | nb nob | no nor
-ny nya | oc oci | oj oji | or ori | om orm | os oss | pa pan | pi pli
-pl pol | pt por | ps pus | qu que | rm roh | ro ron rum | rn run | ru rus
-sg sag | sa san | si sin | sk slk slo | sl slv | se sme | sm smo | sn sna
-sd snd | so som | st sot | es spa | sq sqi alb | sc srd | sr srp | ss ssw
-su sun | sw swa | sv swe | ty tah | ta tam | tt tat | te tel | tg tgk
-tl tgl | th tha | ti tir | to ton | tn tsn | ts tso | tk tuk | tr tur
-tw twi | ug uig | uk ukr | ur urd | uz uzb | ve ven | vi vie | vo vol
-wa wln | wo wol | xh xho | yi yid | yo yor | za zha | zh zho chi | zu zul
-"""
-LANGUAGE_ALIASES = {
-    alias: group.split()[0]
-    for group in LANGUAGE_GROUPS.replace("\n", " | ").split("|")
-    for alias in group.split()
-}
-LANGUAGE_ALIASES["jp"] = "ja"  # Common shorthand for Japanese.
-
-
-def normalized_language(code):
-    parts = code.casefold().split("-")
-    parts[0] = LANGUAGE_ALIASES.get(parts[0], parts[0])
-    return "-".join(parts)
-
-
 def parse_selection(answer, catalog):
     answer = answer.strip()
     if not answer or answer.casefold() == "q":
@@ -160,10 +119,9 @@ def parse_selection(answer, catalog):
                 raise ValueError("A number is outside the list.")
             selected.add(catalog[number - 1])
         else:
-            language = normalized_language(token)
+            language = token.casefold()
             matching = {key for key in catalog
-                        if normalized_language(key[1]) == language
-                        or normalized_language(key[1]).startswith(language + "-")}
+                        if key[1].casefold() == language}
             if not matching:
                 raise ValueError(f"No subtitles found for language code: {token}")
             selected.update(matching)
@@ -175,7 +133,7 @@ def manual_selection(catalog):
     for number, (name, language, codec) in enumerate(catalog, 1):
         print(f"  {number}. [{language}] {name or '(unnamed)'} [{codec}]")
     while True:
-        answer = input("Select subtitles: numbers or languages (1,3 or eng,jp); k to keep; blank or q to cancel: ")
+        answer = input("Select subtitles: numbers or languages (1,3 or en,ja); k to keep; blank or q to cancel: ")
         try:
             return parse_selection(answer, catalog)
         except ValueError as error:
