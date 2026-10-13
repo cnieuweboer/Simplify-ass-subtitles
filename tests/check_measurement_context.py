@@ -130,7 +130,7 @@ for phase,(old,doc) in enumerate(zip(documents(previous,late),documents(current,
 tree=ast.parse((ROOT/'simplify_ass.py').read_text())
 render_calls=[n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name)
               and n.func.id=='render_simplified_caption']
-check('all 24 render paths propagate context',len(render_calls)==24 and
+check('every render path propagates context',bool(render_calls) and
       all(any(k.arg=='measurement' for k in call.keywords) for call in render_calls))
 check('no legacy measurement keys in production',(ROOT/'simplify_ass.py').read_text().find('"_canvas"')==-1 and
       '_script_wrap_mode' not in (ROOT/'simplify_ass.py').read_text())

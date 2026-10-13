@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.13.189"
+__version__ = "2026.10.14.190"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -646,6 +646,17 @@ class StackedTextContext:
     animated_sources: set[int] | None
     source_events: dict[int,Event] | None
     font_metrics: FontMetrics | None = None
+    glow_paint: dict[int,GlowPulsePaint] = field(default_factory=dict)
+    owned_glow_fragments: set[int] = field(default_factory=set)
+
+
+@dataclass(frozen=True)
+class GlowPulsePaint:
+    """Source-proved returning highlight and persistent contour, owned by one stack."""
+    fill: str
+    outline: str
+    fragments: frozenset[int]
+    scale: tuple[float,float]
 
 
 @dataclass(frozen=True)
@@ -1487,6 +1498,7 @@ def render_tag(name: str, value) -> str:
 def render_simplified_caption(state: dict, text: str,
                        outline_states: Iterable[dict] | None = None, *,
                        measurement: DocumentMeasurementContext = DocumentMeasurementContext(),
+                       source_glow_outline: str | None = None,
                        **layout) -> str:
     """Retain the selected foreground and an unambiguous contrasting outline.
 
@@ -1549,6 +1561,12 @@ def render_simplified_caption(state: dict, text: str,
         outline_luma = luminance(candidate)
         if (max(fill_luma,outline_luma)+.05)/(min(fill_luma,outline_luma)+.05) >= 3:
             outline = candidate
+    # A source-proved persistent glow is visible primary paint surrounding the
+    # foreground, rather than a literal ASS border. Its authored palette is
+    # deliberately retained; the neutral-outline contrast rule remains the
+    # fallback for ordinary/ambiguous stacks.
+    if source_glow_outline is not None and re.fullmatch(r'[0-9A-F]{6}',source_glow_outline):
+        outline = source_glow_outline
     state = {**DEFAULT_STATE, **state,
              "1c":fill, "3c":outline, "1a":0, "3a":0,
              "bord":2, "shad":0, "blur":0, "be":0}
@@ -3884,6 +3902,227 @@ def flatten_held_text_paint_copies(events: list[Event], visible_map: dict[int,st
     return output,len(removed)
 
 
+def _glow_source_geometry(e: Event) -> tuple | None:
+    """Uniform stationary source layout; paint animation is evaluated separately."""
+    if (e.kind != 'Dialogue' or e.duration <= 0 or get_pos(e.text) is None or
+            e.effect.split(';',1)[0].strip().casefold() in {'banner','scroll up','scroll down'} or
+            not e.layer.lstrip('-').isdigit() or inline_layout_key(e) or
+            not unrotated_text_state(e.state) or e.state.get('p',0) or
+            any(k in e.state for k in ('clip','iclip','org')) or
+            any(abs(e.state.get(k,0)) > .001 for k in ('fax','fay')) or
+            any(tag in {'move','r','k','kf','ko','kt','fade'}
+                for tag,value in event_override_tokens(e))):
+        return None
+    fades = [value for tag,value in event_override_tokens(e) if tag == 'fad']
+    if fades:
+        if len(fades) != 1:
+            return None
+        try:
+            values = [float(v) for v in fades[0].strip('()').split(',')]
+        except ValueError:
+            return None
+        if (len(values) != 2 or not all(math.isfinite(v) and v >= 0 for v in values) or
+                sum(values) > e.duration*1000):
+            return None
+    return text_layout_key(e)
+
+
+def _returning_glow_highlight(e: Event) -> tuple[str,float,float] | None:
+    """Prove one foreground pulse returns to its base without changing layout/opacity."""
+    transforms = [value for tag,value in event_override_tokens(e) if tag == 't']
+    if len(transforms) != 2 or e.state.get('1a',0) >= 128:
+        return None
+    parsed = [parse_effect_transform(value,e.duration,{'c','1c','blur','be','fscx','fscy'},
+                                    allow_instant=True) for value in transforms]
+    if any(p is None for p in parsed):
+        return None
+    first,last = parsed
+    if first[1] > last[0] or last[1] > e.duration*1000+50:
+        return None
+    state = e.state.copy()
+    continuation = e.continuation
+    for tag,value in first[2]:
+        continuation = apply_override(state,tag,value,e.styles,e.defaults,continuation)
+    color = state.get('1c')
+    if color == e.state.get('1c') or not re.fullmatch(r'[0-9A-F]{6}',str(color)):
+        return None
+    if any(not .5 <= state.get(k,100)/max(.01,e.state.get(k,100)) <= 1.5
+           for k in ('fscx','fscy')):
+        return None
+    for tag,value in last[2]:
+        continuation = apply_override(state,tag,value,e.styles,e.defaults,continuation)
+    if (state.get('1c') != e.state.get('1c') or
+            any(state.get(k,100) != e.state.get(k,100) for k in ('fscx','fscy'))):
+        return None
+    return color,e.start_s+first[0]/1000,e.start_s+last[1]/1000
+
+
+def _matching_glow_pulse_geometry(glow: Event, foreground: Event) -> bool:
+    """Keep a persistent glow's paint while admitting synchronized restored scale pulses."""
+    if (tuple(value for tag,value in event_override_tokens(glow) if tag == 'fad') !=
+            tuple(value for tag,value in event_override_tokens(foreground) if tag == 'fad')):
+        return False
+    values = [value for tag,value in event_override_tokens(glow) if tag == 't']
+    if not values:
+        return True
+    targets = [value for tag,value in event_override_tokens(foreground) if tag == 't']
+    if len(values) != 2 or len(targets) != 2:
+        return False
+    for value,target in zip(values,targets):
+        a = parse_effect_transform(value,glow.duration,{'fscx','fscy','blur','be'},allow_instant=True)
+        b = parse_effect_transform(target,foreground.duration,
+            {'c','1c','fscx','fscy','blur','be'},allow_instant=True)
+        if a is None or b is None or a[:2] != b[:2]:
+            return False
+        first,second = glow.state.copy(),foreground.state.copy()
+        ca,cb = glow.continuation,foreground.continuation
+        for tag,argument in a[2]:
+            ca = apply_override(first,tag,argument,glow.styles,glow.defaults,ca)
+        for tag,argument in b[2]:
+            cb = apply_override(second,tag,argument,foreground.styles,foreground.defaults,cb)
+        if any(first.get(k,100) != second.get(k,100) for k in ('fscx','fscy')):
+            return False
+    return True
+
+
+def _index_glow_pulse_paint(context: StackedTextContext) -> dict[int,GlowPulsePaint]:
+    """Prove ordered returning word highlights, their glow and exact-font letter copies.
+
+    Original geometry and blur are essential: freezing has already erased blur
+    and expanded dissolving letters. Proofs expire with this stack pass. Complete
+    rows are accepted atomically; competing owners and missing letters keep the
+    ordinary fallback. Colors, names and number of words do not select a source.
+    """
+    metric = context.font_metrics
+    if not context.source_events or metric is None or not metric.available:
+        return {}
+    sources = context.source_events
+    current = {e.source_index:e for group in context.groups.values() for e in group}
+    resolved = {}
+    def source_event(index):
+        original = sources.get(index)
+        if original is not None and index not in resolved:
+            evaluated = evaluate_effective_state(original.text,original.defaults,original.styles)
+            resolved[index] = dataclass_replace(original,state=evaluated.formatting,
+                                                continuation=evaluated.continuation)
+        return resolved.get(index)
+    letters = {}
+    rows = {}
+    expected = {}
+    for key,group in context.groups.items():
+        proof = _prove_stacked_text_paint(context,group)
+        if proof is None or not proof.solid_stack or proof.shadow_text or proof.static_shadow_text:
+            continue
+        chosen = _select_stacked_text_foreground(group,proof)
+        original = source_event(chosen.source_index)
+        if original is None or get_pos(original.text) is None:
+            continue
+        row_key = (original.start,original.end,original.style,original.name,
+                   placement_key(original),text_layout_key(original),get_pos(original.text)[1])
+        expected.setdefault(row_key,set()).add(original.source_index)
+        if _glow_source_geometry(original) is None:
+            continue
+        if metric.matching_face(str(original.state.get('fn','')),
+                original.state.get('b',0),bool(original.state.get('i',0))) is None:
+            continue
+        pulse = _returning_glow_highlight(original)
+        if pulse is None:
+            continue
+        glow = []
+        for copy in group:
+            source = source_event(copy.source_index)
+            if (source is not None and _glow_source_geometry(source) == _glow_source_geometry(original) and
+                    _matching_glow_pulse_geometry(source,original) and
+                    int(source.layer) < int(original.layer) and source.state.get('1a',255) < 128 and
+                    source.state.get('blur',0) > max(0,original.state.get('blur',0)) and
+                    source.state.get('1c') not in {original.state.get('1c'),pulse[0]}):
+                glow.append(source)
+        if len(glow) != 1:
+            continue
+        word = OVERRIDE_RE.sub('',original.text)
+        family = (original.style,original.name,original.layer)
+        if family not in letters:
+            letters[family] = [e.source_index for e in sources.values()
+                if (e.style,e.name,e.layer) == family and
+                   OVERRIDE_RE.sub('',e.text) and
+                   not OVERRIDE_RE.sub('',e.text).isspace()]
+        possible = [sources[index] for index in letters[family]]
+        possible = [source_event(e.source_index) for e in possible
+            if abs(e.start_s-pulse[1]) <= .051 and abs(e.end_s-pulse[2]) <= .051]
+        def same_fragment_layout(e):
+            if any(not .5 <= e.state.get(k,100)/max(.01,original.state.get(k,100)) <= 1.5
+                   for k in ('fscx','fscy')):
+                return False
+            normalized = dataclass_replace(e,state={**e.state,
+                'fscx':original.state.get('fscx',100),'fscy':original.state.get('fscy',100)})
+            return _glow_source_geometry(normalized) == _glow_source_geometry(original)
+        children = [e for e in possible
+            if e.start_s >= original.start_s and e.end_s <= original.end_s and
+               abs(e.start_s-pulse[1]) <= .051 and abs(e.end_s-pulse[2]) <= .051 and
+               same_fragment_layout(e) and
+               abs(get_pos(e.text)[1]-get_pos(original.text)[1]) <= original.unit and
+               e.state.get('1c') == pulse[0]]
+        children.sort(key=lambda e:get_pos(e.text)[0])
+        whole = [e for e in children if OVERRIDE_RE.sub('',e.text) == word and
+                 math.dist(get_pos(e.text),get_pos(original.text)) <= original.unit]
+        glyphs = [e for e in children if e not in whole]
+        if (glyphs and (''.join(OVERRIDE_RE.sub('',e.text) for e in glyphs) != word or
+                len(glyphs) != len(word) or not matches_authored_glyph_positions(
+                    metric,original.state,[get_pos(e.text)[0] for e in glyphs],word,
+                    get_pos(original.text)[0],max(original.unit,.04*text_height(original))))):
+            continue
+        if not children:
+            continue
+        if any(e.source_index in current and
+               OVERRIDE_RE.sub('',current[e.source_index].text) != OVERRIDE_RE.sub('',e.text)
+               for e in children):
+            # Earlier reconstruction can reuse an original index for different
+            # literal content. That successor must not inherit fragment ownership.
+            continue
+        # A dissolving glyph is redundant only when its original animation
+        # changes opacity/blur/scale, never position, text or paint.
+        valid = True
+        for child in children:
+            transforms = [value for tag,value in event_override_tokens(child) if tag == 't']
+            if len(transforms) != 1:
+                valid = False; break
+            transform = parse_effect_transform(transforms[0],child.duration,
+                {'alpha','1a','2a','3a','4a','blur','be','fscx','fscy'},allow_instant=True)
+            if transform is None:
+                valid = False; break
+            state = child.state.copy()
+            continuation = child.continuation
+            for tag,value in transform[2]:
+                continuation = apply_override(state,tag,value,child.styles,child.defaults,continuation)
+            if state.get('1a',0) < 254:
+                valid = False; break
+        if not valid:
+            continue
+        rows.setdefault(row_key,[]).append((original,pulse,glow[0],children))
+    result = {}
+    claims = {}
+    for key,row in rows.items():
+        row.sort(key=lambda p:get_pos(p[0].text)[0])
+        starts = [p[1][1] for p in row]
+        ends = [p[1][2] for p in row]
+        if (set(p[0].source_index for p in row) != expected[key] or
+                len(row) < 2 or len(set(starts)) < 2 or
+                len({(p[0].state.get('1c'),p[1][0],p[2].state.get('1c')) for p in row}) != 1 or
+                not (all(a <= b for a,b in zip(starts,starts[1:])) and
+                     all(a <= b for a,b in zip(ends,ends[1:])) or
+                     all(a >= b for a,b in zip(starts,starts[1:])) and
+                     all(a >= b for a,b in zip(ends,ends[1:])))):
+            continue
+        for original,pulse,glow,children in row:
+            ids = frozenset(e.source_index for e in children)
+            result[original.source_index] = GlowPulsePaint(pulse[0],glow.state['1c'],ids,
+                (original.state.get('fscx',100),original.state.get('fscy',100)))
+            for index in ids:
+                claims[index] = claims.get(index,0)+1
+    return {index:proof for index,proof in result.items()
+            if all(claims[i] == 1 for i in proof.fragments)}
+
+
 def _prepare_stacked_text_copies(events: list[Event], visible_map: dict[int,str],
                                  animated_sources: set[int] | None, max_piece_duration: float,
                                  source_events: dict[int,Event] | None,
@@ -3916,7 +4155,9 @@ def _prepare_stacked_text_copies(events: list[Event], visible_map: dict[int,str]
         key = (e.start, e.end, e.style, e.name, e.margin_l, e.margin_r,
                e.margin_v, pos, visible)
         groups.setdefault(key, []).append(e)
-    return StackedTextContext(groups,kept,collision_peers,paint,animated_sources,source_events,font_metrics),echo_removed
+    context = StackedTextContext(groups,kept,collision_peers,paint,animated_sources,source_events,font_metrics)
+    context.glow_paint.update(_index_glow_pulse_paint(context))
+    return context,echo_removed
 
 
 def _partition_stacked_text_paint(context: StackedTextContext) -> list[tuple[tuple,list[Event]]]:
@@ -4384,9 +4625,14 @@ def _render_stacked_text_caption(key: tuple, group: list[Event], proof: StackedT
             representative = _representative_static_strip_outline(chosen,evidence)
             if representative is not None:
                 outlines.append(representative)
-    text = render_simplified_caption(state, OVERRIDE_RE.sub("", chosen.text),
-                              outline_states=outlines,measurement=chosen.measurement)
-    return [replace_event(chosen, text=text, layer=chosen.layer if proof.shadow_text else "0", effect="",
+    glow = context.glow_paint.get(chosen.source_index)
+    if glow is not None:
+        state = {**state,'1c':glow.fill,'fscx':glow.scale[0],'fscy':glow.scale[1]}
+        context.owned_glow_fragments.update(glow.fragments)
+    text = render_simplified_caption(state,OVERRIDE_RE.sub('',chosen.text),
+        outline_states=outlines,measurement=chosen.measurement,
+        source_glow_outline=glow.outline if glow is not None else None)
+    return [replace_event(chosen, text=text, layer=chosen.layer if proof.shadow_text or glow is not None else "0", effect="",
                         source_index=min(e.source_index for e in group),
                         lyric=chosen.lyric or proof.static_shadow_text)],len(group)-1,profile
 
@@ -4430,6 +4676,10 @@ def flatten_stacked_text_copies(events: list[Event],
         if profile is not None:
             outline_profiles[captions[0].source_index] = profile
     output = sorted(context.kept,key=lambda e:e.source_index)
+    if context.owned_glow_fragments:
+        retained = [e for e in output if e.source_index not in context.owned_glow_fragments]
+        removed += len(output)-len(retained)
+        output = retained
     if outline_profiles:
         output = normalize_karaoke_completion_paint(
             output,visible_map,source_events,outline_profiles=outline_profiles)

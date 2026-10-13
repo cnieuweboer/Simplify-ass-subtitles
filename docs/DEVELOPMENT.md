@@ -60,7 +60,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 70 current scripts. The runner uses three workers for
+The suite inventory lists 71 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
@@ -212,3 +212,6 @@ handoff (v188).
 See [FINAL_STATIC_TAG_COMPACTION.md](FINAL_STATIC_TAG_COMPACTION.md) for final
 serialization after all proofs, its exact per-span guard and corpus rendering
 comparisons (v189).
+
+See [GLOW_PULSE_PAINT.md](GLOW_PULSE_PAINT.md) for source-proved returning
+highlights, persistent glow contours and fragment ownership in the stack pass (v190).
