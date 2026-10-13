@@ -954,12 +954,30 @@ def process(source, output_dir, merge, preview, write_logs, inspection, plan):
             report.write_text("\n".join(log), encoding="utf-8")
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("directory", nargs="?", type=Path, default=Path.cwd())
+    parser.add_argument("directory", nargs="?", type=Path,
+                        help="Input folder (legacy positional syntax; default: beside this script)")
+    parser.add_argument("-i", "--input-dir", type=Path,
+                        help="Folder containing MKVs and loose fonts (default: beside this script)")
+    parser.add_argument("-o", "--output-dir", type=Path,
+                        help="Output folder (default: INPUT/output)")
     parser.add_argument("--preview", action="store_true", help="Analyze without remuxing")
     parser.add_argument("--log", action="store_true", help="Write per-file font reports (off by default)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.directory is not None and args.input_dir is not None:
+        parser.error("Specify the input folder either positionally or with -i, not both.")
+    directory = (args.input_dir or args.directory or Path(__file__).resolve().parent).resolve()
+    output = args.output_dir.resolve() if args.output_dir else directory / "output"
+    if not directory.is_dir():
+        print("Input directory does not exist: " + str(directory))
+        return 2
+    if output == directory:
+        print("Output directory must differ from the input directory.")
+        return 2
+    if output.exists() and not output.is_dir():
+        print("Output path is not a directory: " + str(output))
+        return 2
     try:
         from fontTools.ttLib import TTFont  # noqa: F401
         merge, extract = find_tool("mkvmerge"), find_tool("mkvextract")
@@ -969,17 +987,12 @@ def main():
     except RuntimeError as error:
         print(error)
         return 2
-    directory = args.directory.resolve()
-    if not directory.is_dir():
-        print("Input directory does not exist.")
-        return 2
     sources = sorted((p for p in directory.iterdir() if p.is_file() and p.suffix.casefold() == ".mkv"),
                      key=lambda p: p.name.casefold())
     if not sources:
         print("No MKV files found in " + str(directory))
         return 0
-    output = directory / "output"
-    output.mkdir(exist_ok=True)
+    output.mkdir(parents=True, exist_ok=True)
     counts = collections.Counter()
     inspections = {}
     print("Scanning all MKVs and subtitle font references before asking...")
@@ -1010,9 +1023,22 @@ def main():
     return 1 if counts["failed"] else 0
 
 
-if __name__ == "__main__":
+def cli(argv=None):
+    arguments = list(sys.argv[1:] if argv is None else argv)
     try:
-        raise SystemExit(main())
+        return main(arguments)
     except KeyboardInterrupt:
         print("\nStopped.")
-        raise SystemExit(130)
+        return 130
+    finally:
+        # A no-argument Windows launch can be a double-click: keep its console
+        # open on success and failure. Explicit CLI invocations never pause.
+        if sys.platform == "win32" and not arguments and sys.stdin.isatty():
+            try:
+                input("\nPress Enter to close: ")
+            except (EOFError, KeyboardInterrupt):
+                pass
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli())
