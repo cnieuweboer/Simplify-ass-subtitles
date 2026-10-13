@@ -6,6 +6,8 @@ from unittest.mock import patch
 import contextlib,hashlib,importlib.util,io,json,sys
 import simplify_ass as s
 from lyric_layer_fixtures import HEADER,event
+from font_geometry_test_helpers import historical_final_tag_policy
+
 ROOT=Path(__file__).resolve().parents[1];DEST=ROOT/'validation/static-phase-handoff';DEST.mkdir(exist_ok=True)
 checks=[];metrics=s.FontMetrics([ROOT/'fonts'])
 assert metrics.matching_face('Volkhov',0,False) is not None,'Missing Volkhov regular'
@@ -98,7 +100,7 @@ for engine in (reference,s):
   if engine is s:trace.append(dict(text_only=kwargs.get('text_only',False),pending=kwargs.get('row_sources') is not None,removed=result[1]))
   return result
  output=DEST/(engine.__version__+'.ass');report=engine.FontProcessingReport()
- with patch.object(engine,'merge_shared_interval_rows',capture),patch.object(engine,'merge_static_timed_copies',track),contextlib.redirect_stdout(io.StringIO()):
+ with patch.object(engine,'merge_shared_interval_rows',capture),patch.object(engine,'merge_static_timed_copies',track),contextlib.redirect_stdout(io.StringIO()),historical_final_tag_policy(engine):
   stats=engine.simplify_ass(source,output,engine.SimplifyConfig(),font_metrics=engine.FontMetrics([ROOT/'fonts']),font_report=report)
  check(engine.__version__+': exact fonts available',not report.missing_families)
  recorded.append((captured,output.read_bytes(),stats))

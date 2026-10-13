@@ -15,6 +15,8 @@ from font_geometry_test_helpers import font_test_report, measurement_fonts, row_
 install_row_test_doubles(current)
 from event_evidence_test_helpers import event_comparison_fields
 
+from font_geometry_test_helpers import historical_final_tag_policy
+
 ROOT = Path(__file__).resolve().parents[1]
 baseline_path = ROOT/'test-data/simplify_ass-v166-reference.py'
 spec = importlib.util.spec_from_file_location('previous_pipeline',baseline_path)
@@ -109,7 +111,7 @@ with tempfile.TemporaryDirectory() as directory:
                 for module in (previous,current):
                     output = folder/(name+'.'+module.__version__+str(level)+str(measured)+'.ass')
                     console = StringIO()
-                    with contextlib.redirect_stdout(console):
+                    with contextlib.redirect_stdout(console), historical_final_tag_policy(module):
                         stats = module.simplify_ass(source,output,module.SimplifyConfig(level=level),
                             font_metrics=metrics[module] if measured else None, font_report=font_test_report(metrics[module] if measured else None))
                     assert stats.pop('shadow_lettering_normalized', 0)==0  # This fixture must remain unaffected by final paint normalization.

@@ -60,7 +60,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 69 current scripts. The runner uses three workers for
+The suite inventory lists 70 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
@@ -208,3 +208,7 @@ paint selection, and the reconstruction handoff (v187).
 See [CAPTION_BACKGROUND_OWNERSHIP.md](CAPTION_BACKGROUND_OWNERSHIP.md) for shared
 measured containment, explicit enclosing-panel ownership and its final-layer
 handoff (v188).
+
+See [FINAL_STATIC_TAG_COMPACTION.md](FINAL_STATIC_TAG_COMPACTION.md) for final
+serialization after all proofs, its exact per-span guard and corpus rendering
+comparisons (v189).

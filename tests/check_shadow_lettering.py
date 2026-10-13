@@ -7,6 +7,8 @@ from PIL import Image, ImageChops
 import simplify_ass as s
 from executable_ast_audit import executable_ast
 
+from font_geometry_test_helpers import historical_final_tag_policy
+
 ROOT=Path(__file__).resolve().parents[1]
 checks=[]
 def check(name, condition):
@@ -100,7 +102,8 @@ with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.S
     folder=Path(directory);outputs=[];stats=[];paths=[]
     for engine in (old,s):
         output=folder/(engine.__version__+'.ass')
-        stats.append(engine.simplify_ass(fixture,output,engine.SimplifyConfig(),font_metrics=engine.FontMetrics([ROOT/'fonts'])))
+        with historical_final_tag_policy(engine):
+            stats.append(engine.simplify_ass(fixture,output,engine.SimplifyConfig(),font_metrics=engine.FontMetrics([ROOT/'fonts'])))
         outputs.append(s.load_subtitle_events(output)[1])
         paths.append(output)
     check('real scene converts eight shadow labels',stats[1]['shadow_lettering_normalized']==8)

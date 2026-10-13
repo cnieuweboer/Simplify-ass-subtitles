@@ -47,7 +47,7 @@ python subtitle_flags.py /path/to/media
 
 The converter writes `input.simple.ass` by default. Exact fonts help prove line
 geometry; uncertain fragments are retained. Use `--help` for all options.
-Current converter version: **2026.10.13.188**.
+Current converter version: **2026.10.13.189**.
 
 ### Subtitle default and forced flags
 

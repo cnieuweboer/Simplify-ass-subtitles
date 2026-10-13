@@ -17,6 +17,15 @@ _reports = {}
 _reference_rows = {}
 
 @contextmanager
+def historical_final_tag_policy(module):
+    """Bound older byte oracles to pre-v189 serialization, keeping live pass logic."""
+    original = module.compact_static_overrides
+    def compact(events,max_blur,**kwargs):
+        return events if kwargs.pop('final',False) else original(events,max_blur,**kwargs)
+    with patch.object(module,'compact_static_overrides',compact):
+        yield
+
+@contextmanager
 def historical_static_phase_policy(module):
     """Keep old whole-file oracles at their original finalization boundary.
 
@@ -41,7 +50,7 @@ def historical_static_phase_policy(module):
     def merge(events,styles,*,font_metrics=None,text_only=False):
         return (events,0) if text_only else original_merge(events,styles)
     with patch.object(module,'_finalize_text_layout',bind(reference._finalize_text_layout)), patch.object(
-            module,'merge_static_timed_copies',merge):
+            module,'merge_static_timed_copies',merge), historical_final_tag_policy(module):
         yield
 
 def font_test_report(metric):

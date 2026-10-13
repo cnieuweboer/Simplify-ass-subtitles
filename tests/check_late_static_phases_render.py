@@ -7,6 +7,8 @@ from PIL import Image,ImageChops
 import simplify_ass as s
 from lyric_layer_fixtures import HEADER,event
 from executable_ast_audit import executable_ast
+from font_geometry_test_helpers import historical_final_tag_policy
+
 ROOT=Path(__file__).resolve().parents[1];DEST=ROOT/'validation/late-static-phases';DEST.mkdir(exist_ok=True)
 metrics=s.FontMetrics([ROOT/'fonts']);checks=[]
 assert metrics.matching_face('Volkhov',0,False) is not None,'Missing Volkhov regular'
@@ -76,7 +78,7 @@ source=ROOT/'test-data/corpus/Overlord-S04E02.original.ass';source_hash=hashlib.
 old_path=DEST/'Overlord.v184.ass';new_path=DEST/'Overlord.v185.ass'
 for engine,path,owner in [(old_engine,old_path,old_engine.FontMetrics([ROOT/'fonts'])),(s,new_path,metrics)]:
  report=engine.FontProcessingReport()
- with contextlib.redirect_stdout(io.StringIO()):stats=engine.simplify_ass(source,path,engine.SimplifyConfig(),font_metrics=owner,font_report=report)
+ with contextlib.redirect_stdout(io.StringIO()),historical_final_tag_policy(engine):stats=engine.simplify_ass(source,path,engine.SimplifyConfig(),font_metrics=owner,font_report=report)
  check(path.name+': all exact fonts available',not report.missing_families)
  if engine is old_engine:old_stats=stats
  else:new_stats=stats

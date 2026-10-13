@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.13.186",
+  "version": "2026.10.13.189",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -345,6 +345,11 @@
       "script": "tests/check_static_phase_handoff.py",
       "status": "current",
       "category": "source ownership"
+    },
+    {
+      "script": "tests/check_final_static_compaction_render.py",
+      "status": "current",
+      "category": "render"
     }
   ],
   "historical": [

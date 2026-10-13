@@ -110,3 +110,14 @@ because an anchor/source-order proof is not measured whole-caption enclosure;
 legacy arbitrary-vector occlusion is not caption ownership either. Admission
 bounds and established corpus behavior are preserved. See
 [CAPTION_BACKGROUND_OWNERSHIP.md](CAPTION_BACKGROUND_OWNERSHIP.md).
+
+## Final serialization follow-up — v189
+
+The existing compactor has an explicit final static-only mode. It combines
+adjacent recognized headers and accepts only shorter serialization with
+equivalent per-literal formatting and unchanged continuation. It neither reruns
+effect selection nor changes blur, origins, numeric precision, ownership or
+timing. Source-dependent stages retain their earlier compaction boundary.
+Historical byte audits remain bounded to their original serialization; new
+semantic/native-render checks exercise the complete current pipeline. See
+[FINAL_STATIC_TAG_COMPACTION.md](FINAL_STATIC_TAG_COMPACTION.md).

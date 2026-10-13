@@ -141,7 +141,8 @@ with tempfile.TemporaryDirectory() as temporary:
         for converted_event, (_, expected) in zip(converted, static_cases):
             check_size(s.effective_state(converted_event.text, output_styles['Default'],
                                          output_styles)['fs'], expected)
-        assert converted[-1].text.endswith(expected_inline)
+        expected=s.dataclass_replace(converted[-1],text=r'{\pos(320,180)}'+expected_inline)
+        assert s._finished_static_key(converted[-1])==s._finished_static_key(expected)
         checks += 1
         if level == 1:
             (root / 'validation' / 'relative-size-v104.ass').write_bytes(output.read_bytes())
