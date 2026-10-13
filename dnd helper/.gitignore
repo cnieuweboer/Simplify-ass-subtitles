@@ -1,0 +1,3 @@
+macos/*.app/
+linux/*.desktop
+__pycache__/
