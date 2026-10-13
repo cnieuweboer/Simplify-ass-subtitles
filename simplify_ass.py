@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.14.190"
+__version__ = "2026.10.14.191"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -657,6 +657,7 @@ class GlowPulsePaint:
     outline: str
     fragments: frozenset[int]
     scale: tuple[float,float]
+    outline_alpha: int = 0
 
 
 @dataclass(frozen=True)
@@ -1499,6 +1500,7 @@ def render_simplified_caption(state: dict, text: str,
                        outline_states: Iterable[dict] | None = None, *,
                        measurement: DocumentMeasurementContext = DocumentMeasurementContext(),
                        source_glow_outline: str | None = None,
+                       source_glow_alpha: int = 0,
                        **layout) -> str:
     """Retain the selected foreground and an unambiguous contrasting outline.
 
@@ -1561,14 +1563,15 @@ def render_simplified_caption(state: dict, text: str,
         outline_luma = luminance(candidate)
         if (max(fill_luma,outline_luma)+.05)/(min(fill_luma,outline_luma)+.05) >= 3:
             outline = candidate
-    # A source-proved persistent glow is visible primary paint surrounding the
-    # foreground, rather than a literal ASS border. Its authored palette is
-    # deliberately retained; the neutral-outline contrast rule remains the
-    # fallback for ordinary/ambiguous stacks.
+    # Source-proved glows supply representative settled RGBA, including their
+    # subdued strength. Ordinary/ambiguous stacks keep the neutral fallback.
+    outline_alpha = 0
     if source_glow_outline is not None and re.fullmatch(r'[0-9A-F]{6}',source_glow_outline):
         outline = source_glow_outline
+        outline_alpha = min(255,max(0,int(source_glow_alpha)))
     state = {**DEFAULT_STATE, **state,
-             "1c":fill, "3c":outline, "1a":0, "3a":0,
+             "1c":fill, "3c":outline, "1a":0,
+             "3a":outline_alpha,
              "bord":2, "shad":0, "blur":0, "be":0}
     keys = ("an","pos","org","q","fn","fs","fscx","fscy","fsp","b","i",
             "u","s","frz","frx","fry","fax","fay",
@@ -3985,6 +3988,92 @@ def _matching_glow_pulse_geometry(glow: Event, foreground: Event) -> bool:
     return True
 
 
+def _settled_glow_samples(foreground: Event, copies: list[Event], metric: FontMetrics) -> tuple | None:
+    """Estimate settled subtitle-only RGBA in the ink core and a two-unit contour.
+
+    The small exact-face mask is an appearance estimate, not an ownership proof.
+    No video/background color is baked into it. Blur uses a Gaussian footprint;
+    this intentionally approximates libass rather than introducing a renderer
+    dependency. Unsupported shaping/layout falls back to the ordinary stack.
+    """
+    from PIL import Image,ImageDraw,ImageFont,ImageFilter,ImageChops
+    text = OVERRIDE_RE.sub('',foreground.text)
+    state = foreground.state
+    if (any(unicodedata.combining(c) or unicodedata.bidirectional(c) in {'R','AL','AN'} for c in text) or
+            state.get('fsp',0) or state.get('kerning',False) or state.get('u',0) or state.get('s',0)):
+        return None
+    face = metric.matching_face(str(state.get('fn','')),state.get('b',0),bool(state.get('i',0)))
+    scale = metric.ass_em_scale(face) if face is not None else None
+    if scale is None:
+        return None
+    settled = []
+    for e in copies:
+        final = e.state.copy()
+        continuation = e.continuation
+        for tag,value in event_override_tokens(e):
+            if tag != 't':
+                continue
+            transform = parse_effect_transform(value,e.duration,
+                {'c','1c','alpha','1a','2a','3a','4a','blur','be','fscx','fscy'},allow_instant=True)
+            if transform is None:
+                return None
+            for name,argument in transform[2]:
+                continuation = apply_override(final,name,argument,e.styles,e.defaults,continuation)
+        if (any(final.get(k,100) != state.get(k,100) for k in ('fscx','fscy')) or
+                final.get('be',0) or final.get('bord',0) or
+                any(final.get(k,0) for k in ('xbord','ybord','shad','xshad','yshad'))):
+            return None
+        settled.append((e,final))
+    # Supersampling keeps thin strokes and the small contour band measurable.
+    factor = 2
+    try:
+        data,index = metric.face_data(face)
+        size = round(state.get('fs',20)*scale*factor)
+        if not 1 <= size <= 512:
+            return None
+        font = ImageFont.truetype(BytesIO(data),size,index=index,layout_engine=ImageFont.Layout.BASIC)
+        box = font.getbbox(text)
+        blur = max(max(0,p.get('blur',0)) for e,p in settled)
+        if not math.isfinite(blur) or blur > 64:
+            return None
+        padding = math.ceil(1.5*blur*factor)+6
+        width,height = box[2]-box[0]+2*padding,box[3]-box[1]+2*padding
+        if not 0 < width*height <= 2_000_000:
+            return None
+        ink = Image.new('L',(width,height))
+        ImageDraw.Draw(ink).text((padding-box[0],padding-box[1]),text,font=font,fill=255)
+        resized = (max(1,round(width*state.get('fscx',100)/100)),
+                   max(1,round(height*state.get('fscy',100)/100)))
+        if resized[0]*resized[1] > 2_000_000:
+            return None
+        ink = ink.resize(resized)
+        core = ink.filter(ImageFilter.MinFilter(3))
+        ring = ImageChops.subtract(ink.filter(ImageFilter.MaxFilter(2*2*factor+1)),ink)
+        regions = [list(core.getdata()),list(ring.getdata())]
+        accum = [[0.,0.,0.,0.,0.] for _ in regions]
+        planes = [(list(ink.filter(ImageFilter.GaussianBlur(p.get('blur',0)*factor/2)).getdata()),
+                   (255-p.get('1a',0))/255,[int(p['1c'][i:i+2],16)/255 for i in (4,2,0)])
+                  for e,p in sorted(settled,key=lambda pair:(int(pair[0].layer),pair[0].source_index),reverse=True)]
+        for i in range(len(regions[0])):
+            weights = [1. if regions[0][i] >= 250 else 0.,regions[1][i]/255]
+            if not any(weights):
+                continue
+            remaining,rgb = 1.,[0.,0.,0.]
+            for mask,opacity,color in planes:
+                alpha = mask[i]/255*opacity
+                for ch in range(3):
+                    rgb[ch] += remaining*alpha*color[ch]
+                remaining *= 1-alpha
+            for weight,total in zip(weights,accum):
+                total[0] += weight
+                total[1] += weight*(1-remaining)
+                for ch in range(3):
+                    total[ch+2] += weight*rgb[ch]
+        return tuple(tuple(row) for row in accum) if all(row[1] > 0 for row in accum) else None
+    except (OSError,ValueError,RuntimeError):
+        return None
+
+
 def _index_glow_pulse_paint(context: StackedTextContext) -> dict[int,GlowPulsePaint]:
     """Prove ordered returning word highlights, their glow and exact-font letter copies.
 
@@ -4098,7 +4187,11 @@ def _index_glow_pulse_paint(context: StackedTextContext) -> dict[int,GlowPulsePa
                 valid = False; break
         if not valid:
             continue
-        rows.setdefault(row_key,[]).append((original,pulse,glow[0],children))
+        paint_copies = [source_event(e.source_index) for e in group]
+        samples = _settled_glow_samples(original,paint_copies,metric)
+        if samples is None:
+            continue
+        rows.setdefault(row_key,[]).append((original,pulse,glow[0],children,samples))
     result = {}
     claims = {}
     for key,row in rows.items():
@@ -4113,10 +4206,15 @@ def _index_glow_pulse_paint(context: StackedTextContext) -> dict[int,GlowPulsePa
                      all(a >= b for a,b in zip(starts,starts[1:])) and
                      all(a >= b for a,b in zip(ends,ends[1:])))):
             continue
-        for original,pulse,glow,children in row:
+        totals = [[sum(p[4][region][ch] for p in row) for ch in range(5)] for region in range(2)]
+        def color(total):
+            return ''.join(f'{min(255,max(0,round(total[i]/total[1]*255))):02X}' for i in (4,3,2))
+        fill,outline = (color(total) for total in totals)
+        outline_alpha = min(254,max(0,round(255*(1-totals[1][1]/totals[1][0]))))
+        for original,pulse,glow,children,samples in row:
             ids = frozenset(e.source_index for e in children)
-            result[original.source_index] = GlowPulsePaint(pulse[0],glow.state['1c'],ids,
-                (original.state.get('fscx',100),original.state.get('fscy',100)))
+            result[original.source_index] = GlowPulsePaint(fill,outline,ids,
+                (original.state.get('fscx',100),original.state.get('fscy',100)),outline_alpha)
             for index in ids:
                 claims[index] = claims.get(index,0)+1
     return {index:proof for index,proof in result.items()
@@ -4631,7 +4729,8 @@ def _render_stacked_text_caption(key: tuple, group: list[Event], proof: StackedT
         context.owned_glow_fragments.update(glow.fragments)
     text = render_simplified_caption(state,OVERRIDE_RE.sub('',chosen.text),
         outline_states=outlines,measurement=chosen.measurement,
-        source_glow_outline=glow.outline if glow is not None else None)
+        source_glow_outline=glow.outline if glow is not None else None,
+        source_glow_alpha=glow.outline_alpha if glow is not None else 0)
     return [replace_event(chosen, text=text, layer=chosen.layer if proof.shadow_text or glow is not None else "0", effect="",
                         source_index=min(e.source_index for e in group),
                         lyric=chosen.lyric or proof.static_shadow_text)],len(group)-1,profile

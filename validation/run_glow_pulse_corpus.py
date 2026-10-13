@@ -1,17 +1,17 @@
-"""Fresh v190 comparisons against the verified v189 corpus plus the new failure."""
+"""Fresh v191 comparisons against the verified v190 corpus plus the new failure."""
 from pathlib import Path
 import hashlib,json,os,subprocess,sys
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 import simplify_ass as s
-DEST=ROOT/'validation/glow-pulse-corpus/windows';DEST.mkdir(parents=True,exist_ok=True)
+DEST=ROOT/'validation/settled-glow-corpus/windows';DEST.mkdir(parents=True,exist_ok=True)
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 env=os.environ.copy();env['ASS_REGRESSION_FONT_BACKEND']='windows';env['PYTHONPATH']=str(ROOT/'validation/backend_startup')
 records=[]
 for case in json.loads((ROOT/'test-data/corpus-manifest.json').read_text()):
  source=ROOT/case['source'];assert sha(source)==case['sha256']
- baseline=ROOT/'validation/final-static-compaction-corpus/windows'/(case['name']+'.ass')
+ baseline=ROOT/'validation/glow-pulse-corpus/windows'/(case['name']+'.ass')
  old=json.loads(baseline.with_suffix('.json').read_text())
- assert old['engine_sha256']==sha(ROOT/'tests/references/simplify_ass_v189.py')
+ assert old['engine_sha256']==sha(ROOT/'tests/references/simplify_ass_v190.py')
  assert old['source_sha256']==sha(source) and old['output_sha256']==sha(baseline) and old['missing_families']==[]
  output=DEST/baseline.name
  subprocess.run([sys.executable,str(ROOT/'validation/measure_one.py'),'--engine',str(ROOT/'simplify_ass.py'),'--source',str(source),'--fonts',str(ROOT/'fonts'),'--output',str(output)],cwd=ROOT,env=env,check=True,stdout=subprocess.DEVNULL)

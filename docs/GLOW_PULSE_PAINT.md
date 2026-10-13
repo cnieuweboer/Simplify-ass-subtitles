@@ -60,3 +60,8 @@ The fresh v190 run passes 174 focused assertions. It reduces this full track fro
 verify static top-left holds. All nine established corpus outputs and statistics
 are unchanged. Generate the native samples with
 `python validation/render_glow_pulse_corpus.py` after the corpus runner.
+
+v191 corrects the representative-paint policy recorded above: v190's temporary
+highlight fill and opaque raw glow did not reproduce the resting appearance.
+See [SETTLED_GLOW_PAINT.md](SETTLED_GLOW_PAINT.md). Ownership and sweep admission
+remain unchanged.

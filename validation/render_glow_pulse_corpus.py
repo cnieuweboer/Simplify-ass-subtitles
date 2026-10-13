@@ -4,8 +4,8 @@ import sys,json,hashlib,subprocess
 from PIL import Image,ImageChops
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 import simplify_ass as s
-DEST=ROOT/'validation/glow-pulse-renders';DEST.mkdir(exist_ok=True)
-path=ROOT/'validation/glow-pulse-corpus/windows/Goblin-Slayer-S01E02-track6.ass'
+DEST=ROOT/'validation/settled-glow-renders';DEST.mkdir(exist_ok=True)
+path=ROOT/'validation/settled-glow-corpus/windows/Goblin-Slayer-S01E02-track6.ass'
 report=json.loads(path.with_suffix('.json').read_text());sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 assert report['engine_sha256']==sha(ROOT/'simplify_ass.py') and report['output_sha256']==sha(path) and not report['missing_families']
 source=ROOT/'test-data/Goblin-Slayer-S01E02-track6-source.ass'
@@ -20,7 +20,7 @@ results=[]
 for start,end in intervals:
  a,b=start+(end-start)*.25,start+(end-start)*.75
  first,last=frame(static,a),frame(static,b)
- assert sum(g>r*1.15 and g>b*1.15 for r,g,b in first.getdata())>100,('No green caption pixels',start,end)
+ assert sum(g>r*1.04 and g>b*1.04 for r,g,b in first.getdata())>100,('No green caption pixels',start,end)
  identical=ImageChops.difference(first,last).getbbox() is None
  results.append(dict(start_s=start,end_s=end,samples=[a,b],static_hold=identical))
  assert identical,(start,end)

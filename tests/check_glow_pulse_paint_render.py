@@ -12,13 +12,13 @@ checks=[]
 def check(name,value):
  assert value,name
  checks.append(name)
-def fixture(*,reverse=False,whole=False,fill='C7F5B2',glow='1AC60D',mutation=''):
+def fixture(*,reverse=False,whole=False,fill='C7F5B2',glow='1AC60D',base='FFFFFF',mutation=''):
  text=HEADER.replace('1,2,0,7,','1,0,0,5,')
  words=['Sun','moon','stars'];starts=[0,700,1400]
  if reverse:starts=starts[::-1]
  for j,(word,begin) in enumerate(zip(words,starts)):
   x=100+j*150;finish=begin+650
-  main=f'\\an5\\alpha&H10&\\blur0.9\\t({begin},{begin+1},\\1c&H{fill}&\\fscx105\\fscy105)\\t({begin+1},{finish},\\1c&HFFFFFF&\\fscx100\\fscy100)'
+  main=f'\\an5\\alpha&H10&\\1c&H{base}&\\blur0.9\\t({begin},{begin+1},\\1c&H{fill}&\\fscx105\\fscy105)\\t({begin+1},{finish},\\1c&H{base}&\\fscx100\\fscy100)'
   if mutation=='cycle' and j==1:main+=r'\t(2500,2600,\1c&H123456&)'
   if mutation=='gradient' and j==1:main=r'\an5\alpha&H10&\1c&H123456&'
   if mutation=='moving' and j==1:main+=r'\move(250,100,260,100)'
@@ -55,6 +55,7 @@ for label,kwargs in [
  ('scaled words',{'whole':True,'mutation':'whole scaled'}),
  ('synchronized glow scale',{'mutation':'animated glow'}),
  ('shared fade',{'mutation':'shared fade'}),
+ ('nonwhite base',{'base':'E8B0A0'}),
  ('other palette',{'fill':'F5C7B2','glow':'C61A0D'}),
 ]:
  text,source,events,visible=fixture(**kwargs);before=deepcopy((source,events,visible))
@@ -62,8 +63,8 @@ for label,kwargs in [
  parents=[e for e in out if e.layer=='4']
  check(label+': one event per word',len(parents)==3)
  check(label+': removal count',count==len(events)-len(out))
- check(label+': representative fill',all(e.state['1c']==kwargs.get('fill','C7F5B2') for e in parents))
- check(label+': representative glow contour',all(e.state['3c']==kwargs.get('glow','1AC60D') for e in parents))
+ check(label+': settled near-white fill',all(max(abs(int(e.state['1c'][i:i+2],16)-int(kwargs.get('base','FFFFFF')[i:i+2],16)) for i in (0,2,4))<20 and e.state['1c']!=kwargs.get('fill','C7F5B2') for e in parents))
+ check(label+': subdued contour',all(0<e.state['3a']<255 and e.state['3c']!=kwargs.get('glow','1AC60D') for e in parents))
  check(label+': original foreground order',all(e.layer=='4' for e in parents))
  check(label+': independent text retained',any('Independent' in e.text for e in out))
  check(label+': timing retained',all((e.start_s,e.end_s)==(1,4) for e in parents))
@@ -80,28 +81,29 @@ for label,kwargs in [
 for mutation in ['missing letter','wrong position','paint-changing echo','cycle','gradient','moving','competing glow','scrolling','changed current literal']:
  _,source,events,visible=fixture(mutation=mutation)
  out,count=s.flatten_stacked_text_copies(events,visible,set(source),source_events=source,font_metrics=metric)
- check(mutation+': no partial row palette',not any(e.state.get('3c')=='1AC60D' for e in out))
+ check(mutation+': no partial row palette',not any(e.state.get('3a',0)>0 and e.layer=='4' and e.duration==3 for e in out))
  check(mutation+': effect fragments retained',len(out)>4)
 _,source,events,visible=fixture()
 out,count=s.flatten_stacked_text_copies(events,visible,set(source),source_events=source,font_metrics=None)
 check('missing metric keeps fragments',len(out)>4)
 # Real source is local, never packaged with code. Compare the complete opening.
 fixture_path=ROOT/'test-data/Goblin-Slayer-S01E02-track6-source.ass'
-if fixture_path.exists():
- report=s.FontProcessingReport()
- with contextlib.redirect_stdout(io.StringIO()):s.simplify_ass(fixture_path,DEST/'Goblin.ass',s.SimplifyConfig(),font_metrics=metric,font_report=report)
- check('real exact fonts available',not report.missing_families)
- es=s.load_subtitle_events(DEST/'Goblin.ass')[1]
- active=[e for e in es if e.style=='OP - R' and e.start_s<=145<e.end_s]
- check('real first cue green foreground',any(e.state.get('1c')=='C7F5B2' and e.state.get('3c')=='1AC60D' for e in active))
- check('real first cue no highlight copies',not any(e.state.get('fscx',100)>100 for e in active))
- originals=s.load_subtitle_events(fixture_path)[1]
- for original in originals:
-  if original.style!='OP - R' or s._returning_glow_highlight(original) is None:continue
-  word=s.OVERRIDE_RE.sub('',original.text)
-  check('real held word paint '+str(original.source_index),any(
-   e.start_s==original.start_s and e.end_s==original.end_s and
-   word in s.OVERRIDE_RE.sub('',e.text).replace(' ','') and
-   e.state.get('1c')=='C7F5B2' and e.state.get('3c')=='1AC60D' for e in es))
+if not fixture_path.exists():
+ raise FileNotFoundError('Missing local Goblin Slayer original; restore the uploaded fixture before this check')
+report=s.FontProcessingReport()
+with contextlib.redirect_stdout(io.StringIO()):s.simplify_ass(fixture_path,DEST/'Goblin.ass',s.SimplifyConfig(),font_metrics=metric,font_report=report)
+check('real exact fonts available',not report.missing_families)
+es=s.load_subtitle_events(DEST/'Goblin.ass')[1]
+active=[e for e in es if e.style=='OP - R' and e.start_s<=145<e.end_s]
+check('real first cue green foreground',any(e.state.get('1c')!='C7F5B2' and e.state.get('3a',0)>0 and int(e.state['1c'][2:4],16)>=int(e.state['1c'][4:],16) for e in active))
+check('real first cue no highlight copies',not any(e.state.get('fscx',100)>100 for e in active))
+originals=s.load_subtitle_events(fixture_path)[1]
+for original in originals:
+ if original.style!='OP - R' or s._returning_glow_highlight(original) is None:continue
+ word=s.OVERRIDE_RE.sub('',original.text)
+ check('real held word paint '+str(original.source_index),any(
+  e.start_s==original.start_s and e.end_s==original.end_s and
+  word in s.OVERRIDE_RE.sub('',e.text).replace(' ','') and
+  e.state.get('1c')!='C7F5B2' and e.state.get('3a',0)>0 and int(e.state['1c'][2:4],16)>=int(e.state['1c'][4:],16) for e in es))
 (DEST/'checks.json').write_text(json.dumps(dict(version=s.__version__,checks=len(checks)),indent=2)+'\n')
 print(len(checks),'glow pulse paint checks passed')

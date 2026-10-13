@@ -215,3 +215,6 @@ comparisons (v189).
 
 See [GLOW_PULSE_PAINT.md](GLOW_PULSE_PAINT.md) for source-proved returning
 highlights, persistent glow contours and fragment ownership in the stack pass (v190).
+
+See [SETTLED_GLOW_PAINT.md](SETTLED_GLOW_PAINT.md) for the resting fill and
+opacity-aware contour correction to returning highlight stacks (v191).
