@@ -87,3 +87,14 @@ phases, final tag spelling and other previously documented behavior remain.
 The v186 follow-up implements a shared phase merger and explicit stage ownership;
 see [STATIC_PHASE_MERGING.md](STATIC_PHASE_MERGING.md). The assessment above
 remains a historical review of v183–v185.
+
+## Redundant text handoff follow-up — v187
+
+The early sign filter now separates strict redundancy from representative-paint
+selection. Early and final invocations share a literal-span redundancy proof,
+with an explicit pending-lyric guard until reconstruction finishes. The existing
+source/context boundary remains responsible for ending transient roles. Exact
+whole-record matching and coverage replace the two-character proxy; they do not
+claim that a fragment has become a complete line. Final cleanup still selects no
+new paint. See REDUNDANT_TEXT_COPIES.md. Caption/background ownership and final
+static-tag compaction remain separate releases.

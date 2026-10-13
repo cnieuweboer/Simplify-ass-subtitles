@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.13.186"
+__version__ = "2026.10.13.187"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -2567,7 +2567,23 @@ def deduplicate_layers(events: list[Event], visible_map: dict[int, str]) -> tupl
 
 
 def reduce_static_sign_copies(events: list[Event], visible_map: dict[int, str]) -> tuple[list[Event], int]:
-    """In standard simplification, fold slightly offset effect copies into their fill."""
+    """Remove proven redundant nonlyrics, then select representative sign paint.
+
+    Lyrics still need their source/row context. The final invocation of the
+    same redundancy proof receives the finished records after reconstruction.
+    Effect-layer paint selection is deliberately confined to this early stage.
+    """
+    events, redundant = remove_redundant_text_copies(events, pending_lyrics=True)
+    events, effects = select_static_sign_paint(events, visible_map)
+    return events, redundant + effects
+
+
+def select_static_sign_paint(events: list[Event], visible_map: dict[int, str]) -> tuple[list[Event], int]:
+    """Choose representative fill from nonlyric, near-coincident effect copies.
+
+    Unlike strict redundancy, this deliberately permits different paint/layers
+    and the existing small size variation. Emphasis and spacing must agree.
+    """
     groups: dict[tuple, list[Event]] = {}
     for e in events:
         if e.kind != "Dialogue" or e.lyric or get_pos(e.text) is None:
@@ -2598,13 +2614,13 @@ def reduce_static_sign_copies(events: list[Event], visible_map: dict[int, str]) 
         heights = {e.source_index: text_height(e) for e in group}
         # A covering copy must be within 6% of THIS event's height in x,
         # because the original bound uses the smaller of the two heights.
-        # The sorted window is only a candidate index; all original removal
-        # conditions still apply. Removed events remain available as evidence.
+        # The sorted window is only a candidate index. Only retained records
+        # provide coverage; removed anchors cannot authorize further drift.
         finite = all(math.isfinite(positions[e.source_index][0]) and
                      math.isfinite(heights[e.source_index]) for e in group)
         by_x = sorted(group,key=lambda e: positions[e.source_index][0]) if finite else group
         xs = [positions[e.source_index][0] for e in by_x] if finite else None
-        for e in group:
+        for e in sorted(group, key=rank):
             x, y = positions[e.source_index]
             radius = math.nextafter(.06*heights[e.source_index],math.inf)
             # Expand the radius and endpoints by one floating-point step so
@@ -2614,16 +2630,16 @@ def reduce_static_sign_copies(events: list[Event], visible_map: dict[int, str]) 
             right = bisect_right(xs,math.nextafter(x+radius,math.inf)) if xs is not None else len(by_x)
             for index in range(left,right):
                 other = by_x[index]
-                if other is e or ranks[other.source_index] >= ranks[e.source_index]:
+                if (other is e or other.source_index in removed
+                        or ranks[other.source_index] >= ranks[e.source_index]):
                     continue
                 ox, oy = positions[other.source_index]
-                # Only remove a copy covered for its entire lifetime by an
-                # almost coincident copy of the same complete text.
-                if (other.start_s <= e.start_s + 0.001
-                        and other.end_s >= e.end_s - 0.001
-                        and abs(ox - x) <= .06*min(heights[e.source_index],heights[other.source_index])
-                        and abs(oy - y) <= .06*min(heights[e.source_index],heights[other.source_index])
-                        and compatible_text_layout(e,other)):
+                if (_near_containing_text_copy(e, other, heights[e.source_index],
+                                               heights[other.source_index])
+                        and compatible_text_layout(e, other)
+                        and all(e.state.get(k) == other.state.get(k) for k in
+                                ('b', 'i', 'u', 's', 'fsp', 'q', 'org', 'pbo',
+                                 'borderstyle', 'encoding'))):
                     removed.add(e.source_index)
                     break
     return [e for e in events if e.source_index not in removed], len(removed)
@@ -16989,8 +17005,24 @@ def normalize_near_text_colors(events: list[Event]) -> tuple[list[Event], int]:
     return output, count
 
 
+def _near_containing_text_copy(event: Event, other: Event, height: float,
+                               other_height: float) -> bool:
+    """Whole-lifetime coverage at a near anchor; no timing or anchor extension."""
+    x, y = get_pos(event.text)
+    ox, oy = get_pos(other.text)
+    radius = .06 * min(height, other_height)
+    return (math.isfinite(radius) and other.start_s <= event.start_s
+            and other.end_s >= event.end_s and abs(x - ox) <= radius
+            and abs(y - oy) <= radius)
+
+
 def remove_late_complete_copies(events: list[Event]) -> tuple[list[Event], int]:
-    """Remove static, wholly covered complete copies after all lyric proofs.
+    """Apply strict redundancy after reconstructed text and paint are final."""
+    return remove_redundant_text_copies(events)
+
+
+def remove_redundant_text_copies(events: list[Event], *, pending_lyrics: bool = False) -> tuple[list[Event], int]:
+    """Remove static, wholly covered text records with identical literal spans.
 
     Compare every literal span, including paint, parser history and document
     context. Only the anchor may differ, within the existing six-percent text
@@ -16999,12 +17031,18 @@ def remove_late_complete_copies(events: list[Event]) -> tuple[list[Event], int]:
     Borrow records, styles and formatting caches without modifying them.
     """
     groups: dict[tuple, list[tuple[int, Event]]] = {}
-    layers: dict[str, list[int]] = {}
+    layers: dict[int | None, list[int]] = {}
     heights: dict[int, float] = {}
     wrapping: set[int] = set()
     for index, event in enumerate(events):
+        try:
+            layer = int(event.layer)
+        except ValueError:
+            layer = None
         if event.kind == 'Dialogue':
-            layers.setdefault(event.layer, []).append(index)
+            layers.setdefault(layer, []).append(index)
+        if layer is None or (pending_lyrics and event.lyric):
+            continue
         pos = get_pos(event.text)
         if (pos is None or not all(math.isfinite(v) for v in pos)
                 or has_translucent_paint(event)):
@@ -17024,10 +17062,18 @@ def remove_late_complete_copies(events: list[Event]) -> tuple[list[Event], int]:
             runs.append((StaticSpanSignature(tuple((k, v) for k, v in signature.formatting
                                                   if k != 'pos'), signature.continuation), payload))
         else:
-            # Lone glyphs remain phase/fragments work, outside complete-copy cleanup.
-            if sum(c.isalnum() for _, payload in runs for c in payload) >= 2:
+            # Match the whole record, however short it is. This proves one
+            # redundant copy, not that a fragment has become a complete line.
+            if runs:
                 heights[index] = min(span_heights)
-                groups.setdefault(key[:-1] + (tuple(runs),), []).append((index, event))
+                groups.setdefault((layer,) + key[1:-1] + (tuple(runs),), []).append((index, event))
+
+    unknown = layers.get(None, ())
+    if unknown:
+        for layer, peers in layers.items():
+            if layer is not None:
+                peers.extend(unknown)
+                peers.sort()
 
     removed: set[int] = set()
     for group in groups.values():
@@ -17036,16 +17082,13 @@ def remove_late_complete_copies(events: list[Event]) -> tuple[list[Event], int]:
             x, y = get_pos(event.text)
             for other_index, other in retained:
                 ox, oy = get_pos(other.text)
-                radius = .06 * min(heights[index], heights[other_index])
-                if (not math.isfinite(radius) or other.start_s > event.start_s
-                        or other.end_s < event.end_s or abs(x - ox) > radius
-                        or abs(y - oy) > radius
+                if (not _near_containing_text_copy(event, other, heights[index], heights[other_index])
                         # Translating an automatically wrapped line can change
                         # its available width and actual rendered line breaks.
                         or ((x != ox or y != oy) and (index in wrapping or other_index in wrapping))):
                     continue
                 low, high = sorted((index, other_index))
-                peers = layers[event.layer]
+                peers = layers[int(event.layer)]
                 if any(peer not in removed and events[peer].start_s < event.end_s
                        and events[peer].end_s > event.start_s
                        for peer in peers[bisect_right(peers, low):bisect_left(peers, high)]):

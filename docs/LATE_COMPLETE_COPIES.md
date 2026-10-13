@@ -1,5 +1,9 @@
 # Late complete-copy cleanup — v184
 
+This document records the original v184 policy and validation.
+[REDUNDANT_TEXT_COPIES.md](REDUNDANT_TEXT_COPIES.md) describes its v187
+consolidation and replacement of the character-count admission rule.
+
 Standard simplification now removes remaining nearly coincident complete text
 copies after lyric reconstruction, caption/support layering, shadow-lettering
 restoration and small color normalization. Early lyric flags and source evidence

@@ -56,7 +56,6 @@ for name,edit in [('margin',lambda e:setattr(e,'margin_l','1')),('actor',lambda 
                  ('measurement',lambda e:setattr(e,'measurement',s.DocumentMeasurementContext((1280,720),2)))]:
     es=pair();edit(es[1]);check(name+' retained',s.remove_late_complete_copies(es)==(es,0))
 for name,rows in [
-    ('single glyph',[event('o',100,0,(1,4)),event('o',101,0,(1,4))]),
     ('drawing',[event('m 0 0 l 10 0 10 10',100,0,(1,4),r'\p1'),event('m 0 0 l 10 0 10 10',101,0,(1,4),r'\p1')]),
     ('unpositioned',[event(TEXT,100,0,(1,4)).replace(r'\pos(100.000000,100)','')]*2),
     ('interleaved text',[event(TEXT,100,0,(1,4)),event('Foreground',100,0,(1,4)),event(TEXT,101,0,(1,4))]),
@@ -69,6 +68,37 @@ out,n=s.remove_late_complete_copies(es)
 check('no cumulative offset chain',n==1 and out==[es[0],es[2]])
 es=pair(intervals=((1,4),(1.05,3.95)))
 check('nested coverage retains original hold timing',s.remove_late_complete_copies(es)==([es[0]],1))
+
+# The proof concerns a whole record, not a minimum number of letters.
+for literal in ('o', '字', '!', 'Go', 'The sky'):
+    es=parsed([event(literal,x,0,(1,4)) for x in (100,101)])
+    check(literal+': whole redundant record removed',s.remove_redundant_text_copies(es)==([es[0]],1))
+    check(literal+': strict early and late agree',s.remove_redundant_text_copies(es,pending_lyrics=True)==s.remove_late_complete_copies(es))
+    es[0].lyric=es[1].lyric=True
+    before=deepcopy(es)
+    check(literal+': pending glyph/row ownership retained',s.remove_redundant_text_copies(es,pending_lyrics=True)==(es,0))
+    check(literal+': finished record eligible without clearing flags',s.remove_late_complete_copies(es)==([es[0]],1))
+    check(literal+': no metadata mutation',[vars(e) for e in es]==[vars(e) for e in before])
+es=parsed([event('o',100,0,(1,4)),event('o',120,0,(1,4))])
+check('neighboring repeated letters remain distinct',s.remove_late_complete_copies(es)==(es,0))
+es=parsed([event('o',100,0,(1,2)),event('o',101,0,(1.5,3))])
+check('overlapping letter phases retain both lifetimes',s.remove_late_complete_copies(es)==(es,0))
+es=parsed([event(TEXT,100,'00',(1,4)),event(TEXT,101,'0',(1,4))])
+check('numeric layer aliases share compositing',s.remove_late_complete_copies(es)==([es[0]],1))
+es=parsed([event(TEXT,100,'00',(1,4)),event('Foreground',100,'+0',(1,4)),event(TEXT,101,'0',(1,4))])
+check('numeric layer alias peer blocks removal',s.remove_late_complete_copies(es)==(es,0))
+es=parsed([event(TEXT,100,0,(1,4)),event('Foreground',100,'bad',(1,4)),event(TEXT,101,0,(1,4))])
+check('unknown layer peer cannot establish ordering',s.remove_late_complete_copies(es)==(es,0))
+for tag in (r'\b1',r'\i1',r'\u1',r'\s1',r'\fsp1'):
+    es=pair(tags=tag)
+    visibility={e.source_index:s.OVERRIDE_RE.sub('',e.text) for e in es}
+    check(tag+': intentional layout survives paint selection',s.reduce_static_sign_copies(es,visibility)==(es,0))
+es=pair(tags=r'\1c&H123456&',layer=1)
+visibility={e.source_index:TEXT for e in es}
+check('strict proof preserves contrasting paint',s.remove_redundant_text_copies(es)==(es,0))
+check('early effect stage may select representative paint',s.select_static_sign_paint(es,visibility)==([es[1]],1))
+es[0].lyric=es[1].lyric=True
+check('early paint selection respects lyric ownership',s.select_static_sign_paint(es,visibility)==(es,0))
 
 # The existing 22 exact-font fixtures exercise assign_layout and every lyric proof.
 # Compare to the real pipeline with only this new final pass disabled.

@@ -200,3 +200,7 @@ See [LATE_STATIC_PHASES.md](LATE_STATIC_PHASES.md) for exact final phase joins
 
 See [STATIC_PHASE_MERGING.md](STATIC_PHASE_MERGING.md) for the consolidated
 static-phase merger and explicit reconstruction/support handoffs (v186).
+
+See [REDUNDANT_TEXT_COPIES.md](REDUNDANT_TEXT_COPIES.md) for strict redundant-record
+matching shared between early and final stages, separate representative sign
+paint selection, and the reconstruction handoff (v187).
