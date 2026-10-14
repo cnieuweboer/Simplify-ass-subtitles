@@ -2,14 +2,12 @@
 import test_paths
 from pathlib import Path
 from copy import deepcopy
-import ast,collections,contextlib,hashlib,importlib.util,io,json,subprocess,sys
+from unittest.mock import patch
+import ast,collections,contextlib,hashlib,io,json,subprocess
 from PIL import Image,ImageChops
 import simplify_ass as s
-from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
-freeze_caption_policy_for_legacy_comparison(s)
 from lyric_layer_fixtures import HEADER,event
 from executable_ast_audit import executable_ast
-from font_geometry_test_helpers import historical_final_tag_policy
 
 ROOT=Path(__file__).resolve().parents[1];DEST=ROOT/'validation/late-static-phases';DEST.mkdir(exist_ok=True)
 metrics=s.FontMetrics([ROOT/'fonts']);checks=[]
@@ -74,21 +72,26 @@ es=parsed([event('same',100,0,(2,4)),event('Foreground',100,0,(2,4)),event('same
 out,n=merge(es,metrics)
 check('reverse source order joins when peer is already above retained first slot',n==1 and out[0].start_s==1 and out[1] is es[1])
 
-spec=importlib.util.spec_from_file_location('phase_v184',ROOT/'tests/references/simplify_ass_v184.py')
-old_engine=importlib.util.module_from_spec(spec);sys.modules[spec.name]=old_engine;spec.loader.exec_module(old_engine)
+# Compare the complete live pipeline with and without its final phase join.
+# Both sides use current source paint; older contours are not a pixel oracle.
 source=ROOT/'test-data/corpus/Overlord-S04E02.original.ass';source_hash=hashlib.sha256(source.read_bytes()).hexdigest()
-old_path=DEST/'Overlord.v184.ass';new_path=DEST/'Overlord.v185.ass'
-for engine,path,owner in [(old_engine,old_path,old_engine.FontMetrics([ROOT/'fonts'])),(s,new_path,metrics)]:
- report=engine.FontProcessingReport()
- with contextlib.redirect_stdout(io.StringIO()),historical_final_tag_policy(engine):stats=engine.simplify_ass(source,path,engine.SimplifyConfig(),font_metrics=owner,font_report=report)
+old_path=DEST/'Overlord.before-final-join.ass';new_path=DEST/'Overlord.current.ass'
+real_merge=s.merge_static_timed_copies
+def without_final_join(events,styles,**kwargs):
+ if kwargs.get('text_only'):return events,0
+ return real_merge(events,styles,**kwargs)
+for path in (old_path,new_path):
+ report=s.FontProcessingReport()
+ with contextlib.redirect_stdout(io.StringIO()),patch.object(s,'merge_static_timed_copies',without_final_join if path==old_path else real_merge):
+  stats=s.simplify_ass(source,path,s.SimplifyConfig(),font_metrics=metrics,font_report=report)
  check(path.name+': all exact fonts available',not report.missing_families)
- if engine is old_engine:old_stats=stats
+ if path==old_path:old_stats=stats
  else:new_stats=stats
 old=s.load_subtitle_events(old_path)[1];new=s.load_subtitle_events(new_path)[1]
 expected,count=merge(old,metrics)
-check('27 late joins; 2221 to 2194 parsed records',count==27 and len(old)==2221 and len(new)==2194)
-check('only final exact static joins change output',[e.fields() for e in expected]==[e.fields() for e in new])
-check('existing static merge counter records contribution',new_stats['static_merged']==old_stats['static_merged']+27)
+check('final joins remove redundant records',count>0 and len(old)-len(new)==count)
+check('only final exact static joins change output',[s.static_object_key(e,e.styles,allow_unpositioned=True) for e in expected]==[s.static_object_key(e,e.styles,allow_unpositioned=True) for e in new] and [(e.start_s,e.end_s) for e in expected]==[(e.start_s,e.end_s) for e in new])
+check('existing static merge counter records contribution',new_stats['static_merged']==old_stats['static_merged']+count)
 check('final dialogue count correct',new_stats['output']==sum(e.kind=='Dialogue' for e in new))
 check('max concurrency unchanged',new_stats['max_concurrent_out']==old_stats['max_concurrent_out'])
 check('source unchanged',hashlib.sha256(source.read_bytes()).hexdigest()==source_hash)

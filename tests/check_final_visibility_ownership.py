@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verify final visibility contracts against v166, including pending rounds."""
 import test_paths  # Resolve the repository for direct test execution.
+from event_evidence_test_helpers import contour_independent_contract as contract
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import FrozenInstanceError, fields
@@ -9,8 +10,6 @@ from types import MappingProxyType, ModuleType
 from unittest.mock import patch
 import ast, contextlib, importlib.util, json, sys
 import simplify_ass as s
-from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
-freeze_caption_policy_for_legacy_comparison(s)
 from font_geometry_test_helpers import install_row_test_doubles, row_test_call
 from event_evidence_test_helpers import event_comparison_fields, row_comparison_fields
 
@@ -85,7 +84,7 @@ for kind in ('translated','fragment'):
             label = str((kind,accepted,mode))
             check(label+' explicit result',isinstance(result,s.TextPhaseRowsResult))
             check(label+' borrowed events/map unchanged',snapshot((events,visible))==before)
-            check(label+' outputs/count/rows unchanged',snapshot((result.events,result.removed_count,result.rows))==snapshot(expected))
+            check(label+' outputs/count/rows unchanged',contract(snapshot((result.events,result.removed_count,result.rows)))==contract(snapshot(expected)))
             check(label+' selective reporting unchanged',snapshot(current_report)==snapshot(old_report))
             check(label+' sparse delta',999999 not in result.visibility_updates and set(result.visibility_updates)<=set(visible))
             check(label+' caller application matches old writes',{**visible,**result.visibility_updates}==expected_visible)
@@ -115,7 +114,7 @@ for name,descriptors in translated.cases:
         old_report,current_report = old.FontProcessingReport(),s.FontProcessingReport()
         expected = old.collapse_translated_phase_rows(expected_events,expected_visible,a,font_report=old_report)
         result = s.collapse_translated_phase_rows(events,visible,b,font_report=current_report)
-        check(name+mode+' translated decisions/evidence preserved',snapshot(expected)==snapshot((result.events,result.removed_count,result.rows)))
+        check(name+mode+' translated decisions/evidence preserved',contract(snapshot(expected))==contract(snapshot((result.events,result.removed_count,result.rows))))
         check(name+mode+' translated inputs unchanged',before==snapshot((events,visible)))
         check(name+mode+' translated writes/report preserved',{**visible,**result.visibility_updates}==expected_visible and snapshot(current_report)==snapshot(old_report))
 
@@ -132,7 +131,7 @@ for phases in (1,2,6):
             before = deepcopy(snapshot((events,visible)))
             expected = old.collapse_fragment_phase_rows(expected_events,old_visible,fonts[old])
             result = s.collapse_fragment_phase_rows(events,LookupOnly(visible),fonts[s])
-            check('fragment chain '+str((phases,direction,missing)),snapshot(expected)==snapshot((result.events,result.removed_count,result.rows)) and before==snapshot((events,visible)) and {**visible,**result.visibility_updates}==old_visible)
+            check('fragment chain '+str((phases,direction,missing)),contract(snapshot(expected))==contract(snapshot((result.events,result.removed_count,result.rows))) and before==snapshot((events,visible)) and {**visible,**result.visibility_updates}==old_visible)
 
 for count in (4,8):
     seed = shared.load([shared.event('i',488,1,2)])[0][0]
@@ -158,7 +157,7 @@ for count in (4,8):
     check('shared explicit result',isinstance(result,s.SharedIntervalRowsResult))
     check('shared accepted rows/tails',result.rows_joined>0 and result.tails_retained>0)
     check('shared inputs unchanged',snapshot((events,visible))==original)
-    check('shared outputs/counts unchanged',snapshot((result.events,result.rows_joined,result.tails_retained))==snapshot(expected))
+    check('shared outputs/counts unchanged',contract(snapshot((result.events,result.rows_joined,result.tails_retained)))==contract(snapshot(expected)))
     check('shared writes/report unchanged',{**visible,**result.visibility_updates}==old_visible and snapshot(current_report)==snapshot(old_report))
     check('later round reads generated visibility',len(round_reads)>1 and any(key not in visible and value for key,value in round_reads[1].items()))
     check('shared sparse generated-ID delta',set(result.visibility_updates).isdisjoint(visible))

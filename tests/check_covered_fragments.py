@@ -1,4 +1,5 @@
 import test_paths  # Resolve the repository for direct test execution.
+from event_evidence_test_helpers import contour_independent_contract as contract
 from event_evidence_test_helpers import event_comparison_fields, row_comparison_fields
 #!/usr/bin/env python3
 """Compare covered-fragment decisions and caller-owned evidence with v154."""
@@ -13,8 +14,6 @@ import sys
 import tempfile
 import trace
 import simplify_ass as current
-from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
-freeze_caption_policy_for_legacy_comparison(current)
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
 install_row_test_doubles(current, historical_fade_timing=True)
 
@@ -216,8 +215,8 @@ for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass')
                 compared.append((snapshot(captured),output.read_bytes(),stats,font_test_report(metric).rows_joined))
         finally:
             module.remove_covered_fragment_effects=original
-    assert compared[0]==compared[1],fixture
-    focused.append(dict(fixture=fixture,target_calls=len(captured),identical=True))
+    assert contract(compared[0]) == contract(compared[1]),fixture
+    focused.append(dict(fixture=fixture,target_calls=len(captured),contour_independent_contract_identical=True))
 
 audit=json.loads((ROOT/'validation/covered-fragment-helper-list.json').read_text())
 helper_names=set(audit['helpers'])

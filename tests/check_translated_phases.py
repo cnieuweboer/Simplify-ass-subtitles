@@ -1,4 +1,5 @@
 import test_paths  # Resolve the repository for direct test execution.
+from event_evidence_test_helpers import contour_independent_contract as contract
 from event_evidence_test_helpers import event_comparison_fields, row_comparison_fields
 #!/usr/bin/env python3
 """Compare translated-phase decisions, evidence and font calls with v123."""
@@ -10,8 +11,6 @@ import statistics
 import sys
 import trace
 import simplify_ass as current
-from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
-freeze_caption_policy_for_legacy_comparison(current)
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
 install_row_test_doubles(current)
 
@@ -133,7 +132,7 @@ for name,descriptors in cases:
             assert snapshot(events)==original,(name,mode,'source mutation')
             results.append(snapshot((result,visible,font_test_report(metric).rows_joined if metric is not None else 0,
                 getattr(metric,'calls',[]),font_test_report(metric).missing_families if metric is not None else set(),result[0] is events)))
-        assert results[0]==results[1],(name,mode)
+        assert contract(results[0]) == contract(results[1]),(name,mode)
         checks.append(dict(case=name,mode=mode,removed=result[1],rows=len(result[2])))
 
 # The same source event can belong to differently arranged authored cues.

@@ -1,5 +1,6 @@
 """Row geometry parity, explicit diagnostics, batch lifetime and bounded rewiring."""
 import test_paths  # Resolve the repository for direct test execution.
+from event_evidence_test_helpers import contour_independent_contract as contract
 from pathlib import Path
 from copy import deepcopy
 from unittest.mock import patch
@@ -7,8 +8,6 @@ from io import StringIO
 import ast, contextlib, hashlib, importlib.util, inspect, json, random, sys, tempfile
 from font_geometry_test_helpers import historical_static_phase_policy
 import simplify_ass as current
-from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
-freeze_caption_policy_for_legacy_comparison(current)
 from event_evidence_test_helpers import event_comparison_fields
 from font_geometry_audit import normalized_row_algorithm, normalized_font_caller
 from font_geometry_test_helpers import ROW_NAMES
@@ -121,7 +120,7 @@ with tempfile.TemporaryDirectory() as directory, patch.object(
                 actual=current.simplify_ass(source,new_output,current.SimplifyConfig(),font_metrics=fonts,font_report=batch,outline_matcher=matcher)
                 expected=previous.simplify_ass(source,old_output,previous.SimplifyConfig(),font_spacing=old_batch)
             assert actual.pop('shadow_lettering_normalized',0)==0  # These row fixtures are outside the new normalization.
-            check('complete focused subtitle unchanged',actual==expected and new_output.read_bytes()==old_output.read_bytes())
+            check('complete focused subtitle unchanged',actual==expected and contract(new_output.read_bytes())==contract(old_output.read_bytes()))
             check('batch accepted joins unchanged',batch.rows_joined==old_batch.merged)
             check('batch selective missing fonts unchanged',batch.missing_families==old_batch.missing)
             conversion_cases.append(source.name)

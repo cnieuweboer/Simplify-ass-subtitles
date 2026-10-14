@@ -1,12 +1,11 @@
 """Shared static phase proofs and the row/support ownership boundaries."""
 import test_paths
+from event_evidence_test_helpers import contour_independent_contract as contract
 from pathlib import Path
 from copy import deepcopy
 from unittest.mock import patch
 import contextlib,hashlib,importlib.util,io,json,sys
 import simplify_ass as s
-from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
-freeze_caption_policy_for_legacy_comparison(s)
 from lyric_layer_fixtures import HEADER,event
 from font_geometry_test_helpers import historical_final_tag_policy
 
@@ -107,8 +106,18 @@ for engine in (reference,s):
  check(engine.__version__+': exact fonts available',not report.missing_families)
  recorded.append((captured,output.read_bytes(),stats))
  if engine is s:current_trace=trace
-check('actual consumer receives same source roles visibility and intervals',recorded[0][0]==recorded[1][0])
-check('focused source output and counters unchanged',recorded[0][1:]==recorded[1][1:])
+check('actual consumer receives same source roles visibility and intervals',contract(recorded[0][0])==contract(recorded[1][0]))
+from event_evidence_test_helpers import contour_independent_timeline
+reference_events=s.load_subtitle_events(DEST/(reference.__version__+'.ass'))[1]
+current_events=s.load_subtitle_events(DEST/(s.__version__+'.ass'))[1]
+check('focused source literal fill geometry and visibility unchanged',
+      contour_independent_timeline(reference_events)==contour_independent_timeline(current_events))
+check('unrelated focused source counters unchanged',
+      {k:v for k,v in recorded[0][2].items() if k not in {'output','static_merged'}}==
+      {k:v for k,v in recorded[1][2].items() if k not in {'output','static_merged'}})
+check('additional identical paint joins accounted for',
+      recorded[0][2]['output']-recorded[1][2]['output']==
+      recorded[1][2]['static_merged']-recorded[0][2]['static_merged'])
 check('both actual callers share one implementation',len(current_trace)==2 and
       current_trace[0]['pending'] and not current_trace[0]['text_only'] and
       current_trace[1]['text_only'] and not current_trace[1]['pending'])

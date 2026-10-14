@@ -21,6 +21,12 @@ if args.backend=='both':
 else:
     backends=[args.backend]
 scripts=[x['script'] for x in json.loads((root/'validation/regression-inventory.json').read_text())['current']]
+harness_inputs=sorted(set([*root.glob('tests/*.py'),Path(__file__),
+    root/'validation/run_backend_check.py',root/'validation/backend_startup/sitecustomize.py',
+    root/'validation/regression-inventory.json']))
+hashes=lambda paths:{str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+initial_harness_hashes=hashes(harness_inputs)
+initial_runtime_hash=hashlib.sha256((root/'simplify_ass.py').read_bytes()).hexdigest()
 pixel={s for s in scripts if s.endswith('_render.py') or Path(s).name=='check_relative_size_render.py'}
 all_results=[]
 backend_results=[]
@@ -63,9 +69,11 @@ report=dict(runtime_sha256=hashlib.sha256((root/'simplify_ass.py').read_bytes())
             primary_backend='windows' if 'windows' in backends else 'raqm',
             requested_backend=args.backend,backends=backend_results,checks=all_results,
             raqm_available=features.check_feature('raqm'))
-tracked=[root/script for script in scripts]+[Path(__file__),root/'validation/run_backend_check.py',root/'validation/backend_startup/sitecustomize.py',root/'validation/regression-inventory.json']
-report['harness_sha256']={str(path.relative_to(root)):hashlib.sha256(path.read_bytes()).hexdigest() for path in tracked}
+report['harness_sha256']=initial_harness_hashes
+report['inputs_unchanged']=(hashes(harness_inputs)==initial_harness_hashes and
+                          report['runtime_sha256']==initial_runtime_hash)
 (root/'validation/complete-regression-checks.json').write_text(json.dumps(report,indent=2)+'\n')
 if args.backend=='both' and 'raqm' not in backends:
     print('RAQM unavailable on this host; required Windows regressions completed',flush=True)
 assert all(x['exit_code']==0 for x in all_results)
+assert report['inputs_unchanged'], 'Runtime or test/helper inputs changed during validation'

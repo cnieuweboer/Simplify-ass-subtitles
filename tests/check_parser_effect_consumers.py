@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """Compare direct span consumers, paint-copy reduction and reveals with v157."""
 import test_paths  # Resolve the repository for direct test execution.
+from event_evidence_test_helpers import contour_independent_contract as contract
 from copy import deepcopy
 from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 import importlib.util,json,math,random,sys
 import simplify_ass as current
-from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
-freeze_caption_policy_for_legacy_comparison(current)
 from event_evidence_test_helpers import event_comparison_fields,static_span_comparison_fields
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('parser_effect_reference',ROOT/'test-data/simplify_ass-v157-reference.py')
@@ -55,7 +54,7 @@ for case in stack['CASES']:
     with refusal:out,n=module.flatten_stacked_text_copies(events,visible,animated,source_events=sources)
     check(case['name']+order+mode+module.__version__+' input ownership',before==snapshot((events,visible,animated,sources)))
     compared.append((snapshot(out),n,[any(e is source for source in events) for e in out]))
-   check(case['name']+order+mode+' stacked parity',compared[0]==compared[1]);stack_cases+=1
+   check(case['name']+order+mode+' stacked parity',contract(compared[0]) == contract(compared[1]));stack_cases+=1
 
 reveal=fixtures('check_progressive_reveal_stages.py');reveal_cases=0
 for case in reveal['CASES']:
@@ -70,7 +69,7 @@ for case in reveal['CASES']:
     updated={**visible,**result.visibility_updates}
     compared.append((snapshot(result.events),result.removed_count,result.visibility_updates,updated,
                      result.events is events,[any(e is source for source in events) for e in result.events]))
-   check(case['name']+order+map_mode+' reveal parity',compared[0]==compared[1]);reveal_cases+=1
+   check(case['name']+order+map_mode+' reveal parity',contract(compared[0]) == contract(compared[1]));reveal_cases+=1
 
 report=dict(version=current.__version__,reference_version=previous.__version__,checks_passed=len(checks),
             stacked_scenarios=len(stack['CASES']),stacked_comparisons=stack_cases,

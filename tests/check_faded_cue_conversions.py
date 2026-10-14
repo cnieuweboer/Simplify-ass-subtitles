@@ -1,4 +1,5 @@
 import test_paths  # Resolve the repository for direct test execution.
+from event_evidence_test_helpers import contour_independent_contract as contract
 from event_evidence_test_helpers import event_comparison_fields, row_comparison_fields
 #!/usr/bin/env python3
 """Compare complete Overlord conversions and fade-pass contracts with immutable v164."""
@@ -11,8 +12,6 @@ import sys
 import tempfile
 
 import simplify_ass as current
-from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
-freeze_caption_policy_for_legacy_comparison(current)
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
 install_row_test_doubles(current, historical_fade_timing=True)
 from event_evidence_test_helpers import event_comparison_fields
@@ -63,13 +62,14 @@ for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass')
                     font_test_report(metric).rows_joined,sorted(font_test_report(metric).missing_families)))
         finally:
             module.trim_faded_cue_overlaps = original
-    assert compared[0]==compared[1],fixture
+    assert contract(compared[0]) == contract(compared[1]),fixture
     assert captured,fixture
     results.append(dict(fixture=fixture,target_calls=len(captured),
         handoffs=[result[1] for before,result in captured],
-        pass_inputs_and_results_identical=True,output_bytes_identical=True,
+        contour_independent_inputs_and_results_identical=True,
+        contour_independent_output_identical=True,
         statistics_logs_and_font_counters_identical=True))
 report = dict(version=current.__version__,reference_version=previous.__version__,
     focused_conversions=len(results),results=results)
 (ROOT/'validation/faded-cue-conversion-checks.json').write_text(json.dumps(report,indent=2)+'\n')
-print('Two focused conversions: fade-pass inputs/results, output bytes, statistics, logs and font counters match v164')
+print('Two focused conversions: contour-independent fade contracts match the reference; statistics, logs and font counters unchanged')

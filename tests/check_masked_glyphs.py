@@ -1,4 +1,5 @@
 import test_paths  # Resolve the repository for direct test execution.
+from event_evidence_test_helpers import contour_independent_contract as contract
 from event_evidence_test_helpers import event_comparison_fields
 #!/usr/bin/env python3
 """Compare mask decisions, font calls/cache lifetime and input ownership with v123."""
@@ -19,8 +20,6 @@ from fontTools.pens.recordingPen import DecomposingRecordingPen,RecordingPen
 from fontTools.pens.qu2cuPen import Qu2CuPen
 from fontTools.ttLib import TTFont
 import simplify_ass as current
-from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
-freeze_caption_policy_for_legacy_comparison(current)
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
 install_row_test_doubles(current, historical_fade_timing=True)
 
@@ -267,8 +266,8 @@ for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass')
                 assert stats.pop('shadow_lettering_normalized', 0)==0  # This fixture must remain unaffected by final paint normalization.
                 compared.append((snapshot(captured),output.read_bytes(),stats,font_test_report(metric).rows_joined))
         finally:module.remove_masked_glyph_effects=original
-    assert compared[0]==compared[1],fixture
-    focused.append(dict(fixture=fixture,target_calls=len(captured),identical=True))
+    assert contract(compared[0]) == contract(compared[1]),fixture
+    focused.append(dict(fixture=fixture,target_calls=len(captured),contour_independent_contract_identical=True))
 
 audit=json.loads((ROOT/'validation/masked-extraction-blocks.json').read_text())
 helpers={entry['helper'] for entry in audit}
@@ -284,7 +283,7 @@ for node in ast.parse(Path(current.__file__).read_text()).body:
             statement_lines=len(statements),executed_statement_lines=len(statements&executed),
             unexecuted_lines=sorted(statements-executed))
 assert all(item['exercised'] for item in coverage.values()),coverage
-report=dict(reference='v123',comparisons=len(checks),font_calls_and_closure_identical=True,
+report=dict(reference='v123',comparisons=len(checks),font_calls_and_closure_contour_independent_contract_identical=True,
     focused_conversions=focused,helper_coverage=coverage,checks=checks)
 (ROOT/'validation/masked-glyph-checks.json').write_text(json.dumps(report,indent=2)+'\n')
 print(f'{len(checks)} masked-glyph comparisons; font calls and closure identical; 2 focused conversions; all 17 helpers exercised')

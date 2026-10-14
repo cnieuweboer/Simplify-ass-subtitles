@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """Verify borrowed reconstruction inputs, explicit deltas and final row timing."""
 import test_paths  # Resolve the repository for direct test execution.
+from event_evidence_test_helpers import contour_independent_contract as contract
 from copy import deepcopy
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import MappingProxyType
 import contextlib,importlib.util,json,statistics,sys,tempfile
 import simplify_ass as s
-from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
-freeze_caption_policy_for_legacy_comparison(s)
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
 install_row_test_doubles(s, historical_fade_timing=True)
 from event_evidence_test_helpers import event_comparison_fields
@@ -167,8 +166,8 @@ for fixture_name in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.
                 assert stats.pop('shadow_lettering_normalized', 0)==0  # This fixture must remain unaffected by final paint normalization.
                 compared.append((output.read_bytes(),stats,calls,font_test_report(metric).rows_joined,sorted(font_test_report(metric).missing_families)))
         finally:module.reconstruct_text_rows=original
-    check(fixture_name+' caller conversion unchanged',compared[0]==compared[1])
-    focused.append(dict(fixture=fixture_name,reconstruction_calls=calls,identical=True))
+    check(fixture_name+' caller conversion unchanged',contract(compared[0]) == contract(compared[1]))
+    focused.append(dict(fixture=fixture_name,reconstruction_calls=calls,contour_independent_contract_identical=True))
 
 (ROOT/'validation/row-reconstruction-ownership-checks.json').write_text(json.dumps(
     dict(version=s.__version__,count=len(checks),checks=checks,focused_conversions=focused),indent=2)+'\n')

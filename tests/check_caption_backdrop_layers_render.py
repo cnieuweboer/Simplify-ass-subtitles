@@ -5,8 +5,6 @@ from copy import deepcopy
 from unittest.mock import patch
 import ast,contextlib,hashlib,importlib.util,io,json,subprocess,sys
 import simplify_ass as s
-from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
-freeze_caption_policy_for_legacy_comparison(s)
 from PIL import Image,ImageChops,ImageDraw
 from executable_ast_audit import executable_ast
 
@@ -241,7 +239,20 @@ for name,at,style,text in [('Sword-S01E03',121.3,'ZahuSigns','(Cat Beastmen Styl
                                   font_metrics=reference_metrics,font_report=report)
         check(name+': oracle fonts complete '+str(number),not report.missing_families)
         old_source=oracle
-    check(name+': first rendering matches verified readable v182 third pass',ImageChops.difference(frames[0],render(oracle)).getbbox() is None)
+    # v198 preserves authored contours, so old rendered pixels are no longer
+    # the paint specification. Keep the old caption as a placement/layer oracle.
+    from event_evidence_test_helpers import contour_independent_contract as contract
+    old_caption=next(e for e in s.load_subtitle_events(oracle)[1]
+                     if e.style==style and s.OVERRIDE_RE.sub('',e.text)==text)
+    check(name+': readable historical caption geometry retained',
+          contract(old_caption.fields())==contract(captions[0].fields()))
+    # Prove the intended caption actually contributes ink above its panel.
+    document=s.parse_subtitle_document(paths[0].read_text());events=s.load_subtitle_events(paths[0])[1]
+    masked=DEST/(name+'.without-caption.ass')
+    masked.write_text(s.render_subtitle_document(document,[e for e in events
+        if not (e.style==style and s.OVERRIDE_RE.sub('',e.text)==text)]))
+    check(name+': current caption visibly contributes above backdrop',
+          ImageChops.difference(frames[0],render(masked)).getbbox() is not None)
     frames[0].save(DEST/(name+'.fixed.png'))
 
 def definitions(path):

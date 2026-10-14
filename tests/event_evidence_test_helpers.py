@@ -118,26 +118,60 @@ def row_comparison_fields(row):
     return fields
 
 
-def freeze_caption_policy_for_legacy_comparison(module):
-    """Keep historical algorithm/ownership comparisons on their original paint policy.
 
-    v198 deliberately changes proved source contours. These extraction tests
-    compare unrelated parsing, matching and reconstruction algorithms with older
-    engines; the real policy is covered separately by native source-intent checks
-    and fresh full-corpus conversions. Only caption rendering is a test fixture.
+CONTOUR_FIELDS = frozenset({'3c', '3a', 'bord', 'xbord', 'ybord'})
+
+
+def contour_independent_contract(value):
+    """Compare historical reconstruction contracts across the v198 paint change.
+
+    Exclude only contour color, opacity and width. Content, fill, timing,
+    geometry, source evidence, visibility and ordering remain in the comparison.
+    Use only for cross-version expectations; input immutability and live paint
+    assertions must use their complete values. This never modifies an engine.
     """
-    import importlib.util
-    import sys
-    from pathlib import Path
-    path=Path(__file__).resolve().parent/'references/simplify_ass_v197.py'
-    name='legacy_caption_policy_reference'
-    if name not in sys.modules:
-        spec=importlib.util.spec_from_file_location(name,path)
-        reference=importlib.util.module_from_spec(spec);sys.modules[name]=reference
-        spec.loader.exec_module(reference)
-    reference=sys.modules[name]
-    def render(state,text,*args,**kwargs):
-        kwargs.pop('source_paint',None)
-        return reference.render_simplified_caption(state,text,*args,**kwargs)
-    module.render_simplified_caption=render
-    module._source_caption_paint=lambda *args,**kwargs: None
+    import re
+    if isinstance(value, bytes):
+        return contour_independent_contract(value.decode('utf-8-sig'))
+    if isinstance(value, str):
+        def header(match):
+            tags = re.sub(r"\\(?:3c|3a|xbord|ybord|bord)[^\\}]*", '', match[0][1:-1])
+            return '{'+tags+'}' if tags else ''
+        return re.sub(r"\{[^}]*\}", header, value)
+    if isinstance(value, dict):
+        return {k:contour_independent_contract(v) for k,v in value.items()
+                if k not in CONTOUR_FIELDS}
+    if isinstance(value, (tuple, list)):
+        return tuple(contour_independent_contract(v) for v in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(contour_independent_contract(v) for v in value)
+    return value
+
+
+def contour_independent_timeline(events):
+    """Literal fill/layout multiplicity at every boundary, allowing phase joins."""
+    from collections import Counter, defaultdict
+    import simplify_ass as s
+    changes = defaultdict(Counter)
+    for e in events:
+        if e.kind != 'Dialogue':
+            continue
+        obj = s.static_object_key(e,e.styles,allow_unpositioned=True)
+        assert obj is not None, ('timeline requires static output',e.text)
+        spans = []
+        for sig,drawing,literal in obj[-1]:
+            fields = tuple((k,v) for k,v in sig.formatting if k not in CONTOUR_FIELDS)
+            key = (fields,sig.continuation,drawing)
+            if spans and spans[-1][0] == key:
+                spans[-1] = (key,spans[-1][1]+literal)
+            else:
+                spans.append((key,literal))
+        key = obj[:-1]+(tuple(spans),)
+        changes[e.start_s][key] += 1
+        changes[e.end_s][key] -= 1
+    live = Counter(); timeline = []
+    for at,delta in sorted(changes.items()):
+        live.update(delta); live = +live
+        if not timeline or live != timeline[-1][1]:
+            timeline.append((at,live.copy()))
+    return timeline

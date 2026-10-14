@@ -68,13 +68,11 @@ original foreground authority, missing/conflicting/invalid evidence, span
 handoffs, full conversion and repeat stability. Static unblurred source paint is
 compared pixel-for-pixel with the proved output on black, gray and white.
 
-Historical extraction/parity checks freeze caption rendering and source-paint
-selection to the v197 fallback fixture when comparing older matching/parser,
-ownership, timing or layering algorithms. Their intentional rendering-policy
-change is outside those comparisons. The full-lyric call trace omits the new
-renderer proof argument. Modern source-intent checks, the v197 backing/glow checks,
-and fresh corpus conversions run the actual unpatched v198 policy. This keeps
-old paint spelling/contrast decisions from becoming specifications for new code.
+At v198, historical extraction/parity checks temporarily substituted v197
+caption paint. The v199 test follow-up removes that substitution from all 16
+checks: current rendering runs directly, historical contour-independent contracts
+remain where useful, and direct paint/native handoff checks protect current intent.
+See [CURRENT_POLICY_INTEGRATION_COVERAGE.md](CURRENT_POLICY_INTEGRATION_COVERAGE.md).
 
 `validation/run_contrast_fallback_corpus.py` regenerates ten sources against
 hash-verified v197 baselines. Its timeline comparison excludes only contour

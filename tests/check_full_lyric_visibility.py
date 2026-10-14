@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Compare copy clustering, caption selection and applied visibility with immutable v165."""
 import test_paths  # Resolve the repository for direct test execution.
+from event_evidence_test_helpers import contour_independent_contract as contract
 from contextlib import contextmanager,redirect_stdout
 from pathlib import Path
 import importlib.util,json,random,sys,tempfile
 import simplify_ass as current
-from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
-freeze_caption_policy_for_legacy_comparison(current)
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
 install_row_test_doubles(current, historical_fade_timing=True)
 from event_evidence_test_helpers import event_comparison_fields
@@ -88,11 +87,10 @@ def inputs(module,records,order,map_mode):
 
 @contextmanager
 def recording(module,calls):
-    originals={name:getattr(module,name) for name in ('select_static_state','render_simplified_caption','replace_event')}
+    originals={name:getattr(module,name) for name in ('select_static_state',)}
     def wrap(name,original):
         def call(*args,**kwargs):
-            legacy_kwargs={k:v for k,v in kwargs.items() if not (name=='render_simplified_caption' and k=='source_paint')}
-            before=snapshot((args,legacy_kwargs));result=original(*args,**kwargs)
+            before=snapshot((args,kwargs));result=original(*args,**kwargs)
             calls.append((name,before,snapshot(result)));return result
         return call
     for name,original in originals.items():setattr(module,name,wrap(name,original))
@@ -116,7 +114,7 @@ for name,records in CASES:
                 else:out,count=result;applied=visible
                 compared.append((snapshot((out,count)),snapshot(applied),calls,
                     tuple(any(e is old for old in events) for e in out)))
-            assert compared[0]==compared[1],(name,order,map_mode)
+            assert contract(compared[0]) == contract(compared[1]),(name,order,map_mode)
             checks.append(dict(case=name,order=order,map_mode=map_mode))
 
 focused=[]
@@ -125,8 +123,7 @@ for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass')
     for module in (previous,current):
         original=module.collapse_full_lyric_copies;captured=[]
         def wrapped(*args,**kwargs):
-            legacy_kwargs={k:v for k,v in kwargs.items() if not (name=='render_simplified_caption' and k=='source_paint')}
-            before=snapshot((args,legacy_kwargs));result=original(*args,**kwargs)
+            before=snapshot((args,kwargs));result=original(*args,**kwargs)
             if hasattr(result,"visibility_updates"):
                 assert before==snapshot((args,kwargs)),fixture
                 semantic=(result.events,result.removed_count)
@@ -141,11 +138,11 @@ for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass')
                 assert stats.pop('shadow_lettering_normalized', 0)==0  # This fixture must remain unaffected by final paint normalization.
                 compared.append((captured,out.read_bytes(),stats,font_test_report(metric).rows_joined,sorted(font_test_report(metric).missing_families)))
         finally:module.collapse_full_lyric_copies=original
-    assert compared[0]==compared[1],fixture
-    focused.append(dict(fixture=fixture,target_calls=len(captured),identical=True))
+    assert contract(compared[0]) == contract(compared[1]),fixture
+    focused.append(dict(fixture=fixture,target_calls=len(captured),contour_independent_contract_identical=True))
 
 (ROOT/'validation/full-lyric-visibility-checks.json').write_text(json.dumps(dict(
     version=current.__version__,reference_version=previous.__version__,comparisons=len(checks),
-    scenarios=len(CASES),applied_visibility_and_helper_calls_identical=True,
+    scenarios=len(CASES),contour_independent_visibility_and_selection_identical=True,
     input_ownership_and_event_identity_preserved=True,focused_conversions=focused,checks=checks),indent=2)+'\n')
 print(len(checks),'full-lyric comparisons across',len(CASES),'scenarios; two focused conversions passed')

@@ -28,3 +28,8 @@ exclusions, source changes, error cleanup, and warning/verification handling.
 With `mkvmerge` on PATH they also create temporary MKVs and exercise real remuxes
 with subtitles, audio, attachments, and chapters (plus video when FFmpeg is
 available). No corpus fixtures or user media are required or modified.
+
+Historical parser/ownership comparisons may explicitly exclude contour fields
+that changed in v198; they run the current renderer. Full input-immutability
+checks and current-policy paint/native checks retain contour values. See
+[the v199 coverage notes](../docs/CURRENT_POLICY_INTEGRATION_COVERAGE.md).

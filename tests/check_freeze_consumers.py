@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """Compare directly related selection consumers and paint generators with v159."""
 import test_paths  # Resolve the repository for direct test execution.
+from event_evidence_test_helpers import contour_independent_contract as contract
 from copy import deepcopy
 from pathlib import Path
 from collections.abc import Iterator
 import importlib.util,json,math,random,sys
 import simplify_ass as current
-from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
-freeze_caption_policy_for_legacy_comparison(current)
 from event_evidence_test_helpers import event_comparison_fields,selection_comparison_fields
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('freeze_consumer_reference',ROOT/'test-data/simplify_ass-v159-reference.py')
@@ -66,7 +65,8 @@ for name,records in copies['CASES']:
                     check(name+target+' borrowed input',before==snapshot((events,visible)))
                     compared.append((snapshot(output),count,updates,
                         [any(e is source for source in events) for e in output]))
-                check(name+target+' output/updates/identity parity',compared[0]==compared[1]);copy_cases+=1
+                check(name+target+' output/updates/identity parity',
+                    (contract(compared[0])==contract(compared[1])) if target=='collapse_full_lyric_copies' else compared[0]==compared[1]);copy_cases+=1
 
 sequences=fixtures('check_text_effect_sequence_stages.py','SPY_NAMES=');sequence_cases=0
 for case in sequences['CASES']:
@@ -83,7 +83,7 @@ for case in sequences['CASES']:
             out,count=module.flatten_text_effect_sequences(events,visible,styles,animated,scale,source_events=sources)
             check(case['name']+' effect inputs borrowed',before==snapshot((events,visible,styles,animated,sources)))
             compared.append((snapshot(out),count,[any(e is source for source in events) for e in out]))
-        check(case['name']+' effect output/identity parity',compared[0]==compared[1]);sequence_cases+=1
+        check(case['name']+' effect output/identity parity',contract(compared[0]) == contract(compared[1]));sequence_cases+=1
 
 report=dict(version=current.__version__,reference_version=previous.__version__,checks_passed=len(checks),
             static_policy_cases=static_cases,lyric_paint_consumer_cases=copy_cases,effect_sequence_cases=sequence_cases,

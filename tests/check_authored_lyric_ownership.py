@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compare explicit lyric/source/row updates with immutable v162 semantics."""
 import test_paths  # Resolve the repository for direct test execution.
+from event_evidence_test_helpers import contour_independent_contract as contract
 from collections.abc import Mapping
 from contextlib import contextmanager, redirect_stdout
 from copy import deepcopy
@@ -16,8 +17,6 @@ import sys
 import tempfile
 
 import simplify_ass as current
-from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
-freeze_caption_policy_for_legacy_comparison(current)
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
 install_row_test_doubles(current, historical_fade_timing=True)
 from event_evidence_test_helpers import event_comparison_fields, row_comparison_fields
@@ -148,7 +147,7 @@ for cached in (False,True):
                             removed,rows = module.match_authored_lyric_rows(events,visible,sources)
                             applied = sources
                         compared.append(snapshot((removed,rows,applied)))
-                    check('authored decision/cache/row parity '+str(label),compared[0] == compared[1])
+                    check('authored decision/cache/row parity '+str(label),compared[0]==compared[1])
                     cases += 1
 
 # Reuse the established scaffold/paint/fragment cases without historical traces.
@@ -197,7 +196,7 @@ for c in f['CASES']:
                         out,count = module.remove_letters_over_full_lines(events,visible,sources,evidence,font_metrics=metrics[module])
                         applied = sources
                 compared.append(snapshot((out,count,evidence,applied)))
-            check('scaffold row/paint/source parity '+str((c['name'],order,mode)),compared[0] == compared[1])
+            check('scaffold row/paint/source parity '+str((c['name'],order,mode)),contract(compared[0]) == contract(compared[1]))
             cases += 1
 
 # Direct full-line callers may also share unresolved source objects. Preserve
@@ -219,7 +218,7 @@ for shared in (False,True):
             out,count = module.remove_letters_over_full_lines(events,visible,sources,rows)
             applied = sources
         compared.append(snapshot((out,count,rows,applied)))
-    check('unresolved full-line output and proof parity',compared[0] == compared[1])
+    check('unresolved full-line output and proof parity',contract(compared[0]) == contract(compared[1]))
 
 # Exercise the pipeline owner directly, including a second timing map that
 # aliases authored sources and one distinct event with the same source ID.
@@ -248,7 +247,7 @@ for module in (previous,current):
         check('pipeline preserves distinct timing rewrite',timing[999998] is unrelated and timing[999998].state == {'fs':123})
         check('caller updates leave original source uncached',not first.state)
     pipeline_compared.append(snapshot((out,source.events,timing)))
-check('pipeline cache/row application parity',pipeline_compared[0] == pipeline_compared[1])
+check('pipeline cache/row application parity',contract(pipeline_compared[0]) == contract(pipeline_compared[1]))
 
 # Failure after resolving sources must not leave borrowed caches half-installed.
 events,visible,sources = lyric_inputs(current,cached=False,shared=True,invalid='none',reset='',alias=True)
@@ -274,7 +273,7 @@ for name in ('Full-line-scaffold-source.ass','Full-line-shadow-source.ass','Full
                 statistics = module.simplify_ass(ROOT/'test-data'/name,out,module.SimplifyConfig(),font_metrics=metrics[module], font_report=font_test_report(metrics[module]))
             assert statistics.pop('shadow_lettering_normalized', 0)==0  # This fixture must remain unaffected by final paint normalization.
             compared.append((out.read_bytes(),statistics))
-    check('complete focused conversion '+name,compared[0] == compared[1])
+    check('complete focused conversion '+name,contract(compared[0]) == contract(compared[1]))
     focused.append(name)
 
 report = dict(version=current.__version__,reference_version=previous.__version__,checks_passed=len(checks),
