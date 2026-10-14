@@ -52,6 +52,34 @@ class WrapperChecks(unittest.TestCase):
                          {"scrolling_events_dropped": 0})
         self.assertNotIn("scrolling_events_dropped", wrapper.normalize_stats({}))
 
+    def test_child_output_is_quiet_but_warnings_and_failures_remain_visible(self):
+        code = ("import sys; print('duplicate layers removed: 42'); "
+                "print('Exact fonts unavailable (kept positions): Missing Family'); "
+                "sys.stderr.write('WARNING: a meaningful warning\\n')")
+        with patch("sys.stdout", new_callable=io.StringIO) as console:
+            wrapper.run([sys.executable, "-c", code], "subtitle simplification", warnings_ok=False)
+        self.assertNotIn("duplicate layers removed", console.getvalue())
+        self.assertIn("Missing Family", console.getvalue())
+        self.assertIn("a meaningful warning", console.getvalue())
+        with self.assertRaises(RuntimeError) as raised:
+            wrapper.run([sys.executable, "-c",
+                         "import sys; print('filters: 42'); sys.stderr.write('ERROR: broken input\\n'); sys.exit(2)"],
+                        "subtitle simplification", warnings_ok=False)
+        self.assertIn("broken input", str(raised.exception))
+        self.assertNotIn("filters: 42", str(raised.exception))
+
+    def test_event_and_concurrency_summary_does_not_invent_missing_counts(self):
+        track = {"id": 3, "properties": {"track_name": "Full"}}
+        stats = {"original": 100, "output": 60, "max_concurrent_in": 20, "max_concurrent_out": 5}
+        with patch("sys.stdout", new_callable=io.StringIO) as console:
+            wrapper.track_summary(track, stats, True)
+        self.assertIn("events 100 -> 60 (-40.0%)", console.getvalue())
+        self.assertIn("peak concurrency 20 -> 5 (-75.0%)", console.getvalue())
+        with patch("sys.stdout", new_callable=io.StringIO) as console:
+            wrapper.track_summary(track, {}, False)
+        self.assertIn("events unavailable", console.getvalue())
+        self.assertIn("peak concurrency unavailable", console.getvalue())
+
     def test_converted_subtitle_formats(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder, "converted.ass")
@@ -196,6 +224,13 @@ class RealBatchChecks(unittest.TestCase):
                     status = wrapper.main(base_args + ["-o", str(root / label), "--report", str(report)] + extra)
                 self.assertEqual(status, 0, console.getvalue())
                 reports[label] = json.loads(report.read_text())
+                if label == "add":
+                    self.assertIn("Extracting fonts... [1/1]", console.getvalue())
+                    self.assertIn("events 2 -> 2", console.getvalue())
+                    self.assertIn("peak concurrency 1 -> 1", console.getvalue())
+                    self.assertNotIn("duplicate layers removed:", console.getvalue())
+                    self.assertNotIn("mkvmerge v", console.getvalue())
+                    self.assertNotIn("is written to", console.getvalue())
             added = wrapper.identify(merge, root / "add" / source.name)
             replaced = wrapper.identify(merge, root / "replace" / source.name)
             self.assertEqual(len(added["tracks"]), len(before["tracks"]) + 2)

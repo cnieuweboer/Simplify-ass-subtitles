@@ -38,6 +38,11 @@ for unnamed originals), and have default/forced flags cleared. Replacement track
 occupy the original positions and inherit names, language tags, and flags. Other
 tracks retain their order and identities. Fonts and other attachments remain.
 
+Normal console output shows the current file/stage, extraction counts such as
+`Extracting fonts... [9/9]`, and one event/peak-concurrency summary per converted
+track. Detailed filter counters remain in `--report` JSON. Child-process chatter
+is captured; missing-font warnings, other diagnostics, and failures remain visible.
+
 Outputs use temporary files. Before publishing a remux, verification checks track
 count/order, codec, names, language tags, flags, retained track UIDs, attachment
 metadata, and chapter/global-tag counts. MKVToolNix's removal of directory

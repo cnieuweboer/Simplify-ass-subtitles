@@ -8,6 +8,7 @@ from copy import deepcopy
 import json
 import math
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -87,15 +88,63 @@ def find_tool(name, directory=None):
     raise RuntimeError(f"Cannot find {executable}. Install MKVToolNix and add it to PATH.")
 
 
+def diagnostic_lines(text):
+    lines = []
+    for line in text.splitlines():
+        line = re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
+        if (re.match(r"(?i)^(warning|error|fatal)\b", line)
+                or line.startswith(("Exact fonts unavailable", "Font spacing unavailable", "RAQM unavailable"))):
+            if line not in lines:
+                lines.append(line)
+    return lines
+
+
 def run(command, context, *, cwd=None, capture=False, warnings_ok=True):
     result = subprocess.run(command, cwd=cwd, text=True, encoding="utf-8-sig",
-                            errors="replace", capture_output=capture)
+                            errors="replace", capture_output=True)
+    diagnostics = diagnostic_lines((result.stdout or "") + "\n" + (result.stderr or ""))
     if result.returncode not in ((0, 1) if warnings_ok else (0,)):
-        detail = (result.stderr or result.stdout or "").strip() if capture else ""
+        detail = "\n".join(diagnostics)
+        if not detail:
+            detail = "\n".join(((result.stderr or result.stdout or "").strip()).splitlines()[-8:])
         raise RuntimeError(f"{context} failed (exit {result.returncode}). {detail}")
     if result.returncode == 1:
-        print(f"  MKVToolNix warning during {context}; checking the result.")
+        print(f"  WARNING: MKVToolNix warning during {context}; checking the result.")
+    for line in diagnostics:
+        # The wrapper prints structured scrolling warnings once, with track IDs.
+        if context == "subtitle simplification" and "for scrolling text blocks." in line:
+            continue
+        print("  " + (line if re.match(r"(?i)^(warning|error|fatal)\b", line) else "WARNING: " + line))
     return result.stdout if capture else None
+
+
+def stage(message):
+    print("  " + message, flush=True)
+
+
+def count_stage(label, completed, total, *, final=False):
+    text = f"  {label}... [{completed}/{total}]"
+    if sys.stdout.isatty():
+        print("\r" + text, end="\n" if final else "\r", flush=True)
+    else:
+        print(text, flush=True)
+
+
+def reduction_text(before, after):
+    if type(before) is not int or type(after) is not int:
+        return "unavailable"
+    change = f" ({100.0 * (after - before) / before:+.1f}%)" if before else ""
+    return f"{before} -> {after}{change}"
+
+
+def track_summary(track, stats, selected):
+    number = track["id"]
+    name = track.get("properties", {}).get("track_name") or "(unnamed)"
+    name = " ".join(name.split())
+    events = reduction_text(stats.get("original"), stats.get("output"))
+    concurrency = reduction_text(stats.get("max_concurrent_in"), stats.get("max_concurrent_out"))
+    suffix = "" if selected else "; below reduction threshold"
+    print(f"  Track {number} ({name}): events {events}; peak concurrency {concurrency}{suffix}")
 
 
 def identify(merge, path):
@@ -143,10 +192,13 @@ def extract_items(extract, source, mode, items, directory):
     command = [extract, str(source), mode, *[f"{number}:{path.name}" for number, path in items]]
     options = directory / (mode + "-options.json")
     options.write_text(json.dumps(command[1:], ensure_ascii=False), encoding="utf-8")
+    label = "Extracting fonts" if mode == "attachments" else "Extracting subtitles"
+    count_stage(label, 0, len(items))
     run([extract, "@" + str(options)], f"extract {mode}", cwd=directory)
     for _, path in items:
         if not path.is_file():
             raise RuntimeError(f"Extraction did not create {path.name}")
+    count_stage(label, len(items), len(items), final=True)
 
 
 def font_targets(info, directory):
@@ -291,6 +343,7 @@ def build_remux(before, replacements, added, partial, source):
 
 def process_file(source, destination, args, merge, extract, engine, report):
     source_stamp = stamp(source)
+    stage("Reading MKV...")
     before = identify(merge, source)
     partial = None
     try:
@@ -306,14 +359,16 @@ def process_file(source, destination, args, merge, extract, engine, report):
                                        "output": path.with_name(path.stem + ".simple" + path.suffix)})
             extract_items(extract, source, "tracks", [(c["track"]["id"], c["input"]) for c in candidates], work)
             eligible = []
+            marked, small = 0, 0
             for candidate in candidates:
-                number = candidate["track"]["id"]
                 if has_generated_marker(candidate["input"]):
-                    print(f"  Track {number}: already simplified; skipped.")
+                    marked += 1
                 elif not args.process_all_tracks and candidate["input"].stat().st_size <= args.minimum_subtitle_bytes:
-                    print(f"  Track {number}: skipped size threshold (requires > {args.minimum_subtitle_bytes} bytes).")
+                    small += 1
                 else:
                     eligible.append(candidate)
+            if marked or small:
+                stage(f"Selected {len(eligible)} track(s); skipped {marked} already simplified and {small} below size threshold.")
             replacements = []
             if eligible:
                 if args.level == 1 and not getattr(args, "font_dependencies_checked", False):
@@ -331,7 +386,8 @@ def process_file(source, destination, args, merge, extract, engine, report):
                 if args.level == 1:
                     targets = font_targets(before, fonts)
                     extract_items(extract, source, "attachments", targets, fonts)
-                    print(f"  Extracted {len(targets)} embedded font(s).")
+                    if not targets:
+                        stage("Embedded fonts: [0/0]; using supplied or installed fonts.")
                 stats_path = work / "stats.json"
                 command = [sys.executable, str(engine), "--level", str(args.level), "--suffix", ".simple",
                            "--scroll-concurrency-limit", str(args.scroll_concurrency_limit),
@@ -340,6 +396,7 @@ def process_file(source, destination, args, merge, extract, engine, report):
                     for folder in [fonts, *args.fonts_dir]:
                         command.extend(["--fonts-dir", str(folder)])
                 command.extend(["--", *[str(candidate["input"]) for candidate in eligible]])
+                stage(f"Simplifying {len(eligible)} subtitle track(s)...")
                 run(command, "subtitle simplification", warnings_ok=False)
                 records = json.loads(stats_path.read_text(encoding="utf-8-sig"))["tracks"]
                 for candidate in eligible:
@@ -364,11 +421,12 @@ def process_file(source, destination, args, merge, extract, engine, report):
                             "Events": dropped, "Limit": stats.get("scrolling_concurrency_limit"),
                             "Blocks": stats.get("scrolling_blocks_dropped"), "Peak": stats.get("scrolling_peak_after_reduction"),
                             "Message": message})
+                    passed = True
                     if not args.process_all_tracks:
-                        passed, reduction = passed_reduction(stats, args.minimum_event_reduction_percent)
-                        if not passed:
-                            print(f"  Track {candidate['track']['id']}: skipped reduction threshold ({reduction:.1f}% fewer events).")
-                            continue
+                        passed, _ = passed_reduction(stats, args.minimum_event_reduction_percent)
+                    track_summary(candidate["track"], stats, passed)
+                    if not passed:
+                        continue
                     converted = identify(merge, candidate["output"])["tracks"]
                     if len(converted) != 1 or converted[0]["type"] != "subtitles":
                         raise RuntimeError("Invalid converted subtitle track")
@@ -385,11 +443,14 @@ def process_file(source, destination, args, merge, extract, engine, report):
                 options, expected = build_remux(before, replacements, args.mode == "add", partial, source)
                 option_file = work / "remux-options.json"
                 option_file.write_text(json.dumps(options, ensure_ascii=False), encoding="utf-8")
+                stage(f"Remuxing {len(replacements)} simplified track(s)...")
                 run([merge, "@" + str(option_file)], "MKV remux")
                 if not partial.stat().st_size:
                     raise RuntimeError("Remux did not create a nonempty MKV")
+                stage("Verifying output...")
                 verify_output(before, identify(merge, partial), expected)
             else:
+                stage("Copying unchanged MKV...")
                 shutil.copy2(source, partial)
                 if partial.stat().st_size != source_stamp[0]:
                     raise RuntimeError("Incomplete unchanged-file copy")
@@ -400,7 +461,7 @@ def process_file(source, destination, args, merge, extract, engine, report):
             partial.rename(destination)
             partial = None
             outcome = "simplified" if replacements else "copied unchanged"
-            print(f"  Saved ({outcome}): {destination}")
+            print(f"  Saved ({outcome}).")
             return outcome
     finally:
         if partial is not None:
@@ -506,14 +567,14 @@ def main(argv=None):
         return 2
     counts = Counter()
     try:
-        for source in files:
+        for file_number, source in enumerate(files, 1):
             destination = output / source.relative_to(root)
             if destination.exists() or destination.is_symlink():
                 print(f"Skipping existing output: {destination}")
                 counts["skipped"] += 1
                 report["Files"].append({"File": str(source), "Output": str(destination), "Status": "skipped"})
                 continue
-            print(f"\nProcessing: {source.relative_to(root)}")
+            print(f"\n[{file_number}/{len(files)}] {source.relative_to(root)}", flush=True)
             file_report = {"File": str(source), "Output": str(destination)}
             try:
                 outcome = process_file(source, destination, args, merge, extract, engine, report)
