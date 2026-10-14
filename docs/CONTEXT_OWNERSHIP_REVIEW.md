@@ -21,6 +21,7 @@ bounds the follow-up to three functions and two result records.
 | Evaluation record | Frozen binding, not a frozen dictionary | Complete evaluation/sampling own buffers. `event_evaluation()` borrows a nonempty cache or returns an uncached fresh parse. |
 | Selected static state | Selection owns changed formatting; unchanged early return deliberately borrows the input | Selected continuation follows the chosen branch. Paint voting does not invent parser history. |
 | Visibility, pose, settled snapshots | Explicit evidence inputs/results, distinct from rendered formatting | Seed containers are copied locally. Existing snapshot dictionaries are borrowed read-only; new snapshots are independent. Replacement evidence follows the existing proof-preservation rules. |
+| Sampled frame-pose support (v200) | Immutable event evidence captured before paint normalization | Paint-only successors retain support for unchanged literal/layout/geometry. Timing clips support; interval extension grants no new exposure. Completed phase joins combine compatible support once. Serialization clears it. |
 | Pass caches | Font/cache owner or bounded pass context | No new mutable global parser cache. Vector outline fits and negative results remain pass-local; backed pulse continuation map borrows immutable snapshots. |
 
 A frozen `OverrideEvaluation` cannot guarantee immutability of its dictionary.
@@ -51,6 +52,12 @@ An empty state clears history. Formatting/layout replacements invalidate source
 proof unless the caller explicitly supplies valid evidence. Reparsing reconstructs
 styles, context and continuation; transient row/lyric/evidence state does not cross
 serialization.
+
+The v200 sampled frame-pose support has a narrower automatic handoff: paint-only
+formatting changes retain it when `_frame_pose_key()` proves unchanged literal,
+geometry, layout and measurement context. This does not retain historical contour
+or opaque-span proofs. See [REPRESENTATIVE_FRAME_POSES.md](REPRESENTATIVE_FRAME_POSES.md)
+for capture, clipping and completed-run ownership.
 
 `dataclass_replace()` is intentionally lower-level: it preserves fields by default
 and does not reparse or invalidate evidence. Its production formatting probes

@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.14.199",
+  "version": "2026.10.14.200",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -380,6 +380,16 @@
       "script": "tests/check_current_paint_handoffs.py",
       "status": "current",
       "category": "integration"
+    },
+    {
+      "script": "tests/check_frame_pose_selection.py",
+      "status": "current",
+      "category": "source pose selection"
+    },
+    {
+      "script": "tests/check_frame_pose_selection_render.py",
+      "status": "current",
+      "category": "native rendering"
     }
   ],
   "historical": [

@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.14.198"
+__version__ = "2026.10.14.200"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -116,6 +116,9 @@ class EventEvidence:
     """
     original_contour_points: tuple[tuple[float, float], ...] | None = None
     opaque_spans: tuple[tuple[float, float], ...] | None = None
+    # Sampled/frozen frame support before paint normalization or interval extension.
+    # Each entry is (absolute start, absolute end, primary/outline/shadow alpha).
+    frame_pose_intervals: tuple[tuple[float,float,tuple[float,float,float]], ...] | None = None
 
     def __post_init__(self):
         if self.original_contour_points is not None:
@@ -124,6 +127,9 @@ class EventEvidence:
         if self.opaque_spans is not None:
             object.__setattr__(self, 'opaque_spans',
                 tuple(tuple(span) for span in self.opaque_spans))
+        if self.frame_pose_intervals is not None:
+            object.__setattr__(self, 'frame_pose_intervals',tuple(
+                (start,end,tuple(alpha)) for start,end,alpha in self.frame_pose_intervals))
 
 
 @dataclass(frozen=True)
@@ -1504,7 +1510,19 @@ def replace_event(event: Event, **changes) -> Event:
             ('text', 'style', 'state', 'defaults', 'styles',
              'margin_l', 'margin_r', 'margin_v', 'unit'))):
         changes['evidence'] = EventEvidence()
-    return dataclass_replace(event, **changes)
+        if event.evidence.frame_pose_intervals is not None:
+            successor = dataclass_replace(event,**changes)
+            # Paint-only edits keep actual pose dwell. Other historical proofs
+            # still expire, and changed layout/literal cannot inherit this one.
+            if _frame_pose_key(event) == _frame_pose_key(successor):
+                changes['evidence'] = EventEvidence(
+                    frame_pose_intervals=event.evidence.frame_pose_intervals)
+    successor = dataclass_replace(event, **changes)
+    if ('evidence' not in changes and event.evidence.frame_pose_intervals is not None and
+            _frame_pose_key(event) != _frame_pose_key(successor)):
+        successor = dataclass_replace(successor,evidence=dataclass_replace(
+            successor.evidence,frame_pose_intervals=None))
+    return successor
 
 
 def render_tag(name: str, value) -> str:
@@ -2897,7 +2915,8 @@ def coalesce_lyric_phases(events: list[Event], visible_map: dict[int, str], *,
                     else:
                         text = '{'+tags+'}'+text
                     caption = replace_event(caption,text=text)
-            output.append(caption)
+            output.append(_preserve_frame_pose_support(phases[0],caption,phases)
+                          if len(phases)>1 else caption)
     return sorted(output, key=lambda e: e.source_index), removed
 
 
@@ -3064,15 +3083,145 @@ def collapse_full_lyric_copies(events: list[Event],
                                       max(best.state.get(k,best.state.get('bord',0)) for k in ('xbord','ybord')) > 0 and
                                       best.state.get('3a',0) < 255 else
                                       _source_caption_paint(state,[e.state for e in cluster]))
-            replacements[first.source_index] = replace_event(
+            caption = replace_event(
                 first, layer="0", start=format_time(earlier), end=format_time(later),
                 start_s=earlier, end_s=later, effect="",
                 text=text)
+            replacements[first.source_index] = _preserve_frame_pose_support(best,caption,cluster)
             visibility_updates[first.source_index] = visible_map[best.source_index]
             removed.update(item.source_index for item in cluster if item != first)
 
     return TextVisibilityResult([replacements.get(e.source_index, e) for e in events
             if e.source_index not in removed],len(removed),visibility_updates)
+
+
+def _frame_pose_key(e: Event) -> tuple:
+    """Geometry/literal identity in the renderer's existing numeric precision."""
+    tags = ('pos','org','fn','fs','an','b','i','u','s','fsp','fscx','fscy',
+            'frz','frx','fry','fax','fay','p','pbo','q','clip','iclip','borderstyle','encoding')
+    def numeric(value):
+        if isinstance(value,(tuple,list)):
+            return tuple(numeric(v) for v in value)
+        return float(f'{value:g}') if isinstance(value,(int,float)) else value
+    return (OVERRIDE_RE.sub('',e.text),e.measurement,e.unit,e.margin_l,e.margin_r,e.margin_v,
+            inline_layout_key(e),
+            tuple((k,numeric(e.state.get(k,DEFAULT_STATE.get(k)))) for k in tags))
+
+
+def _frame_paint_alphas(e: Event) -> tuple:
+    """Describe actual primary, outline and shadow paint; unused channels are hidden."""
+    return tuple(e.state.get(f'{c}a',0) if c == 1 or
+        max(abs(e.state.get(k,e.state.get('bord' if c == 3 else 'shad',0)))
+            for k in (('xbord','ybord') if c == 3 else ('xshad','yshad'))) > 0
+        else 255 for c in (1,3,4))
+
+
+def _frame_pose_intervals(e: Event) -> tuple:
+    """Borrow source pose dwell, clipped to the surviving event's actual lifetime."""
+    intervals = e.evidence.frame_pose_intervals
+    if intervals is None:
+        intervals = ((e.start_s,e.end_s,_frame_paint_alphas(e)),)
+    return tuple((round(max(start,e.start_s),6),round(min(end,e.end_s),6),alpha)
+                 for start,end,alpha in intervals
+                 if min(end,e.end_s)>max(start,e.start_s))
+
+
+def _visible_pose_support(intervals: Iterable[tuple], channel: int) -> list[tuple]:
+    """Source exposure at maximum actual opacity; copies cannot multiply votes."""
+    boundaries = {}
+    for start,end,alpha in intervals:
+        strength = max(0,min(255,255-alpha[channel]))
+        if end <= start or not strength:
+            continue
+        boundaries.setdefault(start,collections.Counter())[strength] += 1
+        boundaries.setdefault(end,collections.Counter())[strength] -= 1
+    result,active,previous = [],collections.Counter(),None
+    for at,delta in sorted(boundaries.items()):
+        if previous is not None and at>previous and active:
+            strength = max(active)
+            if result and result[-1][1]==previous and result[-1][2]==strength:
+                result[-1] = (result[-1][0],at,strength)
+            else:
+                result.append((previous,at,strength))
+        active.update(delta);active = +active
+        previous = at
+    return result
+
+
+def _preserve_frame_pose_support(source: Event, successor: Event,
+                                 peers: Iterable[Event] | None = None) -> Event:
+    """Explicitly hand off only dwell belonging to the retained literal/geometry."""
+    key = _frame_pose_key(source)
+    if key != _frame_pose_key(successor):
+        return successor
+    intervals = tuple(sorted(set(entry for e in (peers if peers is not None else [source])
+        if _frame_pose_key(e)==key for entry in _frame_pose_intervals(e))))
+    return dataclass_replace(successor,evidence=dataclass_replace(
+        successor.evidence,frame_pose_intervals=intervals))
+
+
+def _representative_frame_pose(events: list[Event]) -> tuple[Event,tuple]:
+    """Choose greatest visible source exposure, then a central existing pose.
+
+    Paint grouping, copied records, source-ID order and frame splitting cannot
+    manufacture dwell. Microsecond-rounded intervals avoid floating duration
+    ties deciding placement. The result is an existing pose, not averaged geometry.
+    """
+    families = {}
+    for e in events:
+        key = _frame_pose_key(e)
+        peers,intervals = families.setdefault(key,([],[]))
+        peers.append(e);intervals.extend(_frame_pose_intervals(e))
+    all_intervals = [entry for peers,intervals in families.values() for entry in intervals]
+    channel = next((c for c in range(3) if any(alpha[c]<254 for a,b,alpha in all_intervals)),0)
+    current_paint = {id(e):_frame_paint_alphas(e) for e in events}
+    paint_channel = next((c for c in range(3) if any(a[c]<254 for a in current_paint.values())),0)
+    support = _visible_pose_support(all_intervals,channel)
+    midpoint = (min(e.start_s for e in events)+max(e.end_s for e in events))/2
+    half = sum((b-a)*strength for a,b,strength in support)/2
+    for a,b,strength in support:
+        if half <= (b-a)*strength:
+            midpoint = a+half/strength;break
+        half -= (b-a)*strength
+    ranked = []
+    for key,(peers,intervals) in families.items():
+        spans = _visible_pose_support(intervals,channel)
+        dwell = sum((b-a)*strength for a,b,strength in spans)
+        center = sum((a+b)/2*(b-a)*strength for a,b,strength in spans)/dwell if dwell else midpoint
+        first = spans[0][0] if spans else min(e.start_s for e in peers)
+        # Geometry votes use source support. Among records at that exact pose,
+        # retain the established visible-paint/longest-hold choice separately.
+        owner = min(peers,key=lambda e:(current_paint[id(e)][paint_channel],
+                                        -e.duration,e.source_index))
+        contains = any(a<=midpoint<b for a,b,strength in spans)
+        ranked.append(((-round(dwell,6),not contains,round(abs(center-midpoint),6),first,repr(key)),owner,tuple(intervals)))
+    _,chosen,intervals = min(ranked,key=lambda item:item[0])
+    return chosen,tuple(sorted(set(intervals)))
+
+
+def _frame_sequence_paint_owner(events: list[Event]) -> Event:
+    """Keep the frame freezer's visible-paint rule independent of source pose."""
+    paint = {id(e):_frame_paint_alphas(e) for e in events}
+    channel = next((c for c in range(3) if any(a[c]<254 for a in paint.values())),0)
+    return min(events,key=lambda e:(paint[id(e)][channel],-e.duration,e.source_index))
+
+
+def _near_static_frame_fits(reference: Event, candidate: Event) -> bool:
+    """Bound jitter against one source anchor; never follow cumulative drift."""
+    pose = {'pos','fscx','fscy','frz'}
+    position,pos = get_pos(reference.text),get_pos(candidate.text)
+    sx,sy = reference.state.get('fscx',100),reference.state.get('fscy',100)
+    if (position is None or pos is None or sx<=0 or sy<=0 or
+            reference.state.get('p',0) or inline_layout_key(reference) or
+            inline_layout_key(candidate) or state_key(reference,pose)!=state_key(candidate,pose)):
+        return False
+    height = text_height(reference)
+    width = abs(reference.state.get('fs',20)*sx/100)*max(1,len(OVERRIDE_RE.sub('',reference.text)))
+    radius = math.dist(pos,candidate.state.get('org',pos))+math.hypot(width,height)
+    angle = math.radians(math.remainder(candidate.state.get('frz',0)-reference.state.get('frz',0),360))
+    error = (math.dist(pos,position)+abs(candidate.state.get('fscx',100)-sx)/sx*width+
+             abs(candidate.state.get('fscy',100)-sy)/sy*height+2*radius*abs(math.sin(angle/2)))
+    return error<=.02*height
 
 
 def merge_frame_animation(events: list[Event], visible_map: dict[int, str],
@@ -3163,20 +3312,26 @@ def freeze_vector_sequences(events: list[Event], short_duration: float = 0.16,
                 or any(b.start_s < a.end_s - 1e-6 for a, b in zip(run, run[1:]))):
             output.extend(run)
             return
-        # Rank the visible primary paint, then the longest hold. Unused
-        # secondary/shadow alpha must not outweigh an unfaded foreground.
-        # Outline-only and shadow-only objects use their actual paint channel.
-        channel = next((c for c in (1,3,4) if any(
-            e.state.get(f"{c}a",0) < 254 and
-            (c == 1 or c == 3 and max(abs(e.state.get(k,e.state.get("bord",0)))
-                                    for k in ("xbord","ybord")) > 0 or
-             c == 4 and max(abs(e.state.get(k,e.state.get("shad",0)))
-                            for k in ("xshad","yshad")) > 0)
-            for e in run)),1)
-        chosen = min(run, key=lambda e: (e.state.get(f"{channel}a",0), -e.duration, e.source_index))
+        chosen,intervals = _representative_frame_pose(run)
+        if settled and not all(_near_static_frame_fits(chosen,e) for e in run):
+            # The fixed admission anchor prevents drift. The actual selected
+            # pose must independently meet the same final displacement bound.
+            output.extend(run)
+            return
+        paint_owner = _frame_sequence_paint_owner(run)
+        if not inline_layout_key(chosen):
+            # These frames already share static paint except alpha. Retain the
+            # established unfaded paint without giving its pose extra dwell.
+            alpha_tags = ''.join(render_tag(k,paint_owner.state.get(k,0))
+                for k in ('1a','2a','3a','4a')
+                if chosen.state.get(k,0)!=paint_owner.state.get(k,0))
+            if alpha_tags:
+                prefix = re.match(r'(?:\{[^}]*\})*',chosen.text).end()
+                chosen = replace_event(chosen,text=chosen.text[:prefix]+'{'+alpha_tags+'}'+chosen.text[prefix:])
         output.append(replace_event(chosen, start=run[0].start, start_s=run[0].start_s,
                               end=run[-1].end, end_s=run[-1].end_s,
-                              source_index=min(e.source_index for e in run)))
+                              source_index=min(e.source_index for e in run),
+                              evidence=dataclass_replace(chosen.evidence,frame_pose_intervals=intervals)))
         removed += len(run) - 1
 
     for group in groups.values():
@@ -3201,46 +3356,15 @@ def freeze_vector_sequences(events: list[Event], short_duration: float = 0.16,
                 # entire time-connected component to have one static pose.
                 run=[]
                 reference=None
-                pose={"pos","fscx","fscy","frz"}
                 for candidate in component:
-                    trial_reference=(candidate if reference is None or
-                                     candidate.duration>reference.duration else reference)
-                    position=get_pos(trial_reference.text)
-                    sx=trial_reference.state.get("fscx",100)
-                    sy=trial_reference.state.get("fscy",100)
                     settled=(bool(run) and abs(candidate.start_s-run[-1].end_s)<=1e-6 and
-                             position is not None and sx>0 and sy>0 and
-                             not trial_reference.state.get("p",0) and
-                             not inline_layout_key(trial_reference))
-                    if settled:
-                        height=text_height(trial_reference)
-                        width=abs(trial_reference.state.get("fs",20)*sx/100)*max(
-                            1,len(OVERRIDE_RE.sub("",trial_reference.text)))
-                        key=state_key(trial_reference,pose)
-                        # Recheck earlier holds only when the chosen longest
-                        # representative changes. This prevents cumulative
-                        # drift from passing through many locally small steps.
-                        check=run+[candidate] if trial_reference is not reference else [candidate]
-                        for e in check:
-                            pos=get_pos(e.text)
-                            if (pos is None or state_key(e,pose)!=key or
-                                    inline_layout_key(e)):
-                                settled=False;break
-                            origin=e.state.get("org",pos)
-                            radius=math.dist(pos,origin)+math.hypot(width,height)
-                            angle=math.radians(math.remainder(
-                                e.state.get("frz",0)-trial_reference.state.get("frz",0),360))
-                            error=(math.dist(pos,position)+
-                                   abs(e.state.get("fscx",100)-sx)/sx*width+
-                                   abs(e.state.get("fscy",100)-sy)/sy*height+
-                                   2*radius*abs(math.sin(angle/2)))
-                            if error>.02*height:
-                                settled=False;break
+                             _near_static_frame_fits(reference,candidate))
                     if run and not settled:
                         emit(run,True)
                         run=[]
+                    if not run:
+                        reference=candidate
                     run.append(candidate)
-                    reference=trial_reference if settled else candidate
                 emit(run,True)
                 continue
             run: list[Event] = []
@@ -4851,6 +4975,7 @@ def _render_stacked_text_caption(key: tuple, group: list[Event], proof: StackedT
     caption = replace_event(chosen, text=text, layer=chosen.layer if proof.shadow_text or glow is not None else "0", effect="",
                         source_index=min(e.source_index for e in group),
                         lyric=chosen.lyric or proof.static_shadow_text)
+    caption = _preserve_frame_pose_support(chosen,caption)
     if glow is not None:
         context.glow_captions[chosen.source_index] = caption
         context.glow_collapsed[chosen.source_index] = [e.source_index for e in group
@@ -6998,11 +7123,7 @@ def _render_complete_line_jitter(group: list[JitterTextFamily], literal: str,
     """Use the actual foreground layer's sustained paint and representative pose."""
     foreground = max(group,key=lambda f:(int(f.members[0].layer),f.members[0].source_index))
     holds = [e for f in group if f.members[0].layer == foreground.members[0].layer for e in f.holds]
-    anchor = tuple(statistics.median(get_pos(e.text)[i] for e in holds) for i in (0,1))
-    midpoint = (min(e.start_s for e in holds)+max(e.end_s for e in holds))/2
-    chosen = min(holds,key=lambda e:(
-        sum((get_pos(e.text)[i]-anchor[i])**2 for i in (0,1)),
-        abs((e.start_s+e.end_s)/2-midpoint),e.source_index))
+    chosen,intervals = _representative_frame_pose(holds)
     state = select_static_state(chosen.state,[],set(),styles,chosen.defaults,
         paint_events=holds,continuation=chosen.continuation).state
     members = [e for f in group for e in f.members]
@@ -7010,8 +7131,9 @@ def _render_complete_line_jitter(group: list[JitterTextFamily], literal: str,
                                      measurement=chosen.measurement,
                                      source_paint=_source_caption_paint(state,[e.state for e in members]))
     start,end = min(f.start_s for f in group),max(f.end_s for f in group)
-    return replace_event(chosen,text=text,start=format_time(start),end=format_time(end),
+    caption = replace_event(chosen,text=text,start=format_time(start),end=format_time(end),
         start_s=start,end_s=end,source_index=min(e.source_index for e in members),effect='')
+    return _preserve_frame_pose_support(chosen,caption,holds)
 
 
 @dataclass(frozen=True)
@@ -7217,7 +7339,19 @@ def _select_text_effect_sequence_geometry(context: TextEffectSequenceContext,
                           -max(e.start_s-midpoint,midpoint-e.end_s,0),
                           -e.state.get("1a",255),
                           int(e.layer) if e.layer.lstrip("-").isdigit() else 0)
-        chosen=max(profile.visible_candidates,key=rank)
+        def choose(candidates):
+            ordered = sorted(candidates,key=lambda e:(e.start_s,e.end_s))
+            if any(b.start_s<a.end_s-1e-6 for a,b in zip(ordered,ordered[1:])):
+                # Simultaneous paint/effect alternatives are not a sampled
+                # motion timeline. Their existing compositing representative
+                # remains the owner; frame dwell cannot establish that role.
+                return max(candidates,key=rank)
+            pose,_ = _representative_frame_pose(candidates)
+            key = _frame_pose_key(pose)
+            # The ordinary sequence's existing literal/paint representative
+            # remains independent of geometry, among records at that pose.
+            return max((e for e in candidates if _frame_pose_key(e)==key),key=rank)
+        chosen = choose(profile.visible_candidates)
         if (context.source_events is not None and
                 any(e.source_index in context.animated_sources for e in profile.members) and
                 not unrotated_text_state(chosen.state)):
@@ -7225,7 +7359,7 @@ def _select_text_effect_sequence_geometry(context: TextEffectSequenceContext,
             # entrance. Paint dwell and full cue timing stay shared.
             holds = upright_text_holds(profile.visible_candidates,context.source_events)
             if holds:
-                chosen=max(holds,key=rank)
+                chosen = choose(holds)
     return chosen
 
 
@@ -7263,7 +7397,8 @@ def _construct_text_effect_sequence_caption(context: TextEffectSequenceContext,
                   source_index=min(e.source_index for e in profile.members))
     if profile.clipped:
         timing.update(layer="0",effect="")
-    return replace_event(chosen,text=text,**timing)
+    caption = replace_event(chosen,text=text,**timing)
+    return _preserve_frame_pose_support(chosen,caption,profile.visible_candidates)
 
 
 def _flatten_text_effect_sequence_bucket(context: TextEffectSequenceContext, key: tuple,
@@ -13122,9 +13257,15 @@ def _merge_static_phase_round(
                 current = replace_event(events[first], start=current.start, start_s=current.start_s,
                                         end=event.end, end_s=event.end_s)
             else:
+                if any(events[i].evidence.frame_pose_intervals is not None for i in members):
+                    current = _preserve_frame_pose_support(events[min(members)],current,
+                                                          (events[i] for i in members))
                 replacements[min(members)] = current
                 removed.update(members - {min(members)})
                 current, members = event, {index}
+        if any(events[i].evidence.frame_pose_intervals is not None for i in members):
+            current = _preserve_frame_pose_support(events[min(members)],current,
+                                                  (events[i] for i in members))
         replacements[min(members)] = current
         removed.update(members - {min(members)})
     return [replacements.get(i, event) for i, event in enumerate(events) if i not in removed], len(removed)
@@ -15156,7 +15297,11 @@ def _freeze_event_effects(
             # A dialogue event with no remaining text is generally a vector drawing/effect.
             dropped_drawings += 1
             continue
-        simplified_events.append(replace_event(e, text=new_text, effect=""))
+        caption = replace_event(e, text=new_text, effect="")
+        if get_pos(caption.text) is not None and not inline_layout_key(caption):
+            caption = dataclass_replace(caption,evidence=dataclass_replace(
+                caption.evidence,frame_pose_intervals=_frame_pose_intervals(caption)))
+        simplified_events.append(caption)
 
     assign_layout(simplified_events + blank_events, visible_map)
     space_map.clear()
