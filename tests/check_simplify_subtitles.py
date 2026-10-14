@@ -120,17 +120,27 @@ class WrapperChecks(unittest.TestCase):
                 with patch.object(wrapper, "__file__", str(root / "simplify_subtitles.py")), \
                      patch.object(wrapper, "find_tool", side_effect=lambda name, _: name), \
                      patch.object(wrapper, "run", return_value="--stats-json --suffix --scroll-concurrency-limit"), \
+                     patch.object(wrapper, "scan_batch", return_value={}), \
+                     patch.object(wrapper, "process_batch") as batch, \
                      patch.object(wrapper, "process_file", return_value="copied unchanged") as process, \
                      patch("builtins.input", side_effect=answers), \
                      patch("sys.stdout", new_callable=io.StringIO):
                     self.assertEqual(wrapper.main([]), 0)
                 if execute:
-                    self.assertEqual(process.call_args.args[0], root / "episode.mkv")
-                    self.assertEqual(process.call_args.args[2].mode, mode)
-                    self.assertEqual(process.call_args.args[2].process_all_tracks, all_tracks)
-                    self.assertEqual(process.call_args.args[2].scroll_concurrency_limit, 0)
+                    if mode == "add" and not all_tracks:
+                        self.assertEqual(batch.call_args.args[0], [root / "episode.mkv"])
+                        options = batch.call_args.args[3]
+                        process.assert_not_called()
+                    else:
+                        self.assertEqual(process.call_args.args[0], root / "episode.mkv")
+                        options = process.call_args.args[2]
+                        batch.assert_not_called()
+                    self.assertEqual(options.mode, mode)
+                    self.assertEqual(options.process_all_tracks, all_tracks)
+                    self.assertEqual(options.scroll_concurrency_limit, 0)
                 else:
                     process.assert_not_called()
+                    batch.assert_not_called()
                 self.assertFalse((root / "output").exists())
 
     def test_validation_protects_sources_and_rejects_negative_limits(self):

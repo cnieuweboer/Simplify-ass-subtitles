@@ -42,10 +42,14 @@ python simplify_subtitles.py -i media --scroll-concurrency-limit 32
 ```
 
 The menu offers adding simplified tracks or replacing originals, with either
-all ASS/SSA tracks or the default thresholds: **>50,000 bytes and >10% fewer
-events**. Unchanged MKVs are copied; marked simplified tracks are skipped.
+all ASS/SSA tracks or **>50,000 bytes and >10% fewer events**. Filtered add mode
+keeps groups consistent across the batch: if any member qualifies, add simplified
+copies wherever that name/language/format group exists. Filtered replace mode
+uses the thresholds per track. Filename/group mismatches warn before confirmation.
+Unchanged MKVs are copied; marked simplified tracks are skipped.
 Scrolling-text dropping is disabled by default (`0`); enable it explicitly
 with `--scroll-concurrency-limit`. `-f` adds fonts alongside embedded fonts.
+`--temp-dir scratch` can choose temporary storage; video is never cached there.
 
 Use `--yes` to run without prompts (default: keep originals, filtered tracks)
 and `--report run.json` for a JSON report.
