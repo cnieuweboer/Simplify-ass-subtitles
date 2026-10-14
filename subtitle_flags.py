@@ -150,10 +150,25 @@ def main(argv=None):
         print("No subtitle tracks found.")
         return int(bool(failures))
     try:
-        remove = choice("Option 1: Remove default/forced flags", [
-            "Remove default and forced", "Remove forced", "Remove default",
-            "Keep default and forced",
-        ])
+        existing_flags = [pair for _, info in items
+                          for pair in desired_flags(info, False, False, set(), set()).values()]
+        has_default = any(default for default, _ in existing_flags)
+        has_forced = any(forced for _, forced in existing_flags)
+        clear_default = clear_forced = False
+        if has_default and has_forced:
+            options = [("Remove default and forced", True, True),
+                       ("Remove forced", False, True), ("Remove default", True, False),
+                       ("Keep default and forced", False, False)]
+        elif has_default:
+            options = [("Remove default", True, False), ("Keep default", False, False)]
+        elif has_forced:
+            options = [("Remove forced", False, True), ("Keep forced", False, False)]
+        else:
+            options = []
+            print("No default or forced subtitle flags found; skipping removal options.")
+        if options:
+            remove = choice("Option 1: Remove existing subtitle flags", [label for label, _, _ in options])
+            _, clear_default, clear_forced = options[remove - 1]
         setting = choice("Option 2: Set default/forced flags", [
             "Set default and forced together", "Set default and forced separately",
             "Do not set default or forced",
@@ -169,8 +184,6 @@ def main(argv=None):
             else:
                 defaults = selection("Select default subtitles", catalog)
                 forced = selection("Select forced subtitles", catalog)
-        clear_default = remove in (1, 3)
-        clear_forced = remove in (1, 2)
         print(f"\nClear default: {clear_default}; clear forced: {clear_forced}")
         for label, selected in (("Set default", defaults), ("Set forced", forced)):
             print(f"{label}: " + (", ".join(str(i) for i, key in enumerate(catalog, 1)

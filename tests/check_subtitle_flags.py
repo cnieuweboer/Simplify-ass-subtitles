@@ -112,6 +112,53 @@ class FlagChecks(unittest.TestCase):
                 self.assertEqual(flags.main([folder]), 0)
                 edit.assert_not_called()
 
+    def test_removal_menu_only_offers_present_subtitle_flags(self):
+        for default, forced, expected_labels, actions in (
+                (False, False, [], [(False, False)]),
+                (True, False, ["Remove default", "Keep default"], [(True, False), (False, False)]),
+                (False, True, ["Remove forced", "Keep forced"], [(False, True), (False, False)])):
+            for number, expected in enumerate(actions, 1):
+                with self.subTest(default=default, forced=forced, choice=number), tempfile.TemporaryDirectory() as folder:
+                    Path(folder, "episode.mkv").touch()
+                    # Video flags must never cause a subtitle removal question.
+                    info = {"tracks": [track(1, kind="video", default=True, forced=True),
+                                       track(2, default=default, forced=forced)]}
+                    answers = ([str(number)] if expected_labels else []) + ["3", "y"]
+                    with patch.object(flags.shutil, "which", return_value="tool"), \
+                         patch.object(flags, "identify", return_value=info), \
+                         patch.object(flags, "edit_file", return_value=True) as edit, \
+                         patch("builtins.input", side_effect=answers), \
+                         patch("sys.stdout", new_callable=io.StringIO) as console:
+                        self.assertEqual(flags.main([folder]), 0)
+                    self.assertEqual(edit.call_args.args[2:4], expected)
+                    output = console.getvalue()
+                    for label in expected_labels:
+                        self.assertIn(label, output)
+                    if not default:
+                        self.assertNotIn("Remove default", output)
+                    if not forced:
+                        self.assertNotIn("Remove forced", output)
+                    if not expected_labels:
+                        self.assertNotIn("Option 1:", output)
+                        self.assertIn("skipping removal options", output)
+
+    def test_flags_detected_across_files_and_missing_default_property(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for name in ("a.mkv", "b.mkv"):
+                Path(folder, name).touch()
+            first = {"tracks": [track(1)]}
+            del first["tracks"][0]["properties"]["default_track"]
+            second = {"tracks": [track(1, forced=True)]}
+            with patch.object(flags.shutil, "which", return_value="tool"), \
+                 patch.object(flags, "identify", side_effect=[first, second]), \
+                 patch.object(flags, "edit_file", return_value=True) as edit, \
+                 patch("builtins.input", side_effect=["1", "3", "y"]), \
+                 patch("sys.stdout", new_callable=io.StringIO) as console:
+                self.assertEqual(flags.main([folder]), 0)
+            self.assertIn("Remove default and forced", console.getvalue())
+            self.assertEqual(edit.call_count, 2)
+            self.assertTrue(all(call.args[2:4] == (True, True) for call in edit.call_args_list))
+
 
 if __name__ == "__main__":
     unittest.main()
