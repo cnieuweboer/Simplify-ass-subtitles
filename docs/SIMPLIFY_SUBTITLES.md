@@ -36,6 +36,8 @@ not proof of a single show, and never block a confirmed batch. Recursive input
 is still one batch; cancel and split unrelated shows when necessary. `--yes`
 prints the checks but bypasses the confirmation. `--yes` uses add/filtered defaults unless options override them.
 With interactive use, a settings summary and confirmation precede writing outputs.
+Menus accept `1`, `2`, or `q` immediately; confirmation accepts `y` or `n`.
+Other keys are ignored. Redirected input requires Enter after each answer.
 
 The wrapper extracts ASS/SSA tracks together, then skips extracted tracks carrying
 the engine's generated header marker. It extracts embedded fonts once per MKV

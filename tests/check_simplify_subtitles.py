@@ -22,6 +22,55 @@ spec.loader.exec_module(wrapper)
 
 
 class WrapperChecks(unittest.TestCase):
+    def test_single_key_fallback_ignores_unlisted_answers(self):
+        with patch.object(sys.stdin, "isatty", return_value=False), \
+             patch("builtins.input", side_effect=["3", "12", "yes", "Y"]) as read:
+            self.assertEqual(wrapper.single_key("Proceed: ", ("y", "n")), "y")
+            self.assertEqual(read.call_count, 4)
+
+    def test_single_key_windows_ignores_extended_keys(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        console = SimpleNamespace(getwch=Mock(side_effect=["\xe0", "1", "9", "\r", "2"]))
+        with patch.object(sys.stdin, "isatty", return_value=True), \
+             patch.object(sys, "platform", "win32"), \
+             patch.dict(sys.modules, {"msvcrt": console}), \
+             patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(wrapper.single_key("Choose: ", ("1", "2", "q")), "2")
+            self.assertEqual(console.getwch.call_count, 5)
+
+    @unittest.skipIf(os.name == "nt", "POSIX terminal check")
+    def test_single_key_terminal_without_enter_and_restoration(self):
+        import select
+        import termios
+        master, slave = os.openpty()
+        previous = termios.tcgetattr(slave)
+        script = ("import simplify_subtitles as w; "
+                  "print('RESULT=' + w.single_key('Choose: ', ('1','2','q')))")
+        process = subprocess.Popen([sys.executable, "-c", script], cwd=ROOT,
+                                   stdin=slave, stdout=slave, stderr=slave)
+        try:
+            output = b""
+            while b"Choose: " not in output:
+                self.assertTrue(select.select([master], [], [], 5)[0], "Prompt timed out")
+                output += os.read(master, 4096)
+            # Enter, an invalid digit and a function-key sequence must not select 1.
+            os.write(master, b"\r9\x1b[11~")
+            self.assertFalse(select.select([master], [], [], 0.15)[0])
+            os.write(master, b"2")
+            process.wait(timeout=5)
+            while select.select([master], [], [], 0.1)[0]:
+                output += os.read(master, 4096)
+            self.assertEqual(process.returncode, 0, output)
+            self.assertIn(b"RESULT=2", output)
+            self.assertEqual(termios.tcgetattr(slave), previous)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            os.close(master)
+            os.close(slave)
+
     def test_defaults_and_strict_reduction_thresholds(self):
         args = wrapper.parser().parse_args([])
         self.assertEqual(args.scroll_concurrency_limit, 0)
