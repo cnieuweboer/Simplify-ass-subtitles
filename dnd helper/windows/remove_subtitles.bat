@@ -29,8 +29,8 @@ if "%~1"=="" (
 )
 :next_folder
 if "%~1"=="" goto finished
-if not exist "%~1\" (
-    echo Drop a folder containing MKVs: "%~1"
+if not exist "%~1" (
+    echo Drop an MKV file or a folder containing MKVs: "%~1"
     set "DND_RESULT=2"
     goto finished
 )

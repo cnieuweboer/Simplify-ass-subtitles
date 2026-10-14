@@ -12,7 +12,9 @@ python simplify_subtitles.py -i media --report run.json
 python simplify_subtitles.py -i media --workers 4
 ```
 
-Input defaults to the script's folder; output defaults to INPUT/output. Additional
+Input accepts a folder or one MKV and defaults to the script's folder. A single
+file processes only that MKV, even with `--recursive`. Output defaults to the
+input folder's `output/`, or the MKV's parent folder's `output/`. Additional
 font folders (`-f`, repeatable) supplement embedded fonts. Optional recursion
 preserves relative paths and excludes output folders. Existing outputs are skipped.
 

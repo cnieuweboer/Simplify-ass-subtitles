@@ -8,8 +8,8 @@ if [ ! -f "$script" ]; then
 else
     if [ "$#" -eq 0 ]; then set -- "$script_dir"; fi
     for folder in "$@"; do
-        if [ ! -d "$folder" ]; then
-            printf 'Drop a folder containing MKVs: %s\n' "$folder"
+        if [ ! -d "$folder" ] && [ ! -f "$folder" ]; then
+            printf 'Drop an MKV file or a folder containing MKVs: %s\n' "$folder"
             status=2
             break
         fi

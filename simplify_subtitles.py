@@ -787,8 +787,8 @@ def choice(prompt, options):
 
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument("folder", nargs="?", type=Path, help="input folder (legacy positional syntax)")
-    result.add_argument("-i", "--input-dir", type=Path, help="MKV folder (default: beside this script)")
+    result.add_argument("folder", nargs="?", type=Path, help="MKV file or folder (legacy positional syntax)")
+    result.add_argument("-i", "--input-dir", type=Path, help="MKV file or folder (default: beside this script)")
     result.add_argument("-o", "--output-dir", type=Path, help="output folder (default: INPUT/output)")
     result.add_argument("-f", "--fonts-dir", action="append", type=Path, default=[], help="extra font folder; repeatable")
     result.add_argument("-r", "--recursive", action="store_true")
@@ -822,7 +822,9 @@ def main(argv=None):
             not 0 <= args.minimum_event_reduction_percent <= 100):
         argument_parser.error("Workers must be positive; byte/scroll limits must be nonnegative; "
                               "event reduction must be between 0 and 100.")
-    root = (args.input_dir or args.folder or Path(__file__).resolve().parent).resolve()
+    source = (args.input_dir or args.folder or Path(__file__).resolve().parent).resolve()
+    single_file = source.is_file()
+    root = source.parent if single_file else source
     output = args.output_dir.resolve() if args.output_dir else root / "output"
     engine = args.simplifier.resolve() if args.simplifier else Path(__file__).resolve().parent / "simplify_ass.py"
     args.fonts_dir = [path.resolve() for path in args.fonts_dir]
@@ -835,13 +837,15 @@ def main(argv=None):
     try:
         if args.temp_dir and not args.temp_dir.is_dir():
             raise RuntimeError("Temporary storage folder must exist")
+        if not source.is_dir() and not (single_file and source.suffix.casefold() == ".mkv"):
+            raise RuntimeError(f"Input must be an existing MKV file or folder: {source}")
         if not root.is_dir() or any(not folder.is_dir() for folder in args.fonts_dir):
             raise RuntimeError("Input and extra font folders must exist")
         if root.is_relative_to(output) or (output.exists() and not output.is_dir()):
             raise RuntimeError("Output must be a separate folder and cannot contain the input folder")
         if not engine.is_file() or engine.resolve() == Path(__file__).resolve():
             raise RuntimeError("Choose the simplify_ass.py engine, separate from this wrapper")
-        files = find_files(root, output, args.recursive)
+        files = [source] if single_file else find_files(root, output, args.recursive)
         if args.report:
             args.report = args.report.resolve()
             protected = {path.resolve() for path in files} | {output / path.relative_to(root) for path in files}

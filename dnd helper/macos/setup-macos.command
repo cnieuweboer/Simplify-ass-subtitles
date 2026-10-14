@@ -10,5 +10,5 @@ for tool in subtitle_flags remove_subtitles sync_fonts simplify_subtitles; do
     /usr/bin/osacompile -o "$app" "$source_dir/$tool.applescript"
     printf 'Created: %s\n' "$app"
 done
-printf '\nDrop MKV folders onto the new apps. Press Enter to close: '
+printf '\nDrop MKV files or folders onto the new apps. Press Enter to close: '
 read -r answer || true

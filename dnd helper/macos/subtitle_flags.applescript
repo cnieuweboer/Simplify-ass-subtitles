@@ -13,8 +13,9 @@ end run
 
 on launchFolders(droppedFolders)
     repeat with droppedFolder in droppedFolders
-        if not folder of (info for droppedFolder) then
-            display alert "Drop folders containing MKVs."
+        set droppedInfo to info for droppedFolder
+        if not folder of droppedInfo and name extension of droppedInfo is not "mkv" then
+            display alert "Drop MKV files or folders containing MKVs."
             return
         end if
     end repeat

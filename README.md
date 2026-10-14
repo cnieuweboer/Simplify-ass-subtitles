@@ -9,7 +9,7 @@ Simplify ASS/SSA subtitles and manage subtitle tracks and fonts in MKV files.
 | `remove_subtitles.py` | Remove selected or added simplified subtitles |
 | `sync_fonts.py` | Remove unused fonts and optionally add missing fonts |
 
-For folder drag-and-drop targets, see [dnd helper](dnd%20helper/README.md).
+For file/folder drag-and-drop targets, see [dnd helper](dnd%20helper/README.md).
 
 ## Setup
 
@@ -29,6 +29,12 @@ requires a Python file association.
 Without arguments, they scan beside the script. Simplification, removal, and
 font sync write to `output/` under the input folder, preserving originals and
 skipping existing outputs. Flag changes edit the originals.
+All four tools accept a folder or one MKV via `-i` / `--input-dir` or positional input.
+For one MKV, output defaults to its parent folder's `output/`.
+
+```console
+python simplify_subtitles.py -i media/episode.mkv
+```
 
 ## Simplify subtitles
 

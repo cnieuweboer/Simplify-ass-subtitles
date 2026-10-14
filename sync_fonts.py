@@ -958,9 +958,9 @@ def process(source, output_dir, merge, preview, write_logs, inspection, plan):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", nargs="?", type=Path,
-                        help="Input folder (legacy positional syntax; default: beside this script)")
+                        help="MKV file or folder (legacy positional syntax; default: beside this script)")
     parser.add_argument("-i", "--input-dir", type=Path,
-                        help="Folder containing MKVs and loose fonts (default: beside this script)")
+                        help="MKV file or folder (default: beside this script)")
     parser.add_argument("-o", "--output-dir", type=Path,
                         help="Output folder (default: INPUT/output)")
     parser.add_argument("-f", "--fonts-dir", type=Path,
@@ -969,12 +969,14 @@ def main(argv=None):
     parser.add_argument("--log", action="store_true", help="Write per-file font reports (off by default)")
     args = parser.parse_args(argv)
     if args.directory is not None and args.input_dir is not None:
-        parser.error("Specify the input folder either positionally or with -i, not both.")
-    directory = (args.input_dir or args.directory or Path(__file__).resolve().parent).resolve()
+        parser.error("Specify input positionally or with -i, not both.")
+    source = (args.input_dir or args.directory or Path(__file__).resolve().parent).resolve()
+    single_file = source.is_file()
+    directory = source.parent if single_file else source
     output = args.output_dir.resolve() if args.output_dir else directory / "output"
     fonts_dir = args.fonts_dir.resolve() if args.fonts_dir else directory
-    if not directory.is_dir():
-        print("Input directory does not exist: " + str(directory))
+    if not source.is_dir() and not (single_file and source.suffix.casefold() == ".mkv"):
+        print("Input must be an existing MKV file or folder: " + str(source))
         return 2
     if not fonts_dir.is_dir():
         print("Font directory does not exist: " + str(fonts_dir))
@@ -994,7 +996,7 @@ def main(argv=None):
     except RuntimeError as error:
         print(error)
         return 2
-    sources = sorted((p for p in directory.iterdir() if p.is_file() and p.suffix.casefold() == ".mkv"),
+    sources = [source] if single_file else sorted((p for p in directory.iterdir() if p.is_file() and p.suffix.casefold() == ".mkv"),
                      key=lambda p: p.name.casefold())
     if not sources:
         print("No MKV files found in " + str(directory))

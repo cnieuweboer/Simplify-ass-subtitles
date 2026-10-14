@@ -176,18 +176,23 @@ def edit_file(path, info, clear_default, clear_forced, defaults, forced):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("folder", nargs="?", type=Path,
-                        default=Path(__file__).resolve().parent,
-                        help="folder of MKVs (default: beside this script; not recursive)")
+                        help="MKV file or folder (default: beside this script; not recursive)")
+    parser.add_argument("-i", "--input-dir", type=Path,
+                        help="MKV file or folder (default: beside this script)")
     args = parser.parse_args(argv)
-    folder = args.folder.resolve()
-    if not folder.is_dir():
-        print(f"ERROR: Not a directory: {folder}")
+    if args.folder is not None and args.input_dir is not None:
+        parser.error("Specify input positionally or with -i, not both.")
+    source = (args.input_dir or args.folder or Path(__file__).resolve().parent).resolve()
+    single_file = source.is_file()
+    folder = source.parent if single_file else source
+    if not source.is_dir() and not (single_file and source.suffix.casefold() == ".mkv"):
+        print(f"ERROR: Input must be an existing MKV file or folder: {source}")
         return 1
     missing = [tool for tool in ("mkvmerge", "mkvpropedit") if not shutil.which(tool)]
     if missing:
         print(f"ERROR: Install MKVToolNix and add to PATH: {', '.join(missing)}")
         return 1
-    files = sorted((path for path in folder.iterdir()
+    files = [source] if single_file else sorted((path for path in folder.iterdir()
                     if path.is_file() and path.suffix.lower() == ".mkv"),
                    key=lambda path: path.name.casefold())
     if not files:

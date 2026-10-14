@@ -48,7 +48,7 @@ class DropHelperChecks(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(json.loads((root / "remove_subtitles.log").read_text()), [str(root)])
 
-    def test_missing_script_and_file_drop_are_rejected(self):
+    def test_missing_script_and_missing_drop_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             wrapper = root / "sync_fonts.sh"
@@ -57,11 +57,24 @@ class DropHelperChecks(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             fake_tool(root / "sync_fonts.py")
             media = root / "episode.mkv"
-            media.touch()
             result = subprocess.run(["sh", str(wrapper), str(root), str(media)],
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 2)
             self.assertFalse((root / "sync_fonts.log").exists())
+
+    def test_each_wrapper_passes_a_single_mkv_without_expanding_its_folder(self):
+        for tool in TOOLS:
+            with self.subTest(tool=tool), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                wrapper = root / (tool + ".sh")
+                shutil.copyfile(HELPERS / "linux" / wrapper.name, wrapper)
+                fake_tool(root / (tool + ".py"))
+                media = root / "selected episode.MKV"
+                media.touch()
+                (root / "another episode.mkv").touch()
+                result = subprocess.run(["sh", str(wrapper), str(media)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(json.loads((root / (tool + ".log")).read_text()), [str(media)])
 
     def test_standalone_installer_creates_only_available_targets(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -117,7 +130,8 @@ class DropHelperChecks(unittest.TestCase):
             self.assertEqual([path.name for path in scripts.glob("*.desktop")], ["simplify_subtitles.desktop"])
             first, second = scripts / "first", scripts / "second"
             first.mkdir()
-            second.mkdir()
+            second = second.with_suffix(".mkv")
+            second.touch()
             result = subprocess.run(["sh", str(scripts / "simplify_subtitles.sh"), str(first), str(second)],
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

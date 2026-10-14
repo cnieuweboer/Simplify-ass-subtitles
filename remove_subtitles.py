@@ -264,18 +264,20 @@ def remux(tool, item, target, removed):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("folder", nargs="?", type=Path,
-                        help="folder of MKVs (legacy positional syntax; default: beside this script)")
+                        help="MKV file or folder (legacy positional syntax; default: beside this script)")
     parser.add_argument("-i", "--input-dir", type=Path,
-                        help="folder of MKVs (default: beside this script)")
+                        help="MKV file or folder (default: beside this script)")
     parser.add_argument("--recursive", action="store_true", help="include subfolders, excluding output folders")
     parser.add_argument("-o", "--output-dir", type=Path, help="output folder (default: INPUT/output)")
     args = parser.parse_args(argv)
     if args.folder is not None and args.input_dir is not None:
-        parser.error("Specify the input folder either positionally or with -i, not both.")
-    root = (args.input_dir or args.folder or Path(__file__).resolve().parent).resolve()
+        parser.error("Specify input positionally or with -i, not both.")
+    source = (args.input_dir or args.folder or Path(__file__).resolve().parent).resolve()
+    single_file = source.is_file()
+    root = source.parent if single_file else source
     output = args.output_dir.resolve() if args.output_dir else root / "output"
-    if not root.is_dir():
-        print(f"ERROR: Not a directory: {root}")
+    if not source.is_dir() and not (single_file and source.suffix.casefold() == ".mkv"):
+        print(f"ERROR: Input must be an existing MKV file or folder: {source}")
         return 1
     if root.is_relative_to(output):
         print("ERROR: Output folder must differ from the input folder and cannot contain it.")
@@ -286,7 +288,7 @@ def main(argv=None):
         return 1
     items, failures = [], 0
     try:
-        files = find_files(root, output, args.recursive)
+        files = [source] if single_file else find_files(root, output, args.recursive)
         print(f"Scanning {len(files)} MKV file(s) in {root}...")
         for path in files:
             try:

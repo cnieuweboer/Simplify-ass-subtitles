@@ -22,8 +22,8 @@ if [ ! -f "$script" ]; then
 else
     if [ "$#" -eq 0 ]; then set -- "$script_dir"; fi
     for folder in "$@"; do
-        if [ ! -d "$folder" ]; then
-            printf 'Drop a folder containing MKVs: %s\n' "$folder"
+        if [ ! -d "$folder" ] && [ ! -f "$folder" ]; then
+            printf 'Drop an MKV file or a folder containing MKVs: %s\n' "$folder"
             status=2
             break
         fi
@@ -59,9 +59,9 @@ for tool, label in (("subtitle_flags", "Subtitle flags"),
     launcher = directory / (tool + ".desktop")
     launcher.write_text(
         "[Desktop Entry]\nType=Application\n" + f"Name={label}\n"
-        "Comment=Drop folders containing MKVs here\n"
+        "Comment=Drop MKV files or folders here\n"
         f"Exec=/bin/sh {desktop_quote(str(wrapper))} %f\n"
-        "Terminal=true\nIcon=video-x-generic\nMimeType=inode/directory;\n"
+        "Terminal=true\nIcon=video-x-generic\nMimeType=inode/directory;video/x-matroska;\n"
         "Categories=AudioVideo;\n", encoding="utf-8")
     launcher.chmod(0o755)
     print(f"Created: {launcher}")
