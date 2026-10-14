@@ -224,7 +224,14 @@ class RealBatchChecks(unittest.TestCase):
                     status = wrapper.main(base_args + ["-o", str(root / label), "--report", str(report)] + extra)
                 self.assertEqual(status, 0, console.getvalue())
                 reports[label] = json.loads(report.read_text())
+                if label == "size-copy":
+                    self.assertIn("Skipped 2 subtitle track(s): size threshold.", console.getvalue())
+                    self.assertNotIn("event-reduction threshold.", console.getvalue())
+                elif label in ("reduction-copy", "filtered"):
+                    self.assertIn("Skipped 2 subtitle track(s): event-reduction threshold.", console.getvalue())
+                    self.assertNotIn("size threshold.", console.getvalue())
                 if label == "add":
+                    self.assertNotIn("Skipped ", console.getvalue())
                     self.assertIn("Extracting fonts... [1/1]", console.getvalue())
                     self.assertIn("events 2 -> 2", console.getvalue())
                     self.assertIn("peak concurrency 1 -> 1", console.getvalue())

@@ -367,9 +367,12 @@ def process_file(source, destination, args, merge, extract, engine, report):
                     small += 1
                 else:
                     eligible.append(candidate)
-            if marked or small:
-                stage(f"Selected {len(eligible)} track(s); skipped {marked} already simplified and {small} below size threshold.")
+            if marked:
+                stage(f"Skipped {marked} already-simplified subtitle track(s).")
+            if small:
+                stage(f"Skipped {small} subtitle track(s): size threshold.")
             replacements = []
+            skipped_reduction = 0
             if eligible:
                 if args.level == 1 and not getattr(args, "font_dependencies_checked", False):
                     code = ("import PIL.ImageFont; import fontTools.ttLib; from PIL import features\n"
@@ -426,6 +429,7 @@ def process_file(source, destination, args, merge, extract, engine, report):
                         passed, _ = passed_reduction(stats, args.minimum_event_reduction_percent)
                     track_summary(candidate["track"], stats, passed)
                     if not passed:
+                        skipped_reduction += 1
                         continue
                     converted = identify(merge, candidate["output"])["tracks"]
                     if len(converted) != 1 or converted[0]["type"] != "subtitles":
@@ -433,6 +437,8 @@ def process_file(source, destination, args, merge, extract, engine, report):
                     candidate["codec"] = converted_codec(candidate["output"])
                     track_report["SelectedForRemux"] = True
                     replacements.append(candidate)
+            if skipped_reduction:
+                stage(f"Skipped {skipped_reduction} subtitle track(s): event-reduction threshold.")
             destination.parent.mkdir(parents=True, exist_ok=True)
             handle, name = tempfile.mkstemp(prefix=".simplify-", suffix=".partial.mkv", dir=destination.parent)
             os.close(handle)
