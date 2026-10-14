@@ -7,7 +7,7 @@ import importlib.util,json,random,sys
 import simplify_ass as current
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
 install_row_test_doubles(current)
-from event_evidence_test_helpers import event_comparison_fields
+from event_evidence_test_helpers import event_comparison_fields, row_comparison_fields
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('measurement_effect_reference',ROOT/'test-data/simplify_ass-v156-reference.py')
 previous=importlib.util.module_from_spec(spec);sys.modules[spec.name]=previous;spec.loader.exec_module(previous)
@@ -18,6 +18,7 @@ def check(name,condition):
  checks.append(name)
 def snapshot(value):
  if type(value).__name__=='Event':return snapshot(event_comparison_fields(value))
+ if type(value).__name__ == "TextRow":return snapshot(row_comparison_fields(value))
  if isinstance(value,dict):return {k:snapshot(v) for k,v in value.items()}
  if isinstance(value,(tuple,list)):return tuple(snapshot(v) for v in value)
  if isinstance(value,set):return frozenset(value)

@@ -1,5 +1,5 @@
 import test_paths  # Resolve the repository for direct test execution.
-from event_evidence_test_helpers import event_comparison_fields
+from event_evidence_test_helpers import event_comparison_fields, row_comparison_fields
 #!/usr/bin/env python3
 """Compare complete Overlord conversions and fade-pass contracts with immutable v164."""
 from pathlib import Path
@@ -28,6 +28,7 @@ install_hex_parenthesis_reference_parser(previous)
 
 def snapshot(value):
     if type(value).__name__ == "Event":return snapshot(event_comparison_fields(value))
+    if type(value).__name__ == "TextRow":return snapshot(row_comparison_fields(value))
     if isinstance(value,dict):return {k:snapshot(v) for k,v in value.items()}
     if isinstance(value,(list,tuple)):return tuple(snapshot(v) for v in value)
     if isinstance(value,set):return frozenset(snapshot(v) for v in value)

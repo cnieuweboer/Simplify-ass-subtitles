@@ -130,6 +130,43 @@ for boundary in ['both','exit only','missing word','gap','changed paint','wrong 
   trimmed,count=s.trim_faded_cue_overlaps(combined,rows,source,cue_families=families)
   check(boundary+': fade collision removed',count==1 and max(e.end_s for e in trimmed[:3])==min(e.start_s for e in trimmed[3:]))
   check(boundary+': every core preserved',all(e.start_s<=1 and e.end_s>=4 for e in trimmed[:3]) and all(e.start_s<=4.3 and e.end_s>=7.3 for e in trimmed[3:]))
+  check(boundary+': backing ownership carried',all(len(r.owned_backing)==1 for r in result.rows))
+  later_shadows=[s.replace_event(e,source_index=e.source_index+20000,start=s.format_time(e.start_s+3.3),
+          end=s.format_time(e.end_s+3.3),start_s=e.start_s+3.3,end_s=e.end_s+3.3) for e in shadows]
+  later_rows=[s.dataclass_replace(r,owned_backing=(paint,)) for r,paint in zip(later_rows,later_shadows)]
+  combined=parents+later+shadows+later_shadows;rows=result.rows+later_rows
+  before=deepcopy((combined,rows,source))
+  families=s.collect_faded_cue_families(combined,rows,source)
+  aligned,count=s.trim_faded_cue_overlaps(combined,rows,source,cue_families=families)
+  byid={e.source_index:e for e in aligned}
+  check(boundary+': all paint shares handoff',all((byid[paint.source_index].start,byid[paint.source_index].end)==(byid[r.base.source_index].start,byid[r.base.source_index].end) for r in rows for paint in r.owned_backing))
+  check(boundary+': timing inputs immutable',before==(combined,rows,source))
+  check(boundary+': paint unchanged',all(byid[e.source_index].text==e.text for e in combined))
+  independent=s.replace_event(shadows[0],source_index=40000)
+  untouched=s.trim_faded_cue_overlaps(combined+[independent],rows,source,cue_families=families)[0][-1]
+  check(boundary+': independent translucent text protected',untouched==independent)
+  changed_paint=s.replace_event(shadows[0],text=shadows[0].text+'!')
+  altered=[changed_paint if e.source_index==changed_paint.source_index else e for e in combined]
+  got={e.source_index:e for e in s.trim_faded_cue_overlaps(altered,rows,source,cue_families=families)[0]}
+  check(boundary+': changed backing rejected',got[changed_paint.source_index]==changed_paint)
+  core_snapshot=s.replace_event(shadows[0],start=s.format_time(1),end=s.format_time(4),start_s=1,end_s=4)
+  core_rows=[s.dataclass_replace(r,owned_backing=(core_snapshot,)) if r is rows[0] else r for r in rows]
+  got={e.source_index:e for e in s.trim_faded_cue_overlaps(combined,core_rows,source,cue_families=families)[0]}
+  check(boundary+': source core snapshot permits acquired phases',got[shadows[0].source_index].end==got[parents[0].source_index].end)
+
+  competing=s.dataclass_replace(rows[1],owned_backing=rows[1].owned_backing+(shadows[0],))
+  ambiguous=[competing if r is rows[1] else r for r in rows]
+  got={e.source_index:e for e in s.trim_faded_cue_overlaps(combined,ambiguous,source,cue_families=families)[0]}
+  check(boundary+': competing backing owners rejected',got[shadows[0].source_index]==shadows[0])
+  joined=s.replace_event(shadows[0],text=shadows[0].text+' '+s.OVERRIDE_RE.sub('',shadows[1].text))
+  joined_row=s.TextRow(joined,[(e,s.OVERRIDE_RE.sub('',e.text),s.get_pos(e.text)) for e in shadows[:2]])
+  joined_events=[e for e in combined if e.source_index not in {p.source_index for p in shadows[:2]}]+[joined]
+  got={e.source_index:e for e in s.trim_faded_cue_overlaps(joined_events,rows+[joined_row],source,cue_families=families)[0]}
+  check(boundary+': complete joined backing follows owners',got[joined.source_index].end==got[parents[0].source_index].end)
+  incomplete=s.dataclass_replace(joined_row,pieces=joined_row.pieces+[(independent,'unowned',s.get_pos(independent.text))])
+  got={e.source_index:e for e in s.trim_faded_cue_overlaps(joined_events,rows+[incomplete],source,cue_families=families)[0]}
+  check(boundary+': incomplete backing lineage protected',got[joined.source_index]==joined)
+
   changed=[s.dataclass_replace(r,phase_core=(3.9,7.3)) for r in later_rows]
   families=s.collect_faded_cue_families(combined,result.rows+changed,source)
   check(boundary+': contradictory core rejected',s.trim_faded_cue_overlaps(combined,result.rows+changed,source,cue_families=families)[1]==0)
@@ -153,6 +190,15 @@ es=s.load_subtitle_events(DEST/'Goblin.ass')[1]
 active=[e for e in es if e.style=='OP - R' and e.start_s<=145<e.end_s]
 check('real first cue green foreground',any(e.state.get('1c')!='C7F5B2' and e.state.get('3a',0)>0 and int(e.state['1c'][2:4],16)>=int(e.state['1c'][4:],16) for e in active))
 check('real first cue no highlight copies',not any(e.state.get('fscx',100)>100 for e in active))
+foreground=[e for e in es if e.style=='OP - R' and e.layer=='4' and e.start_s<=165.6<e.end_s]
+backing=[e for e in es if e.style=='OP - R' and e.layer=='2' and e.start_s<=165.6<e.end_s]
+check('real Numb cue complete foreground',len(foreground)==4)
+check('real Numb backing shares handoff',all(any(
+ s.OVERRIDE_RE.sub('',p.text)==s.OVERRIDE_RE.sub('',e.text) and
+ (p.start,p.end)==(e.start,e.end) for p in foreground) for e in backing) and len(backing)==4)
+check('real Numb no backing before handoff',not any(e.start_s<=165.07<e.end_s for e in backing))
+check('real Numb no backing after handoff',not any(e.start_s<=166.13<e.end_s for e in backing))
+
 originals=s.load_subtitle_events(fixture_path)[1]
 for original in originals:
  if original.style!='OP - R' or s._returning_glow_highlight(original) is None:continue

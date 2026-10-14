@@ -18,7 +18,7 @@ import tempfile
 import simplify_ass as current
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
 install_row_test_doubles(current, historical_fade_timing=True)
-from event_evidence_test_helpers import event_comparison_fields
+from event_evidence_test_helpers import event_comparison_fields, row_comparison_fields
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('authored_ownership_reference',ROOT/'test-data/simplify_ass-v162-reference.py')
@@ -51,6 +51,7 @@ def check(name, condition):
 def snapshot(value):
     if isinstance(value,(previous.Event,current.Event)):
         return snapshot(event_comparison_fields(value))
+    if type(value).__name__ == "TextRow":return snapshot(row_comparison_fields(value))
     if isinstance(value,Mapping):
         return {k:snapshot(v) for k,v in value.items()}
     if isinstance(value,(list,tuple)):

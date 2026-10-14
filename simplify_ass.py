@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.14.192"
+__version__ = "2026.10.14.193"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -240,6 +240,8 @@ class TextRow:
     # The overlap pass preserves every activation point inside this interval.
     # Timing proofs travel in returned row successors; passes borrow input rows.
     phase_core: tuple[float, float] | None = None
+    # Exact retained paint successors owned by this foreground cue.
+    owned_backing: tuple[Event,...] = ()
 
     @property
     def anchors(self) -> list[tuple[str, float]]:
@@ -4826,6 +4828,7 @@ def _handoff_glow_boundaries(context: StackedTextContext, events: list[Event],
         key = (held.style,held.name,held.start,held.end,_glow_source_geometry(held),get_pos(held.text)[1])
         rows.setdefault(key,[]).append((held,caption))
     replacements,phase_groups,proof_rows,removed = {},{},[],set()
+    backing_ids = {}
     for row in rows.values():
         proposals = {}
         for entering in (True,False):
@@ -4897,14 +4900,18 @@ def _handoff_glow_boundaries(context: StackedTextContext, events: list[Event],
                 for phase in members:
                     phase_groups[phase.source_index] = component.source_index
                     replacements[phase.source_index] = replace_event(current[phase.source_index],text=rendered.text)
+                first = min([rendered.source_index]+[p.source_index for p in members])
+                if component is not held:
+                    backing_ids.setdefault(held.source_index,[]).append(first)
                 if component is held:
-                    first = min([rendered.source_index]+[p.source_index for p in members])
-                    proof_rows.append((first,rendered,held.start_s,held.end_s))
+                    proof_rows.append((first,rendered,held.start_s,held.end_s,held.source_index))
     output = [replacements.get(e.source_index,e) for e in events if e.source_index not in removed]
     output,merged = coalesce_lyric_phases(output,visible_map,phase_groups=phase_groups)
     actual = {e.source_index:e for e in output}
     rows = [TextRow(actual[index],[(held,OVERRIDE_RE.sub('',held.text),get_pos(held.text))],
-                    phase_core=(start,end)) for index,held,start,end in proof_rows if index in actual]
+                    phase_core=(start,end),owned_backing=tuple(actual[i] for i in backing_ids.get(owner,[])
+                                                           if i in actual))
+            for index,held,start,end,owner in proof_rows if index in actual]
     return output,len(removed),merged,rows
 
 
@@ -10549,6 +10556,8 @@ def reconstruct_text_rows(
     Borrow event, source-row and shared-map inputs. Return final events/rows
     and proved visibility updates; the caller applies the updates explicitly.
     """
+    backing = {row.base.source_index:row.owned_backing for row in (source_rows or [])
+               if row.phase_core is not None and not row.virtual and not static_only}
     phase_cores = {row.base.source_index:row.phase_core for row in (source_rows or [])
                    if row.phase_core is not None and not row.virtual and not static_only}
     source_rows = [row for row in (source_rows or []) if row.confirmed and not static_only]
@@ -10575,7 +10584,9 @@ def reconstruct_text_rows(
     # core evidence, protecting the union of every constituent held interval.
     rows = [dataclass_replace(row,phase_core=(
                 min(phase_cores[e.source_index][0] for e,word,pos in row.pieces),
-                max(phase_cores[e.source_index][1] for e,word,pos in row.pieces)))
+                max(phase_cores[e.source_index][1] for e,word,pos in row.pieces)),
+                owned_backing=tuple(paint for e,word,pos in row.pieces
+                                    for paint in backing.get(e.source_index,())))
             if row.pieces and all(e.source_index in phase_cores for e,word,pos in row.pieces)
             else row for row in rows]
     return RowReconstructionResult(output,edits.merged_count,edits.duplicate_count,
@@ -14099,6 +14110,63 @@ def synchronize_faded_cue_handoffs(context: FadedCueContext, pairs: list,
     return result
 
 
+def _trim_owned_cue_backing(events: list[Event], rows: list[TextRow],
+                             replacements: dict[int,dict]) -> None:
+    """Share a proved foreground handoff with its exact retained paint copies.
+
+    Use ownership returned by the stack coordinator, including complete row
+    successors. Neither similar text nor nearby timing can establish ownership.
+    Ambiguous parents, incomplete joined paint rows and changed copies remain
+    untouched. This only adds timing successors to the caller-owned buffer.
+    """
+    current = {e.source_index:e for e in events}
+    owners,snapshots,provenance = {},{},{}
+    for row in rows:
+        if row.virtual or row.base.source_index not in current:
+            continue
+        parent = current[row.base.source_index]
+        if row.base.text != parent.text:
+            continue
+        provenance.setdefault(parent.source_index,[]).append(row)
+        for paint in row.owned_backing:
+            owners.setdefault(paint.source_index,set()).add(parent.source_index)
+            snapshots.setdefault(paint.source_index,[]).append(paint)
+    def owner(piece):
+        # Source-backed paint may already have acquired boundary phases;
+        # timing is deliberately separate from its exact rendered identity.
+        claims = owners.get(piece.source_index,set())
+        copies = snapshots.get(piece.source_index,[])
+        return (next(iter(claims)) if len(claims) == 1 and copies and
+                all(piece.fields()[:1]+piece.fields()[3:] == p.fields()[:1]+p.fields()[3:]
+                    for p in copies) else None)
+    for paint in events:
+        parent = owner(paint)
+        parents = [parent] if parent is not None else []
+        if not parents:
+            evidence = provenance.get(paint.source_index,[])
+            if len(evidence) == 1 and evidence[0].pieces:
+                parents = [owner(piece) for piece,word,pos in evidence[0].pieces]
+        if not parents or any(p is None for p in parents) or not any(p in replacements for p in parents):
+            continue
+        parents = set(parents)
+        # A joined backing may have several word owners, but all must still
+        # belong to the same cue before and after the proposed handoff.
+        before = {(current[p].start,current[p].end) for p in parents}
+        after = {(replacements.get(p,{}).get('start_s',current[p].start_s),
+                  replacements.get(p,{}).get('end_s',current[p].end_s)) for p in parents}
+        if len(before) != 1 or len(after) != 1:
+            continue
+        start,end = next(iter(after))
+        start,end = max(paint.start_s,start),min(paint.end_s,end)
+        if start >= end:
+            continue
+        changes = replacements.setdefault(paint.source_index,{})
+        if start > paint.start_s:
+            changes.update(start=format_time(start),start_s=start)
+        if end < paint.end_s:
+            changes.update(end=format_time(end),end_s=end)
+
+
 def trim_faded_cue_overlaps(events: list[Event], rows: list[TextRow],
                             source_events: dict[int,Event], *,
                             cue_families: list[CueFadeFamily] | None = None) -> tuple[list[Event],int]:
@@ -14152,6 +14220,7 @@ def trim_faded_cue_overlaps(events: list[Event], rows: list[TextRow],
                 value = min(e.end_s,boundary) if time_field == 'end' else max(e.start_s,boundary)
                 changes.update({time_field:format_time(value),time_field+'_s':value})
         trimmed += 1
+    _trim_owned_cue_backing(events,rows,replacements)
     return [replace_event(e,**replacements[e.source_index])
             if e.source_index in replacements else e for e in events],trimmed
 

@@ -10,7 +10,7 @@ from unittest.mock import patch
 import ast, contextlib, importlib.util, json, sys
 import simplify_ass as s
 from font_geometry_test_helpers import install_row_test_doubles, row_test_call
-from event_evidence_test_helpers import event_comparison_fields
+from event_evidence_test_helpers import event_comparison_fields, row_comparison_fields
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('visibility_v166',ROOT/'test-data/simplify_ass-v166-reference.py')
@@ -27,6 +27,7 @@ def check(name,condition):
 
 def snapshot(value):
     if type(value).__name__ == 'Event':return snapshot(event_comparison_fields(value))
+    if type(value).__name__ == "TextRow":return snapshot(row_comparison_fields(value))
     if isinstance(value,dict):return {key:snapshot(item) for key,item in value.items()}
     if isinstance(value,(tuple,list)):return tuple(snapshot(item) for item in value)
     if isinstance(value,set):return frozenset(snapshot(item) for item in value)

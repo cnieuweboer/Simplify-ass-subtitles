@@ -1,5 +1,5 @@
 import test_paths  # Resolve the repository for direct test execution.
-from event_evidence_test_helpers import event_comparison_fields
+from event_evidence_test_helpers import event_comparison_fields, row_comparison_fields
 #!/usr/bin/env python3
 """Compare translated-phase decisions, evidence and font calls with v123."""
 from pathlib import Path
@@ -54,6 +54,7 @@ def inputs(module,descriptors):
 
 def snapshot(value):
     if type(value).__name__ == "Event":return snapshot(event_comparison_fields(value))
+    if type(value).__name__ == "TextRow":return snapshot(row_comparison_fields(value))
     if isinstance(value,dict):
         return {key:snapshot(item) for key,item in value.items()}
     if isinstance(value,(list,tuple)):

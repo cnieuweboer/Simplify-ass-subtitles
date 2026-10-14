@@ -221,3 +221,6 @@ opacity-aware contour correction to returning highlight stacks (v191).
 
 See [GLOW_BOUNDARIES.md](GLOW_BOUNDARIES.md) for settled paint through separate
 source fade phases and preserved cue-core handoffs to overlap trimming (v192).
+
+See [GLOW_BACKING_OWNERSHIP.md](GLOW_BACKING_OWNERSHIP.md) for retained backing
+paint ownership through row reconstruction and foreground overlap handoffs (v193).

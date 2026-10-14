@@ -9,7 +9,7 @@ proved; avoid guessing text or substituting fonts.
 
 The production entry point is `simplify_subtitles.py` → `simplify_ass.py`.
 Preserve this batch MKV workflow and the engine's CLI compatibility. The older
-`simplify_ass.bat` / `simplify_ass.ps1` launchers remain for existing callers.
+`simplify_ass.bat` / `simplify_ass.ps1` launchers have been retired.
 `tests/windows/test_mkv_subtitles.ps1` performs extraction and conversion in one pass.
 `tests/windows/test_subtitles_step2_test.bat` / `.ps1` rerun conversion against an existing
 extracted cache. Native Windows wrapper behavior requires Windows validation.

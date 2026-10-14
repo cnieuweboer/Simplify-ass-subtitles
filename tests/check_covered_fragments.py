@@ -1,5 +1,5 @@
 import test_paths  # Resolve the repository for direct test execution.
-from event_evidence_test_helpers import event_comparison_fields
+from event_evidence_test_helpers import event_comparison_fields, row_comparison_fields
 #!/usr/bin/env python3
 """Compare covered-fragment decisions and caller-owned evidence with v154."""
 from copy import deepcopy
@@ -41,6 +41,7 @@ SHADOW = r'\1a&HFF&\3a&HFF&\4a&H00&\shad2'
 
 def snapshot(value):
     if type(value).__name__ == "Event":return snapshot(event_comparison_fields(value))
+    if type(value).__name__ == "TextRow":return snapshot(row_comparison_fields(value))
     if isinstance(value,float) and not math.isfinite(value):
         return repr(value)
     if isinstance(value,dict):

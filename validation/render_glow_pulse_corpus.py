@@ -4,11 +4,11 @@ import sys,json,hashlib,subprocess
 from PIL import Image,ImageChops
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 import simplify_ass as s
-DEST=ROOT/'validation/glow-boundary-renders';DEST.mkdir(exist_ok=True)
-path=ROOT/'validation/glow-boundary-corpus/windows/Goblin-Slayer-S01E02-track6.ass'
+DEST=ROOT/'validation/owned-backing-renders';DEST.mkdir(exist_ok=True)
+path=ROOT/'validation/owned-backing-corpus/windows/Goblin-Slayer-S01E02-track6.ass'
 report=json.loads(path.with_suffix('.json').read_text());sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 assert report['engine_sha256']==sha(ROOT/'simplify_ass.py') and report['output_sha256']==sha(path) and not report['missing_families']
-baseline=ROOT/'validation/settled-glow-corpus/windows/Goblin-Slayer-S01E02-track6.ass'
+baseline=ROOT/'validation/glow-boundary-corpus/windows/Goblin-Slayer-S01E02-track6.ass'
 source=ROOT/'test-data/Goblin-Slayer-S01E02-track6-source.ass'
 original=s.load_subtitle_events(source)[1];lines,events,_,_=s.load_subtitle_events(path)
 header='\n'.join(lines[:next(i for i,l in enumerate(lines) if l.strip().casefold()=='[events]')+2])+'\n'
@@ -27,7 +27,7 @@ for style in ['OP - R','OP - R Chant']:
    continue
   assert held,(start,end)
   lifetime=(max(e.start_s for e in held),min(e.end_s for e in held))
-  samples=sorted(set([start+(end-start)*.25,start+(end-start)*.75,lifetime[0]+.03,lifetime[1]-.03]))
+  samples=sorted(set([start+(end-start)*.25,start+(end-start)*.75,lifetime[0]+.005,lifetime[1]-.005]))
   render_path=static
   if style=='OP - R Chant':
    # Inspect each accepted stack separately; another unproved effect can
@@ -52,4 +52,17 @@ for style in ['OP - R','OP - R Chant']:
 static=DEST/'OP_-_R.ass'
 frame(static,145).crop((0,0,1100,160)).save(DEST/'opening-static.png')
 frame(source,145).crop((0,0,1100,160)).save(DEST/'opening-original.png')
-(DEST/'summary.json').write_text(json.dumps(dict(engine_sha256=sha(ROOT/'simplify_ass.py'),output_sha256=sha(path),samples=results),indent=2)+'\n')
+# Explicit near-handoff samples protect against backing that remains visible
+# only during the first/last centiseconds, beyond the old hold-only samples.
+reference_lines,reference_events,_,_=s.load_subtitle_events(baseline)
+clean=DEST/'numb-reference-without-residue.ass'
+reference_header='\n'.join(reference_lines[:next(i for i,l in enumerate(reference_lines) if l.strip().casefold()=='[events]')+2])+'\n'
+clean.write_text(reference_header+''.join('Dialogue: '+','.join(e.fields())+'\n' for e in reference_events if not (e.style=='OP - R' and e.layer=='2' and abs(e.start_s-165.06)<.005 and abs(e.end_s-166.15)<.005)))
+handoffs=[]
+for at in [165.07,166.13]:
+ actual,expected=frame(path,at),frame(clean,at)
+ assert ImageChops.difference(actual,expected).getbbox() is None,('Backing residue remains',at)
+ assert ImageChops.difference(actual,frame(baseline,at)).getbbox() is not None
+ actual.save(DEST/f'numb-handoff-{at:.2f}.png')
+ handoffs.append(at)
+(DEST/'summary.json').write_text(json.dumps(dict(engine_sha256=sha(ROOT/'simplify_ass.py'),output_sha256=sha(path),samples=results,residue_free_handoffs=handoffs),indent=2)+'\n')

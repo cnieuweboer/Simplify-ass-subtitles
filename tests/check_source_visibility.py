@@ -11,7 +11,7 @@ import random
 import sys
 from event_evidence_test_helpers import resolve_test_event
 import simplify_ass as current
-from event_evidence_test_helpers import event_comparison_fields
+from event_evidence_test_helpers import event_comparison_fields, row_comparison_fields
 
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('opaque_reference',ROOT/'test-data/simplify_ass-v152-reference.py')
@@ -31,6 +31,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 '''
 def snapshot(value):
     if type(value).__name__=='Event':return snapshot(event_comparison_fields(value))
+    if type(value).__name__ == "TextRow":return snapshot(row_comparison_fields(value))
     if isinstance(value,dict):return {k:snapshot(v) for k,v in value.items()}
     if isinstance(value,(list,tuple)):return tuple(snapshot(v) for v in value)
     if isinstance(value,set):return frozenset(snapshot(v) for v in value)

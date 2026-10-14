@@ -105,3 +105,14 @@ def resolve_test_event(module, event):
         event.state = getattr(module,'_legacy_effective_state',module.effective_state)(
             event.text,event.defaults,event.styles)
     return event
+
+
+def row_comparison_fields(row):
+    """Compare row semantics while older engines have no backing ownership.
+
+    An absent ownership field means an empty claim. Keep nonempty ownership
+    visible to parity checks; focused tests exercise its timing handoff.
+    """
+    fields = vars(row).copy()
+    fields.setdefault('owned_backing',())
+    return fields
