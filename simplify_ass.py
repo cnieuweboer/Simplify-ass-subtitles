@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.14.196"
+__version__ = "2026.10.14.197"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -660,6 +660,14 @@ class StackedTextResult:
     removed_count: int
     phase_merged: int
     rows: list[TextRow]
+
+
+@dataclass(frozen=True)
+class SourceCaptionPaint:
+    """Proved representative subtitle-only paint, borrowed by caption rendering."""
+    fill: str
+    outline: str
+    outline_alpha: int
 
 
 @dataclass(frozen=True)
@@ -1511,14 +1519,14 @@ def render_tag(name: str, value) -> str:
 def render_simplified_caption(state: dict, text: str,
                        outline_states: Iterable[dict] | None = None, *,
                        measurement: DocumentMeasurementContext = DocumentMeasurementContext(),
-                       source_glow_outline: str | None = None,
-                       source_glow_alpha: int = 0,
+                       source_paint: SourceCaptionPaint | None = None,
                        **layout) -> str:
     """Retain the selected foreground and an unambiguous contrasting outline.
 
     Unclipped visible primary paint supplies the fill; transparent or masked
     textures cannot. Opaque glyph contours supply the outline. Ambiguous or
     low-contrast contours use whichever of black/white contrasts with the fill.
+    Explicit source paint bypasses the fallback without changing layout.
     Preserve explicit wrapping in the selected layout. Document wrapping stays
     in measurement context; absence of q does not create an authored override.
     """
@@ -1575,12 +1583,12 @@ def render_simplified_caption(state: dict, text: str,
         outline_luma = luminance(candidate)
         if (max(fill_luma,outline_luma)+.05)/(min(fill_luma,outline_luma)+.05) >= 3:
             outline = candidate
-    # Source-proved glows supply representative settled RGBA, including their
-    # subdued strength. Ordinary/ambiguous stacks keep the neutral fallback.
+    # Proved source paint supplies settled RGBA, including subdued contour
+    # strength. Ordinary/ambiguous captions keep the neutral fallback.
     outline_alpha = 0
-    if source_glow_outline is not None and re.fullmatch(r'[0-9A-F]{6}',source_glow_outline):
-        outline = source_glow_outline
-        outline_alpha = min(255,max(0,int(source_glow_alpha)))
+    if source_paint is not None:
+        fill,outline = source_paint.fill,source_paint.outline
+        outline_alpha = min(255,max(0,int(source_paint.outline_alpha)))
     state = {**DEFAULT_STATE, **state,
              "1c":fill, "3c":outline, "1a":0,
              "3a":outline_alpha,
@@ -4004,7 +4012,7 @@ def _matching_glow_pulse_geometry(glow: Event, foreground: Event) -> bool:
     return True
 
 
-def _settled_glow_samples(foreground: Event, copies: list[Event], metric: FontMetrics) -> tuple | None:
+def _settled_caption_paint_samples(foreground: Event, copies: list[Event], metric: FontMetrics) -> tuple | None:
     """Estimate settled subtitle-only RGBA in the ink core and a two-unit contour.
 
     The small exact-face mask is an appearance estimate, not an ownership proof.
@@ -4088,6 +4096,15 @@ def _settled_glow_samples(foreground: Event, copies: list[Event], metric: FontMe
         return tuple(tuple(row) for row in accum) if all(row[1] > 0 for row in accum) else None
     except (OSError,ValueError,RuntimeError):
         return None
+
+
+def _pool_source_caption_paint(samples: list[tuple]) -> SourceCaptionPaint:
+    """Pool complete-row mask contributions so glyph thickness cannot split paint."""
+    totals = [[sum(p[region][ch] for p in samples) for ch in range(5)] for region in range(2)]
+    def color(total):
+        return ''.join(f'{min(255,max(0,round(total[i]/total[1]*255))):02X}' for i in (4,3,2))
+    alpha = min(254,max(0,round(255*(1-totals[1][1]/totals[1][0]))))
+    return SourceCaptionPaint(color(totals[0]),color(totals[1]),alpha)
 
 
 def _index_glow_pulse_paint(context: StackedTextContext) -> dict[int,GlowPulsePaint]:
@@ -4208,7 +4225,7 @@ def _index_glow_pulse_paint(context: StackedTextContext) -> dict[int,GlowPulsePa
         if not valid:
             continue
         paint_copies = [source_event(e.source_index) for e in group]
-        samples = _settled_glow_samples(original,paint_copies,metric)
+        samples = _settled_caption_paint_samples(original,paint_copies,metric)
         if samples is None:
             continue
         rows.setdefault(row_key,[]).append((original,pulse,glow[0],children,samples))
@@ -4226,11 +4243,8 @@ def _index_glow_pulse_paint(context: StackedTextContext) -> dict[int,GlowPulsePa
                      all(a >= b for a,b in zip(starts,starts[1:])) and
                      all(a >= b for a,b in zip(ends,ends[1:])))):
             continue
-        totals = [[sum(p[4][region][ch] for p in row) for ch in range(5)] for region in range(2)]
-        def color(total):
-            return ''.join(f'{min(255,max(0,round(total[i]/total[1]*255))):02X}' for i in (4,3,2))
-        fill,outline = (color(total) for total in totals)
-        outline_alpha = min(254,max(0,round(255*(1-totals[1][1]/totals[1][0]))))
+        paint = _pool_source_caption_paint([p[4] for p in row])
+        fill,outline,outline_alpha = paint.fill,paint.outline,paint.outline_alpha
         for original,pulse,glow,children,samples in row:
             ids = frozenset(e.source_index for e in children)
             result[original.source_index] = GlowPulsePaint(fill,outline,ids,
@@ -4749,8 +4763,7 @@ def _render_stacked_text_caption(key: tuple, group: list[Event], proof: StackedT
         context.owned_glow_fragments.update(glow.fragments)
     text = render_simplified_caption(state,OVERRIDE_RE.sub('',chosen.text),
         outline_states=outlines,measurement=chosen.measurement,
-        source_glow_outline=glow.outline if glow is not None else None,
-        source_glow_alpha=glow.outline_alpha if glow is not None else 0)
+        source_paint=SourceCaptionPaint(glow.fill,glow.outline,glow.outline_alpha) if glow is not None else None)
     caption = replace_event(chosen, text=text, layer=chosen.layer if proof.shadow_text or glow is not None else "0", effect="",
                         source_index=min(e.source_index for e in group),
                         lyric=chosen.lyric or proof.static_shadow_text)
@@ -11011,7 +11024,46 @@ def _extend_backed_pulse_tails(context: BackedPulseContext, cue: BackedPulseRow,
     return kept
 
 
-def _propose_backed_pulse_row(context: BackedPulseContext, cue: BackedPulseRow, target: tuple) -> tuple[set[int],list[Event]] | None:
+def _proved_backed_row_paint(context: BackedPulseContext, cue: BackedPulseRow,
+                            target: tuple, metric: FontMetrics | None) -> SourceCaptionPaint | None:
+    """Use an owned, common settled backing without weakening pulse/coverage proofs."""
+    if metric is None:
+        return None
+    samples,palettes = [],set()
+    for pos,word,run,peers,holds,height in cue.glyphs:
+        # The existing run proof supplies cue coverage. Reject overlapping
+        # backing phases rather than compositing copies with ambiguous ownership.
+        if any(a.end_s > b.start_s+.011 for a,b in zip(run,run[1:])):
+            return None
+        foreground = max(holds[target],key=lambda e:e.duration)
+        base = context.details[foreground.source_index][0]
+        settled = [e for e in run if not context.details[e.source_index][1] and
+                   context.details[e.source_index][2] == (0,0) and e.duration >= .02 and
+                   all(context.details[e.source_index][0].get(k,100) == base.get(k,100)
+                       for k in ('fscx','fscy'))]
+        if not settled:
+            return None
+        # Compare backing paint at the held size, excluding transient pulse frames.
+        # A changing resting backing is not one representative static paint.
+        palettes.update(tuple(context.details[e.source_index][0].get(k,DEFAULT_STATE.get(k))
+                              for k in ('1c','1a','blur','fscx','fscy')) for e in settled)
+        if len(palettes) != 1:
+            return None
+        backing = max(settled,key=lambda e:e.duration)
+        def resolved(e):
+            return dataclass_replace(e,state=context.details[e.source_index][0],
+                                     continuation=context.continuations[e.source_index])
+        backing,foreground = resolved(backing),resolved(foreground)
+        if backing.state.get('blur',0) <= foreground.state.get('blur',0):
+            return None
+        sample = _settled_caption_paint_samples(foreground,[backing,foreground],metric)
+        if sample is None:
+            return None
+        samples.append(sample)
+    return _pool_source_caption_paint(samples)
+
+
+def _propose_backed_pulse_row(context: BackedPulseContext, cue: BackedPulseRow, target: tuple, metric: FontMetrics | None = None) -> tuple[set[int],list[Event]] | None:
     """Build a complete held glyph row only after coverage and ordered pulse activation prove it."""
     changed,activation,kept,members = 0,[],[],set()
     for pos,word,run,peers,holds,height in cue.glyphs:
@@ -11036,6 +11088,13 @@ def _propose_backed_pulse_row(context: BackedPulseContext, cue: BackedPulseRow, 
     if (changed >= 3 and
             (all(a <= b for a,b in zip(activation,activation[1:])) or
              all(a >= b for a,b in zip(activation,activation[1:])))):
+        paint = _proved_backed_row_paint(context,cue,target,metric)
+        if paint is not None:
+            # The first render only standardizes layout. Its fallback paint is
+            # replaced here after the whole row has supplied source evidence.
+            kept = [replace_event(e,text=render_simplified_caption(
+                e.state,word,source_paint=paint,pos=pos,measurement=e.measurement))
+                for e,(pos,word,*_) in zip(kept,cue.glyphs)]
         return members,kept
     return None
 
@@ -11060,7 +11119,8 @@ def _apply_backed_pulse_proposals(events: list[Event], proposals: list[tuple[set
 
 
 def collapse_backed_glyph_pulses(events: list[Event], words: dict[int,str],
-                                  positions: dict[int,tuple[float,float] | None]) -> tuple[list[Event],int]:
+                                  positions: dict[int,tuple[float,float] | None],
+                                  font_metrics: FontMetrics | None = None) -> tuple[list[Event],int]:
     """Freeze complete glyph rows proven by a continuous stationary backing.
 
     A translucent copy supplies exact anchors and cue bounds. Every glyph
@@ -11084,7 +11144,7 @@ def collapse_backed_glyph_pulses(events: list[Event], words: dict[int,str],
         target = _select_backed_row_pose(cue)
         if target is None:
             continue
-        proposal = _propose_backed_pulse_row(context,cue,target)
+        proposal = _propose_backed_pulse_row(context,cue,target,font_metrics)
         if proposal is not None:
             proposals.append(proposal)
     return _apply_backed_pulse_proposals(events,proposals)
@@ -11957,7 +12017,7 @@ def remove_source_fragment_effects(
         if foreground is not None:
             rows[index] = dataclass_replace(row,foreground=foreground,confirmed=True)
     output,pulses = collapse_backed_glyph_pulses(
-        [e for e in events if e.source_index not in removed],words,positions)
+        [e for e in events if e.source_index not in removed],words,positions,font_metrics)
     output,slices = collapse_sliced_text_sequences(output)
     return SourceFragmentRemoval(output,rows,len(removed)+pulses+slices)
 

@@ -182,3 +182,8 @@ context after its output fill is removed, preserving the distinction between
 the owned background and an independent card. Rebuilt support associations do
 not authorize new ownership. These proofs live only in the support result;
 serialization does not persist them or add role flags to Event/font resources.
+
+The v197 backing-paint handoff borrows the existing font owner and original
+backing/foreground states. `SourceCaptionPaint` contains only immutable scalar
+paint values; renderer consumers borrow it. Samples are pass-local, replacements
+own newly parsed paint tags, and the proof does not survive serialization.
