@@ -3,10 +3,12 @@
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 
 
 def identify(path):
@@ -32,17 +34,75 @@ def subtitle_key(track):
             props.get("codec_id") or track.get("codec") or "unknown")
 
 
+def single_key(prompt, allowed):
+    """Read only a listed key; restore terminal settings even on cancellation."""
+    if not sys.stdin.isatty():
+        while True:
+            answer = input(prompt).strip().lower()
+            if not answer:
+                raise EOFError
+            if answer in allowed:
+                return answer
+    if sys.platform == "win32":
+        import msvcrt
+        def read_key():
+            key = msvcrt.getwch()
+            if key in ("\x00", "\xe0"):
+                msvcrt.getwch()  # Consume the extended key's scan code.
+                return ""
+            return key
+        restore = None
+    else:
+        import termios
+        import tty
+        import select
+        fd = sys.stdin.fileno()
+        previous = termios.tcgetattr(fd)
+        def restore():
+            termios.tcsetattr(fd, termios.TCSADRAIN, previous)
+        def read_key():
+            raw = os.read(fd, 1)
+            if not raw:
+                raise EOFError
+            key = raw.decode("utf-8", errors="ignore")
+            if key == "\x1b":
+                # Ignore escape/arrow/function keys, including numeric parameters.
+                if select.select([fd], [], [], 0.05)[0]:
+                    prefix = os.read(fd, 1)
+                    if prefix in (b"[", b"O"):
+                        while select.select([fd], [], [], 0.05)[0]:
+                            part = os.read(fd, 1)
+                            if not part or 0x40 <= part[0] <= 0x7e:
+                                break
+                return ""
+            return key
+    try:
+        if sys.platform != "win32":
+            tty.setcbreak(fd)
+        print(prompt, end="", flush=True)
+        while True:
+            key = read_key()
+            if key == "\x03":
+                raise KeyboardInterrupt
+            if key == "\x04":
+                raise EOFError
+            if key.lower() in allowed:
+                print(key.lower(), flush=True)
+                return key.lower()
+    finally:
+        if restore is not None:
+            restore()
+
+
 def choice(prompt, options):
     print(f"\n{prompt}")
     for number, label in enumerate(options, 1):
         print(f"  {number}. {label}")
-    while True:
-        answer = input("Choose a number (q to cancel): ").strip()
-        if answer.lower() == "q":
-            raise EOFError
-        if answer.isascii() and answer.isdigit() and 1 <= int(answer) <= len(options):
-            return int(answer)
-        print("Enter one of the listed numbers.")
+    answer = single_key("Choose a number (q to cancel): ",
+                        tuple(str(number) for number in range(1, len(options) + 1)) + ("q",))
+    if answer == "q":
+        raise EOFError
+    return int(answer)
 
 
 def selection(prompt, catalog):
@@ -189,7 +249,7 @@ def main(argv=None):
             print(f"{label}: " + (", ".join(str(i) for i, key in enumerate(catalog, 1)
                                            if key in selected) or "none"))
         print(f"Edit {len(items)} file(s) in place; {failures} scan failure(s).")
-        if input("Proceed? (y/N): ").strip().lower() not in ("y", "yes"):
+        if single_key("Proceed? (y/N): ", ("y", "n")) != "y":
             print("Cancelled. No files changed.")
             return int(bool(failures))
     except (EOFError, KeyboardInterrupt):
