@@ -164,7 +164,7 @@ class RemovalChecks(unittest.TestCase):
                 self.assertFalse(Path(folder, "output").exists())
 
     def test_input_and_output_aliases(self):
-        for input_option, output_option in (("-i", "-o"), ("--input-dir", "--output-dir")):
+        for input_option, output_option in (("-i", "-o"), ("--input", "--output")):
             with tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
                 media = root / "media"
@@ -188,7 +188,7 @@ class RemovalChecks(unittest.TestCase):
         with patch("sys.stderr", new_callable=io.StringIO), \
              patch.object(remove, "find_files") as scan:
             with self.assertRaises(SystemExit) as raised:
-                remove.main(["media", "--input-dir", "other-media"])
+                remove.main(["media", "--input", "other-media"])
             self.assertEqual(raised.exception.code, 2)
             scan.assert_not_called()
 

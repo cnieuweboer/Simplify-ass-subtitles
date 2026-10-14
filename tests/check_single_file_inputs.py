@@ -31,7 +31,7 @@ INFO = {"tracks": [{"id": 0, "type": "subtitles", "properties": {
 class SingleFileChecks(unittest.TestCase):
     def test_positional_and_input_aliases_route_only_selected_file(self):
         for name, module in modules.items():
-            for alias in (None, "-i", "--input-dir"):
+            for alias in (None, "-i", "--input"):
                 with self.subTest(tool=name, alias=alias), tempfile.TemporaryDirectory() as folder:
                     root = Path(folder)
                     source = root / "chosen episode.MKV"
@@ -78,8 +78,8 @@ class SingleFileChecks(unittest.TestCase):
                                  patch.object(module, "process_batch") as process:
                                 self.assertEqual(module.main(args + ["--simplifier", str(engine), "--yes", "--recursive"]), 0)
                             find.assert_not_called()
-                            self.assertEqual(scan.call_args.args[:3], ([source], root, root / "output"))
-                            self.assertEqual(process.call_args.args[:3], ([source], root, root / "output"))
+                            self.assertEqual(scan.call_args.args[:3], ([source], root, None))
+                            self.assertEqual(process.call_args.args[:3], ([source], root, None))
 
     def test_invalid_file_missing_input_and_conflicting_aliases(self):
         for name, module in modules.items():
@@ -112,6 +112,123 @@ class SingleFileChecks(unittest.TestCase):
                 self.assertEqual(sync.main(["-i", str(source), "-o", str(output), "-f", str(fonts)]), 0)
             self.assertEqual(scan_fonts.call_args.args[1], fonts)
             self.assertEqual(process.call_args.args[:2], (source, output))
+
+    def test_folder_scans_are_nonrecursive_unless_requested_and_exclude_outputs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            sources = [root / "episode.mkv", root / "B" / "C" / "episode.mkv"]
+            for source in sources:
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.touch()
+                (source.parent / "output").mkdir()
+                (source.parent / "output" / "generated.mkv").touch()
+            custom = root / "custom results"
+            custom.mkdir()
+            (custom / "generated.mkv").touch()
+            for name, module in modules.items():
+                with self.subTest(tool=name):
+                    if name == "subtitle_flags":
+                        self.assertEqual(module.find_files(root, False), [sources[0]])
+                        self.assertEqual(set(module.find_files(root, True)), set(sources + [custom / "generated.mkv"]))
+                    else:
+                        self.assertEqual(module.find_files(root, custom, False), [sources[0]])
+                        self.assertEqual(set(module.find_files(root, custom, True)), set(sources))
+
+    def test_folder_menus_only_include_children_with_recursive_flag(self):
+        flags = modules["subtitle_flags"]
+        sync = modules["sync_fonts"]
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            sources = [root / "episode.mkv", root / "sub" / "episode.mkv"]
+            for source in sources:
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.touch()
+            for option in ([], ["-r"], ["--recursive"]):
+                expected = sources if option else sources[:1]
+                with patch.object(flags.shutil, "which", return_value="tool"), \
+                     patch.object(flags, "identify", return_value=INFO) as scan, \
+                     patch.object(flags, "edit_file", return_value=True), \
+                     patch("builtins.input", side_effect=["3", "y"]), \
+                     patch("sys.stdout", new_callable=io.StringIO):
+                    self.assertEqual(flags.main(["--input", str(root), *option]), 0)
+                self.assertEqual([call.args[0] for call in scan.call_args_list], expected)
+                with patch.object(sync, "find_tool", side_effect=lambda name: name), \
+                     patch.object(sync, "inspect_fonts", return_value={}) as scan, \
+                     patch.object(sync, "scan_local_fonts") as fonts, \
+                     patch.object(sync, "choose_plans", return_value={s: {} for s in expected}), \
+                     patch.object(sync, "process", return_value="unchanged") as process, \
+                     patch("sys.stdout", new_callable=io.StringIO):
+                    self.assertEqual(sync.main(["--input", str(root), *option]), 0)
+                self.assertEqual([call.args[0] for call in scan.call_args_list], expected)
+                self.assertEqual([(call.args[0], call.args[1]) for call in process.call_args_list],
+                                 [(source, source.parent / "output") for source in expected])
+                self.assertEqual(fonts.call_args.args[1], None if option else root)
+
+    def test_removed_directory_aliases_are_rejected(self):
+        for module in modules.values():
+            with patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+                module.main(["--input-dir", "."])
+            with patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+                module.main(["--output-dir", "."])
+
+    def test_real_recursive_output_mapping_and_originals_preserved(self):
+        merge = shutil.which("mkvmerge")
+        self.assertTrue(merge and shutil.which("mkvextract") and shutil.which("mkvpropedit"), "MKVToolNix required")
+        font = Path(os.environ.get("SIMPLIFY_SUBTITLES_TEST_FONT", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"))
+        self.assertTrue(font.is_file(), "Set SIMPLIFY_SUBTITLES_TEST_FONT to a real TTF")
+        engine = Path(os.environ.get("SIMPLIFY_SUBTITLES_TEST_ENGINE", ROOT / "simplify_ass.py"))
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "A"
+            deep = root / "B" / "C"
+            deep.mkdir(parents=True)
+            sources = [root / "episode.mkv", deep / "episode.mkv"]
+            subtitle = Path(folder) / "input.srt"
+            subtitle.write_text("1\n00:00:00,000 --> 00:00:01,000\nText\n")
+            result = subprocess.run([merge, "-o", str(sources[0]), "--attachment-mime-type", "font/ttf",
+                                     "--attach-file", str(font), "--language", "0:en", "--track-name", "0:English",
+                                     str(subtitle), "--language", "0:de", "--track-name", "0:German", str(subtitle)],
+                                    capture_output=True, text=True)
+            self.assertIn(result.returncode, (0, 1), result.stdout + result.stderr)
+            shutil.copyfile(sources[0], sources[1])
+            (deep / "output").mkdir()
+            previous_output = deep / "output" / "old.mkv"
+            shutil.copyfile(sources[0], previous_output)
+            previous_hash = hashlib.sha256(previous_output.read_bytes()).hexdigest()
+            with patch("sys.stdout", new_callable=io.StringIO), patch("builtins.input", side_effect=["1", "3", "y"]):
+                self.assertEqual(modules["subtitle_flags"].main(["--input", str(root), "-r"]), 0)
+            for source in sources:
+                info = json.loads(subprocess.check_output([merge, "-J", str(source)]))
+                self.assertTrue(all(not t["properties"]["default_track"] for t in info["tracks"]))
+            self.assertEqual(hashlib.sha256(previous_output.read_bytes()).hexdigest(), previous_hash)
+            previous_output.unlink()
+            hashes = {source: hashlib.sha256(source.read_bytes()).hexdigest() for source in sources}
+            for tool in ("remove_subtitles", "sync_fonts", "simplify_subtitles"):
+                for explicit in (False, True):
+                    with self.subTest(tool=tool, explicit_output=explicit):
+                        output = Path(folder) / (tool + "-D")
+                        args = ["--input", str(root), "-r"] + (["--output", str(output)] if explicit else [])
+                        if tool == "simplify_subtitles":
+                            args += ["--yes", "--simplifier", str(engine)]
+                        with patch("sys.stdout", new_callable=io.StringIO), \
+                             patch("builtins.input", side_effect=["1", "y"]):
+                            self.assertEqual(modules[tool].main(args), 0)
+                        for source in sources:
+                            target = output / source.relative_to(root) if explicit else source.parent / "output" / source.name
+                            self.assertTrue(target.is_file(), str(target))
+                            info = json.loads(subprocess.check_output([merge, "-J", str(target)]))
+                            self.assertEqual(len(info["tracks"]), 1 if tool == "remove_subtitles" else 2)
+                            if tool == "sync_fonts":
+                                self.assertEqual(info["attachments"], [])
+                            self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), hashes[source])
+                        if explicit:
+                            self.assertFalse((output / "A").exists())
+                        else:
+                            if tool == "simplify_subtitles":
+                                with patch("sys.stdout", new_callable=io.StringIO) as console:
+                                    self.assertEqual(modules[tool].main(args), 0)
+                                self.assertEqual(console.getvalue().count("Skipping existing output:"), 2)
+                            for source in sources:
+                                shutil.rmtree(source.parent / "output")
 
     def test_real_single_file_remux_and_in_place_flags(self):
         merge = shutil.which("mkvmerge")

@@ -228,13 +228,17 @@ def find_files(root, output, recursive):
     files = []
     for directory, dirs, names in os.walk(root, followlinks=False):
         dirs[:] = sorted(name for name in dirs if name.casefold() != "output"
-                         and not (Path(directory) / name).resolve().is_relative_to(output))
+                         and (output is None or not (Path(directory) / name).resolve().is_relative_to(output)))
         files.extend(Path(directory) / name for name in names
                      if Path(name).suffix.lower() == ".mkv" and (Path(directory) / name).is_file()
-                     and not (Path(directory) / name).resolve().is_relative_to(output))
+                     and (output is None or not (Path(directory) / name).resolve().is_relative_to(output)))
         if not recursive:
             break
     return sorted(files, key=lambda path: str(path.relative_to(root)).casefold())
+
+
+def output_path(source, root, output):
+    return output / source.relative_to(root) if output is not None else source.parent / "output" / source.name
 
 
 def passed_reduction(stats, minimum):
@@ -366,8 +370,8 @@ def filename_prefix(path):
 def scan_batch(files, root, output, merge):
     scans = {}
     pending = [source for source in files
-               if not (output / source.relative_to(root)).exists()
-               and not (output / source.relative_to(root)).is_symlink()]
+               if not output_path(source, root, output).exists()
+               and not output_path(source, root, output).is_symlink()]
     if pending:
         stage(f"Checking batch metadata... [{len(pending)} MKVs]")
     for source in pending:
@@ -666,7 +670,7 @@ def process_batch(files, root, output, args, merge, extract, engine, report, sca
     with tempfile.TemporaryDirectory(prefix="simplify-series-", dir=args.temp_dir) as temp:
         run_dir = Path(temp)
         for number, source in enumerate(files, 1):
-            destination = output / source.relative_to(root)
+            destination = output_path(source, root, output)
             if destination.exists() or destination.is_symlink():
                 print(f"Skipping existing output: {destination}")
                 counts["skipped"] += 1
@@ -787,9 +791,9 @@ def choice(prompt, options):
 
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument("folder", nargs="?", type=Path, help="MKV file or folder (legacy positional syntax)")
-    result.add_argument("-i", "--input-dir", type=Path, help="MKV file or folder (default: beside this script)")
-    result.add_argument("-o", "--output-dir", type=Path, help="output folder (default: INPUT/output)")
+    result.add_argument("folder", nargs="?", type=Path, help="MKV file or folder")
+    result.add_argument("-i", "--input", type=Path, help="MKV file or folder (default: beside this script)")
+    result.add_argument("-o", "--output", type=Path, help="output folder (default: output/ beside each source MKV)")
     result.add_argument("-f", "--fonts-dir", action="append", type=Path, default=[], help="extra font folder; repeatable")
     result.add_argument("-r", "--recursive", action="store_true")
     result.add_argument("--temp-dir", type=Path, help="temporary subtitles/font storage (default: system temp)")
@@ -815,17 +819,17 @@ def parser():
 def main(argv=None):
     argument_parser = parser()
     args = argument_parser.parse_args(argv)
-    if args.folder is not None and args.input_dir is not None:
+    if args.folder is not None and args.input is not None:
         argument_parser.error("Specify input positionally or with -i, not both.")
     if (args.workers < 1 or args.minimum_subtitle_bytes < 0 or args.scroll_concurrency_limit < 0 or
             not math.isfinite(args.minimum_event_reduction_percent) or
             not 0 <= args.minimum_event_reduction_percent <= 100):
         argument_parser.error("Workers must be positive; byte/scroll limits must be nonnegative; "
                               "event reduction must be between 0 and 100.")
-    source = (args.input_dir or args.folder or Path(__file__).resolve().parent).resolve()
+    source = (args.input or args.folder or Path(__file__).resolve().parent).resolve()
     single_file = source.is_file()
     root = source.parent if single_file else source
-    output = args.output_dir.resolve() if args.output_dir else root / "output"
+    output = args.output.resolve() if args.output else None
     engine = args.simplifier.resolve() if args.simplifier else Path(__file__).resolve().parent / "simplify_ass.py"
     args.fonts_dir = [path.resolve() for path in args.fonts_dir]
     if args.mkvtoolnix_dir:
@@ -841,14 +845,14 @@ def main(argv=None):
             raise RuntimeError(f"Input must be an existing MKV file or folder: {source}")
         if not root.is_dir() or any(not folder.is_dir() for folder in args.fonts_dir):
             raise RuntimeError("Input and extra font folders must exist")
-        if root.is_relative_to(output) or (output.exists() and not output.is_dir()):
+        if output is not None and (root.is_relative_to(output) or (output.exists() and not output.is_dir())):
             raise RuntimeError("Output must be a separate folder and cannot contain the input folder")
         if not engine.is_file() or engine.resolve() == Path(__file__).resolve():
             raise RuntimeError("Choose the simplify_ass.py engine, separate from this wrapper")
         files = [source] if single_file else find_files(root, output, args.recursive)
         if args.report:
             args.report = args.report.resolve()
-            protected = {path.resolve() for path in files} | {output / path.relative_to(root) for path in files}
+            protected = {path.resolve() for path in files} | {output_path(path, root, output) for path in files}
             protected.update([engine.resolve(), Path(__file__).resolve()])
             if args.report in protected or args.report.suffix.lower() in (".mkv", ".ass", ".ssa", ".py"):
                 raise RuntimeError("Report must be separate from media and Python scripts")
@@ -873,7 +877,7 @@ def main(argv=None):
         consistent = args.mode == "add" and not args.process_all_tracks
         report["GroupConsistency"] = consistent
         scans = scan_batch(files, root, output, merge) if consistent else {}
-        print(f"\nInput: {root}\nOutput: {output}\nFiles: {len(files)}")
+        print(f"\nInput: {root}\nOutput: {output or 'output/ beside each source MKV'}\nFiles: {len(files)}")
         print("Original tracks: " + ("keep and add simplified copies" if args.mode == "add" else "replace qualifying tracks"))
         print("Track policy: " + ("all ASS/SSA" if args.process_all_tracks else
                                  "consistent groups across the batch" if consistent else "per-track size and event-reduction thresholds"))
@@ -896,7 +900,7 @@ def main(argv=None):
             process_batch(files, root, output, args, merge, extract, engine, report, scans, counts)
         else:
             for file_number, source in enumerate(files, 1):
-                destination = output / source.relative_to(root)
+                destination = output_path(source, root, output)
                 if destination.exists() or destination.is_symlink():
                     print(f"Skipping existing output: {destination}")
                     counts["skipped"] += 1

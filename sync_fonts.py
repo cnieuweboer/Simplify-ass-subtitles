@@ -955,25 +955,43 @@ def process(source, output_dir, merge, preview, write_logs, inspection, plan):
             report.write_text("\n".join(log), encoding="utf-8")
 
 
+def find_files(root, output, recursive):
+    files = []
+    for directory, dirs, names in os.walk(root, followlinks=False):
+        dirs[:] = sorted(name for name in dirs if name.casefold() != "output"
+                         and (output is None or not (Path(directory) / name).resolve().is_relative_to(output)))
+        files.extend(Path(directory) / name for name in names
+                     if Path(name).suffix.casefold() == ".mkv" and (Path(directory) / name).is_file()
+                     and (output is None or not (Path(directory) / name).resolve().is_relative_to(output)))
+        if not recursive:
+            break
+    return sorted(files, key=lambda path: str(path.relative_to(root)).casefold())
+
+
+def output_path(source, root, output):
+    return output / source.relative_to(root) if output is not None else source.parent / "output" / source.name
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", nargs="?", type=Path,
-                        help="MKV file or folder (legacy positional syntax; default: beside this script)")
-    parser.add_argument("-i", "--input-dir", type=Path,
                         help="MKV file or folder (default: beside this script)")
-    parser.add_argument("-o", "--output-dir", type=Path,
-                        help="Output folder (default: INPUT/output)")
+    parser.add_argument("-i", "--input", type=Path,
+                        help="MKV file or folder (default: beside this script)")
+    parser.add_argument("-o", "--output", type=Path,
+                        help="Output folder (default: output/ beside each source MKV)")
+    parser.add_argument("-r", "--recursive", action="store_true", help="include subfolders, excluding output folders")
     parser.add_argument("-f", "--fonts-dir", type=Path,
-                        help="Folder containing loose fonts (default: input folder)")
+                        help="Folder containing loose fonts (default: beside each source MKV)")
     parser.add_argument("--preview", action="store_true", help="Analyze without remuxing")
     parser.add_argument("--log", action="store_true", help="Write per-file font reports (off by default)")
     args = parser.parse_args(argv)
-    if args.directory is not None and args.input_dir is not None:
+    if args.directory is not None and args.input is not None:
         parser.error("Specify input positionally or with -i, not both.")
-    source = (args.input_dir or args.directory or Path(__file__).resolve().parent).resolve()
+    source = (args.input or args.directory or Path(__file__).resolve().parent).resolve()
     single_file = source.is_file()
     directory = source.parent if single_file else source
-    output = args.output_dir.resolve() if args.output_dir else directory / "output"
+    output = args.output.resolve() if args.output else None
     fonts_dir = args.fonts_dir.resolve() if args.fonts_dir else directory
     if not source.is_dir() and not (single_file and source.suffix.casefold() == ".mkv"):
         print("Input must be an existing MKV file or folder: " + str(source))
@@ -984,7 +1002,7 @@ def main(argv=None):
     if output == directory:
         print("Output directory must differ from the input directory.")
         return 2
-    if output.exists() and not output.is_dir():
+    if output is not None and output.exists() and not output.is_dir():
         print("Output path is not a directory: " + str(output))
         return 2
     try:
@@ -996,18 +1014,23 @@ def main(argv=None):
     except RuntimeError as error:
         print(error)
         return 2
-    sources = [source] if single_file else sorted((p for p in directory.iterdir() if p.is_file() and p.suffix.casefold() == ".mkv"),
-                     key=lambda p: p.name.casefold())
+    sources = [source] if single_file else find_files(directory, output, args.recursive)
     if not sources:
         print("No MKV files found in " + str(directory))
         return 0
-    output.mkdir(parents=True, exist_ok=True)
+    destinations = {source: output_path(source, directory, output) for source in sources}
+    try:
+        for destination in destinations.values():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        print("Cannot create output folders: " + str(error))
+        return 2
     counts = collections.Counter()
     inspections = {}
     print("Scanning MKVs and subtitle font references...")
     for index, source in enumerate(sources, 1):
-        print(f"\n[Scan {index}/{len(sources)}] {source.name}")
-        if (output / source.name).exists():
+        print(f"\n[Scan {index}/{len(sources)}] {source.relative_to(directory)}")
+        if destinations[source].exists() or destinations[source].is_symlink():
             print("  Skipped: output file already exists.")
             counts["skipped"] += 1
             continue
@@ -1017,18 +1040,19 @@ def main(argv=None):
             print("  ERROR during font scan: " + str(error))
             counts["failed"] += 1
             if args.log:
-                (output / (source.name + ".fonts.txt")).write_text(
+                destinations[source].with_name(source.name + ".fonts.txt").write_text(
                     f"Input: {source}\nERROR during font scan: {error}\n", encoding="utf-8")
-    print("\n[Scan local fonts] " + str(fonts_dir))
-    scan_local_fonts(inspections, fonts_dir)
+    local_fonts = None if args.recursive and not args.fonts_dir else fonts_dir
+    print("\n[Scan local fonts] " + (str(local_fonts) if local_fonts else "Beside each source MKV"))
+    scan_local_fonts(inspections, local_fonts)
     print("\n[Options]")
     plans = choose_plans(inspections, args.preview)
     for index, (source, inspection) in enumerate(inspections.items(), 1):
-        print(f"\n[Process {index}/{len(inspections)}] {source.name}")
-        counts[process(source, output, merge, args.preview, args.log,
+        print(f"\n[Process {index}/{len(inspections)}] {source.relative_to(directory)}")
+        counts[process(source, destinations[source].parent, merge, args.preview, args.log,
                        inspection, plans[source])] += 1
     print("\nFinished: " + ", ".join(f"{v} {k}" for k, v in counts.items()))
-    print("Output: " + str(output))
+    print("Output: " + (str(output) if output else "output/ beside each source MKV"))
     return 1 if counts["failed"] else 0
 
 

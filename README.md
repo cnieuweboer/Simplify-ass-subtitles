@@ -26,15 +26,20 @@ The end-user Python tools work on Windows, Linux, and macOS.
 Use `python3` instead of `python` where needed. Double-clicking a Python file
 requires a Python file association.
 
-Without arguments, they scan beside the script. Simplification, removal, and
-font sync write to `output/` under the input folder, preserving originals and
-skipping existing outputs. Flag changes edit the originals.
-All four tools accept a folder or one MKV via `-i` / `--input-dir` or positional input.
+Without arguments, they scan beside the script without visiting subfolders.
+Use `-r` / `--recursive` to include subfolders; `output/` folders are excluded.
+Simplification, removal, and font sync write to `output/` beside each source MKV,
+preserving originals and skipping existing outputs. Flag changes edit the originals.
+All four tools accept a folder or one MKV via `-i` / `--input` or positional input.
 For one MKV, output defaults to its parent folder's `output/`.
 
 ```console
 python simplify_subtitles.py -i media/episode.mkv
+python simplify_subtitles.py --input media --recursive --output cleaned
 ```
+
+With explicit output, subfolder paths are relative to the input: `media/B/C/Y.mkv`
+becomes `cleaned/B/C/Y.mkv`. Without `--output`, it becomes `media/B/C/output/Y.mkv`.
 
 ## Simplify subtitles
 
@@ -109,8 +114,8 @@ python sync_fonts.py -i media --preview
 python sync_fonts.py -i media --log
 ```
 
-Without `-f`, loose fonts are read from the input folder. Font scanning is not
-recursive; logs are off by default.
+Without `-f`, loose fonts are read beside each source MKV. Font folders themselves
+are not scanned recursively; logs are off by default.
 
 ## Development
 

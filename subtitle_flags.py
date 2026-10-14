@@ -173,16 +173,28 @@ def edit_file(path, info, clear_default, clear_forced, defaults, forced):
     return True
 
 
+def find_files(root, recursive):
+    files = []
+    for directory, dirs, names in os.walk(root, followlinks=False):
+        dirs[:] = sorted(name for name in dirs if name.casefold() != "output")
+        files.extend(Path(directory) / name for name in names
+                     if Path(name).suffix.casefold() == ".mkv" and (Path(directory) / name).is_file())
+        if not recursive:
+            break
+    return sorted(files, key=lambda path: str(path.relative_to(root)).casefold())
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("folder", nargs="?", type=Path,
-                        help="MKV file or folder (default: beside this script; not recursive)")
-    parser.add_argument("-i", "--input-dir", type=Path,
                         help="MKV file or folder (default: beside this script)")
+    parser.add_argument("-i", "--input", type=Path,
+                        help="MKV file or folder (default: beside this script)")
+    parser.add_argument("-r", "--recursive", action="store_true", help="include subfolders, excluding output folders")
     args = parser.parse_args(argv)
-    if args.folder is not None and args.input_dir is not None:
+    if args.folder is not None and args.input is not None:
         parser.error("Specify input positionally or with -i, not both.")
-    source = (args.input_dir or args.folder or Path(__file__).resolve().parent).resolve()
+    source = (args.input or args.folder or Path(__file__).resolve().parent).resolve()
     single_file = source.is_file()
     folder = source.parent if single_file else source
     if not source.is_dir() and not (single_file and source.suffix.casefold() == ".mkv"):
@@ -192,9 +204,7 @@ def main(argv=None):
     if missing:
         print(f"ERROR: Install MKVToolNix and add to PATH: {', '.join(missing)}")
         return 1
-    files = [source] if single_file else sorted((path for path in folder.iterdir()
-                    if path.is_file() and path.suffix.lower() == ".mkv"),
-                   key=lambda path: path.name.casefold())
+    files = [source] if single_file else find_files(folder, args.recursive)
     if not files:
         print(f"No MKV files found in {folder}.")
         return 1

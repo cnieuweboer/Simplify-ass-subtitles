@@ -91,14 +91,19 @@ def find_files(root, output, recursive):
     files = []
     for directory, dirs, names in os.walk(root, followlinks=False):
         dirs[:] = sorted(name for name in dirs if name.casefold() != "output"
-                         and not (Path(directory) / name).resolve().is_relative_to(output))
+                         and (output is None or not (Path(directory) / name).resolve().is_relative_to(output)))
         for name in names:
             path = Path(directory) / name
-            if path.suffix.lower() == ".mkv" and path.is_file() and not path.resolve().is_relative_to(output):
+            if (path.suffix.lower() == ".mkv" and path.is_file()
+                    and (output is None or not path.resolve().is_relative_to(output))):
                 files.append(path)
         if not recursive:
             break
     return sorted(files, key=lambda path: str(path.relative_to(root)).casefold())
+
+
+def output_path(source, root, output):
+    return output / source.relative_to(root) if output is not None else source.parent / "output" / source.name
 
 
 def parse_selection(answer, catalog):
@@ -169,7 +174,7 @@ def preview(items, root, output, automatic, selected, failures, keep=False):
             removed = {track["id"] for track in subtitles} - matching
         else:
             removed = matching
-        target = output / relative
+        target = output_path(item.path, root, output)
         if not removed:
             print(f"  {relative}: " + ("all subtitles already match the keep selection; skipped."
                                       if keep else "no matching tracks; skipped."))
@@ -264,22 +269,22 @@ def remux(tool, item, target, removed):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("folder", nargs="?", type=Path,
-                        help="MKV file or folder (legacy positional syntax; default: beside this script)")
-    parser.add_argument("-i", "--input-dir", type=Path,
                         help="MKV file or folder (default: beside this script)")
-    parser.add_argument("--recursive", action="store_true", help="include subfolders, excluding output folders")
-    parser.add_argument("-o", "--output-dir", type=Path, help="output folder (default: INPUT/output)")
+    parser.add_argument("-i", "--input", type=Path,
+                        help="MKV file or folder (default: beside this script)")
+    parser.add_argument("-r", "--recursive", action="store_true", help="include subfolders, excluding output folders")
+    parser.add_argument("-o", "--output", type=Path, help="output folder (default: output/ beside each source MKV)")
     args = parser.parse_args(argv)
-    if args.folder is not None and args.input_dir is not None:
+    if args.folder is not None and args.input is not None:
         parser.error("Specify input positionally or with -i, not both.")
-    source = (args.input_dir or args.folder or Path(__file__).resolve().parent).resolve()
+    source = (args.input or args.folder or Path(__file__).resolve().parent).resolve()
     single_file = source.is_file()
     root = source.parent if single_file else source
-    output = args.output_dir.resolve() if args.output_dir else root / "output"
+    output = args.output.resolve() if args.output else None
     if not source.is_dir() and not (single_file and source.suffix.casefold() == ".mkv"):
         print(f"ERROR: Input must be an existing MKV file or folder: {source}")
         return 1
-    if root.is_relative_to(output):
+    if output is not None and root.is_relative_to(output):
         print("ERROR: Output folder must differ from the input folder and cannot contain it.")
         return 1
     tool = shutil.which("mkvmerge")
@@ -341,7 +346,7 @@ def main(argv=None):
     except KeyboardInterrupt:
         print("\nStopped. Completed outputs remain; the current partial output was discarded.")
         failures += 1
-    print(f"Saved files: {saved}; failures: {failures}; output folder: {output}")
+    print(f"Saved files: {saved}; failures: {failures}; output: {output or 'output/ beside each source MKV'}")
     return int(bool(failures))
 
 

@@ -6,7 +6,8 @@ to be installed beside the scripts. Python 3.10+ and the usual dependencies
 are required.
 
 Drop **MKV files or folders containing MKVs** onto a target. A file drop processes
-only that MKV; a folder drop scans the folder normally. Removal/font/simplification
+only that MKV; a folder drop scans only that folder's MKVs, without subfolders.
+Use the Python tool with `-r` / `--recursive` to include subfolders. Removal/font/simplification
 outputs go to `output/` under the input folder or the dropped file's parent.
 For example, dropping `A/X.mkv` onto a helper in `B/` writes `A/output/X.mkv`.
 The flag helper edits the selected originals in place.

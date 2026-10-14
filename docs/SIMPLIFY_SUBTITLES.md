@@ -13,10 +13,12 @@ python simplify_subtitles.py -i media --workers 4
 ```
 
 Input accepts a folder or one MKV and defaults to the script's folder. A single
-file processes only that MKV, even with `--recursive`. Output defaults to the
-input folder's `output/`, or the MKV's parent folder's `output/`. Additional
+file processes only that MKV, even with `--recursive`. Folder scans stay
+nonrecursive unless `-r` / `--recursive` is supplied. Output defaults to
+`output/` beside each source MKV. Explicit `-o` / `--output` preserves paths
+relative to the input folder, without including that folder's own name. Additional
 font folders (`-f`, repeatable) supplement embedded fonts. Optional recursion
-preserves relative paths and excludes output folders. Existing outputs are skipped.
+excludes output folders. Existing outputs are skipped.
 
 The two menus choose adding versus replacing tracks and filtered versus all
 ASS/SSA tracks. Individual qualification requires an extracted subtitle strictly
