@@ -748,9 +748,9 @@ def main(argv=None):
         print("Original tracks: " + ("keep and add simplified copies" if args.mode == "add" else "replace qualifying tracks"))
         print("Track policy: " + ("all ASS/SSA" if args.process_all_tracks else
                                  "consistent groups across the batch" if consistent else "per-track size and event-reduction thresholds"))
-        print(f"Scrolling concurrency limit: {args.scroll_concurrency_limit} (0 disables text dropping)")
         if consistent:
             batch_warnings(scans)
+        print(f"Scrolling concurrency limit: {args.scroll_concurrency_limit} (0 disables text dropping)")
         if not args.yes and input("Proceed? (y/N): ").strip().lower() not in ("y", "yes"):
             print("Cancelled. No files changed.")
             return 0
