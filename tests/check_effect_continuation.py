@@ -49,14 +49,24 @@ def run(module,target,args):
   return result
  with patch.object(module,'apply_override',watched):return getattr(module,target)(*args)
 
-def compare(label,target,inputs):
+def compare(label,target,inputs,*,expected_colour=None):
  global cases
  outputs=[]
  for module in (previous,current):
   args=inputs(module);before=deepcopy(snapshot(args));out=run(module,target,args)
   check(label+' borrowed input',before==snapshot(args))
+  if expected_colour is not None:
+   events=args[0]
+   check(label+' complete row retained',len(out)==len(events)==3)
+   if module is previous:
+    check(label+' historical selection retains input',snapshot(out)==snapshot(events))
+   else:
+    check(label+' completed paint selected',all(e.state['1c']==expected_colour for e in out))
+    check(label+' only paint formatting replaced',all(
+     snapshot(module.replace_event(a,text=b.text))==snapshot(b) for a,b in zip(events,out)))
   outputs.append(snapshot(out))
- check(label+' complete decision parity',outputs[0]==outputs[1]);cases+=1
+ if expected_colour is None:check(label+' complete decision parity',outputs[0]==outputs[1])
+ cases+=1
 
 f=fixtures('check_shrinking_row_stages.py','SPY_NAMES=')
 for c in f['CASES']:
@@ -66,7 +76,10 @@ for c in f['CASES']:
 f=fixtures('check_karaoke_completion_stages.py','SPY_NAMES=')
 for c in f['CASES']:
  for order in ('original','reversed','shuffled'):
-  compare(c['name']+order,'normalize_karaoke_completion_paint',lambda m:f['inputs'](m,c,order,order))
+  # v196 intentionally admits one-centisecond endpoint overhang; retain
+  # parser/ownership checks while asserting its new destination paint.
+  colour=f['AFTER'] if c['name'] in {'source runs before retained cue','source runs after retained cue'} else None
+  compare(c['name']+order,'normalize_karaoke_completion_paint',lambda m:f['inputs'](m,c,order,order),expected_colour=colour)
 f=fixtures('check_sliced_text_stages.py','SPY_NAMES=')
 for c in f['CASES']:
  for order in ('original','reverse','shuffle'):

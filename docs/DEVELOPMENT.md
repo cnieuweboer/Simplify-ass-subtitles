@@ -60,7 +60,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 72 current scripts. The runner uses three workers for
+The suite inventory lists 73 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
@@ -232,3 +232,8 @@ The bounded source fade allowance for rotating entrances is documented in
 [ROTATING_ENTRANCE_FADES.md](ROTATING_ENTRANCE_FADES.md). Its focused check runs
 in the current suite; `python validation/run_rotating_entrance_corpus.py` compares
 fresh outputs with the local, verified v194 corpus baselines.
+
+See [KARAOKE_COMPLETION_BOUNDS.md](KARAOKE_COMPLETION_BOUNDS.md) for the aligned
+11 ms initial source-phase selection and completion coverage proof (v196).
+`python validation/run_karaoke_completion_bound_corpus.py` compares fresh outputs
+with the verified local v195 corpus baselines.

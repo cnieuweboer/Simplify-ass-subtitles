@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.14.195"
+__version__ = "2026.10.14.196"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -6334,9 +6334,9 @@ def _index_karaoke_completion_sources(candidates: list[list[Event]], visible_map
 
 
 def _karaoke_completion_source_phases(e: Event, visible_map: dict[int,str], source_events: dict[int,Event], sources: dict) -> list[Event] | None:
-    """Prove source phases cover the retained cue with the original endpoint/touching tolerances."""
+    """Select and prove cue coverage with the same 11 ms endpoint/touching tolerance."""
     phases = sorted((p for p in sources.get(_karaoke_completion_identity(e,visible_map[e.source_index]),[])
-                     if p.start_s >= _karaoke_completion_cue_start(e,source_events)-.001 and p.end_s <= e.end_s+.001),
+                     if p.start_s >= _karaoke_completion_cue_start(e,source_events)-.011 and p.end_s <= e.end_s+.011),
                     key=lambda p:(p.start_s,p.end_s))
     if (not phases or abs(phases[0].start_s-_karaoke_completion_cue_start(e,source_events)) > .011 or
             abs(phases[-1].end_s-e.end_s) > .011 or

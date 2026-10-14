@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.14.195",
+  "version": "2026.10.14.196",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -358,6 +358,11 @@
     },
     {
       "script": "tests/check_rotating_entrance_fades.py",
+      "status": "current",
+      "category": "source ownership"
+    },
+    {
+      "script": "tests/check_karaoke_completion_bounds.py",
       "status": "current",
       "category": "source ownership"
     }
