@@ -60,7 +60,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 71 current scripts. The runner uses three workers for
+The suite inventory lists 72 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
@@ -227,3 +227,8 @@ paint ownership through row reconstruction and foreground overlap handoffs (v193
 
 See [GLOW_PULSE_TIMING.md](GLOW_PULSE_TIMING.md) for bounded overhang admission
 within complete returning-highlight ownership, including the chant cues (v194).
+
+The bounded source fade allowance for rotating entrances is documented in
+[ROTATING_ENTRANCE_FADES.md](ROTATING_ENTRANCE_FADES.md). Its focused check runs
+in the current suite; `python validation/run_rotating_entrance_corpus.py` compares
+fresh outputs with the local, verified v194 corpus baselines.

@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.14.194"
+__version__ = "2026.10.14.195"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -12021,8 +12021,10 @@ def _classify_boundary_glyph_phase(original: Event, state: dict, tokens: list, f
         final_continuation = continuation
         for tag,value in changes:
             final_continuation = apply_override(final,tag,value,original.styles,original.defaults,final_continuation)
+        # Source fade parameters may finish one frame beyond the record,
+        # matching exit validation. The event boundary itself stays exact.
         if (unrotated_text_state(state) or not unrotated_text_state(final) or
-                not 0 < fade[0] <= 1000*original.duration or fade[1] != 0):
+                not 0 < fade[0] <= 1000*original.duration+50 or fade[1] != 0):
             return None
         phase,boundary,pos = 'entrance',original.end_s,get_pos(original.text)
     elif len(moves) == 1 and not transforms and unrotated_text_state(state):

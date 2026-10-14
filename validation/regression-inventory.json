@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.14.194",
+  "version": "2026.10.14.195",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -355,6 +355,11 @@
       "script": "tests/check_glow_pulse_paint_render.py",
       "status": "current",
       "category": "render"
+    },
+    {
+      "script": "tests/check_rotating_entrance_fades.py",
+      "status": "current",
+      "category": "source ownership"
     }
   ],
   "historical": [
