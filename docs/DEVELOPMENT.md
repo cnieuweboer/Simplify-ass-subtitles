@@ -224,3 +224,6 @@ source fade phases and preserved cue-core handoffs to overlap trimming (v192).
 
 See [GLOW_BACKING_OWNERSHIP.md](GLOW_BACKING_OWNERSHIP.md) for retained backing
 paint ownership through row reconstruction and foreground overlap handoffs (v193).
+
+See [GLOW_PULSE_TIMING.md](GLOW_PULSE_TIMING.md) for bounded overhang admission
+within complete returning-highlight ownership, including the chant cues (v194).

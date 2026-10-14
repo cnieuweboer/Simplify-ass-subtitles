@@ -12,7 +12,7 @@ checks=[]
 def check(name,value):
  assert value,name
  checks.append(name)
-def fixture(*,reverse=False,whole=False,fill='C7F5B2',glow='1AC60D',base='FFFFFF',mutation='',boundaries=''):
+def fixture(*,reverse=False,whole=False,fill='C7F5B2',glow='1AC60D',base='FFFFFF',mutation='',boundaries='',hold_end=4,echo_end=None,echo_start=None):
  text=HEADER.replace('1,2,0,7,','1,0,0,5,')
  words=['Sun','moon','stars'];starts=[0,700,1400]
  if reverse:starts=starts[::-1]
@@ -23,12 +23,12 @@ def fixture(*,reverse=False,whole=False,fill='C7F5B2',glow='1AC60D',base='FFFFFF
   if mutation=='gradient' and j==1:main=r'\an5\alpha&H10&\1c&H123456&'
   if mutation=='moving' and j==1:main+=r'\move(250,100,260,100)'
   if mutation=='shared fade':main=r'\fad(120,240)'+main
-  text+=event(word,x,4,(1,4),main)
+  text+=event(word,x,4,(1,hold_end),main)
   contour=f'\\an5\\alpha&H30&\\blur8\\1c&H{glow}&'
   if mutation=='competing glow' and j==1:text+=event(word,x,2,(1,4),contour.replace(glow,'123456'))
   if mutation=='shared fade':contour=r'\fad(120,240)'+contour
   if mutation=='animated glow':contour+=f'\\t({begin},{begin+1},\\fscx105\\fscy105)\\t({begin+1},{finish},\\fscx100\\fscy100)'
-  text+=event(word,x,3,(1,4),contour)
+  text+=event(word,x,3,(1,hold_end),contour)
   model=next(iter(s._resolve_document_state(s.parse_subtitle_document(HEADER+event(word,x,4,(1,4),r'\an5'))).events.values()))
   pieces=[(word,x)] if whole else s.authored_glyph_positions(metric,model.state,word,x,1)
   if mutation=='missing letter' and j==1:pieces=pieces[:-1]
@@ -37,7 +37,9 @@ def fixture(*,reverse=False,whole=False,fill='C7F5B2',glow='1AC60D',base='FFFFFF
    tags=f'\\an5\\alpha&H60&\\blur3\\1c&H{fill}&\\t(\\alpha&HFF&\\blur8\\fscx130\\fscy130)'
    if mutation=='paint-changing echo' and j==1:tags=tags.replace(r'\blur8',r'\blur8\1c&HABCDEF&')
    if mutation=='whole scaled':tags+=r'\fscx105\fscy105'
-   text+=event(literal,px,4,(1+begin/1000,1+finish/1000),tags)
+   child_start=echo_start if j==0 and echo_start is not None else 1+begin/1000
+   child_end=echo_end if j==2 and echo_end is not None else 1+finish/1000
+   text+=event(literal,px,4,(child_start,child_end),tags)
  if boundaries:
   for j,word in enumerate(words):
    x=100+j*150
@@ -98,6 +100,30 @@ for label,kwargs in [
    return Image.frombytes('RGB',(640,360),r.stdout)
   a,b=frame(1200),frame(3500);check('native static hold',ImageChops.difference(a,b).getbbox() is None)
   check('native green pixels',sum(g>r*1.15 and g>b*1.15 for r,g,b in a.getdata())>100)
+for label,kwargs,accepted in [
+ ('late 40 ms letters',dict(hold_end=3,echo_end=3.04),True),
+ ('late 50 ms letters',dict(hold_end=3,echo_end=3.05),True),
+ ('early 40 ms letters',dict(hold_end=3,echo_start=.96),True),
+ ('late 50 ms whole copies',dict(hold_end=3,echo_end=3.05,whole=True),True),
+ ('overhang 60 ms',dict(hold_end=3,echo_end=3.06),False),
+ ('overhang 100 ms despite nearby pulse',dict(hold_end=3,echo_end=3.10),False),
+ ('early 60 ms',dict(hold_end=3,echo_start=.94),False),
+ ('late missing glyph',dict(hold_end=3,echo_end=3.04,mutation='missing letter'),False),
+ ('late changed paint',dict(hold_end=3,echo_end=3.04,mutation='paint-changing echo'),False),
+ ('late wrong anchor',dict(hold_end=3,echo_end=3.04,mutation='wrong position'),False),
+ ('late cyclic foreground',dict(hold_end=3,echo_end=3.04,mutation='cycle'),False),
+]:
+ _,source,events,visible=fixture(**kwargs);before=deepcopy((source,events,visible))
+ out,count=s.flatten_stacked_text_copies(events,visible,set(source),source_events=source,font_metrics=metric)
+ parents=[e for e in out if e.layer=='4']
+ check(label+': complete ownership',len(parents)==3 if accepted else len(parents)>3)
+ check(label+': inputs immutable',before==(source,events,visible))
+ if accepted:
+  check(label+': held timing unchanged',all((e.start_s,e.end_s)==(1,3) for e in parents))
+  check(label+': settled paint',all(e.state['1a']==0 and 0<e.state['3a']<255 for e in parents))
+  check(label+': repeat stable',s.flatten_stacked_text_copies(out,visible,set(source),source_events=source,font_metrics=metric)[0]==out)
+ else:
+  check(label+': no partial row palette',not any(e.state.get('3a',0)>0 and e.layer=='4' and e.duration==2 for e in out))
 for boundary in ['both','exit only','missing word','gap','changed paint','wrong anchor','animated geometry','ambiguous']:
  _,source,events,visible=fixture(boundaries=boundary);before=deepcopy((source,events,visible))
  result=s.flatten_stacked_text_copies(events,visible,set(source),source_events=source,font_metrics=metric,collect_rows=True)
@@ -199,6 +225,13 @@ check('real Numb backing shares handoff',all(any(
 check('real Numb no backing before handoff',not any(e.start_s<=165.07<e.end_s for e in backing))
 check('real Numb no backing after handoff',not any(e.start_s<=166.13<e.end_s for e in backing))
 
+for start,end in [(190.21,191.67),(200.72,202.18)]:
+ cue=[e for e in es if e.style=='OP - R Chant' and e.start_s <= (start+end)/2 < e.end_s]
+ foreground=[e for e in cue if e.layer=='4']
+ check('real chant retains all text '+str(start),''.join(s.OVERRIDE_RE.sub('',e.text).replace(' ','') for e in foreground)=='Tesrrounamadungeyeon')
+ check('real chant settled opaque paint '+str(start),foreground and all(e.state.get('1a',0)==0 and 0<e.state.get('3a',0)<255 and e.state.get('fscx',100)==100 for e in foreground))
+ check('real chant held interval preserved '+str(start),all(e.start_s<=start and e.end_s>=end for e in foreground))
+ check('real chant no timed highlight copies '+str(start),not any(e.layer=='4' and e.start_s>start and e.end_s<end for e in es if e.style=='OP - R Chant'))
 originals=s.load_subtitle_events(fixture_path)[1]
 for original in originals:
  if original.style!='OP - R' or s._returning_glow_highlight(original) is None:continue

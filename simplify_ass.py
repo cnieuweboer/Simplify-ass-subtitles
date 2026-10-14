@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.14.193"
+__version__ = "2026.10.14.194"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -4098,6 +4098,7 @@ def _index_glow_pulse_paint(context: StackedTextContext) -> dict[int,GlowPulsePa
     rows are accepted atomically; competing owners and missing letters keep the
     ordinary fallback. Colors, names and number of words do not select a source.
     """
+    timing_slack = .051  # Existing ~50 ms source-pulse correspondence tolerance.
     metric = context.font_metrics
     if not context.source_events or metric is None or not metric.available:
         return {}
@@ -4153,7 +4154,7 @@ def _index_glow_pulse_paint(context: StackedTextContext) -> dict[int,GlowPulsePa
                    not OVERRIDE_RE.sub('',e.text).isspace()]
         possible = [sources[index] for index in letters[family]]
         possible = [source_event(e.source_index) for e in possible
-            if abs(e.start_s-pulse[1]) <= .051 and abs(e.end_s-pulse[2]) <= .051]
+            if abs(e.start_s-pulse[1]) <= timing_slack and abs(e.end_s-pulse[2]) <= timing_slack]
         def same_fragment_layout(e):
             if any(not .5 <= e.state.get(k,100)/max(.01,original.state.get(k,100)) <= 1.5
                    for k in ('fscx','fscy')):
@@ -4162,8 +4163,11 @@ def _index_glow_pulse_paint(context: StackedTextContext) -> dict[int,GlowPulsePa
                 'fscx':original.state.get('fscx',100),'fscy':original.state.get('fscy',100)})
             return _glow_source_geometry(normalized) == _glow_source_geometry(original)
         children = [e for e in possible
-            if e.start_s >= original.start_s and e.end_s <= original.end_s and
-               abs(e.start_s-pulse[1]) <= .051 and abs(e.end_s-pulse[2]) <= .051 and
+            # Dissolving copies can straddle the held cue by one source frame.
+            # Bound that overhang independently of the pulse correspondence;
+            # two allowed offsets must not accumulate into a longer overhang.
+            if e.start_s >= original.start_s-timing_slack and e.end_s <= original.end_s+timing_slack and
+               abs(e.start_s-pulse[1]) <= timing_slack and abs(e.end_s-pulse[2]) <= timing_slack and
                same_fragment_layout(e) and
                abs(get_pos(e.text)[1]-get_pos(original.text)[1]) <= original.unit and
                e.state.get('1c') == pulse[0]]
