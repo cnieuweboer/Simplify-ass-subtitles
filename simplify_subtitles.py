@@ -614,10 +614,7 @@ def process_batch(files, root, output, args, merge, extract, engine, report, sca
                 if scan is None or "error" in scan:
                     raise RuntimeError(scan["error"] if scan else "Source was not checked before confirmation")
                 job = prepare_file(source, destination, args, merge, extract, work, scan)
-                large = [candidate for candidate in job["candidates"] if candidate["large"]]
-                if len(large) != len(job["candidates"]):
-                    stage(f"Retaining {len(job['candidates']) - len(large)} small track(s) for group decisions.")
-                convert_candidates(job, large, args, merge, extract, engine, report, batch=True)
+                convert_candidates(job, job["candidates"], args, merge, extract, engine, report, batch=True)
                 jobs.append(job)
             except errors as error:
                 file_failure(source, destination, error, report, counts)
@@ -642,9 +639,6 @@ def process_batch(files, root, output, args, merge, extract, engine, report, sca
         for number, job in enumerate(jobs, 1):
             print(f"\n[Write {number}/{len(jobs)}] {job['source'].relative_to(root)}", flush=True)
             try:
-                needed = [c for c in job["candidates"]
-                          if subtitle_group(c["track"]) in selected and not c.get("converted")]
-                convert_candidates(job, needed, args, merge, extract, engine, report, batch=True)
                 replacements = select_replacements(job, selected)
                 skip_summary(job, replacements)
                 outcome = finish_file(job, replacements, args, merge)

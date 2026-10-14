@@ -40,9 +40,10 @@ With interactive use, a settings summary and confirmation precede writing output
 The wrapper extracts ASS/SSA tracks together, then skips extracted tracks carrying
 the engine's generated header marker. It extracts embedded fonts once per MKV
 under numeric filenames. Per-file modes run one engine process for eligible
-tracks; filtered add mode has an assessment phase and, when needed, a later
-conversion phase for smaller members of selected groups. First-phase results
-are reused; no track is converted twice.
+tracks; filtered add mode simplifies all original ASS/SSA tracks during
+assessment, including small tracks. The displayed count includes all these
+tracks. Size and reduction thresholds still determine which groups qualify;
+writing reuses the assessed results without simplifying any track twice.
 
 For batch assessment, all extracted subtitles are retained until group decisions
 are made. Only subtitle files, fonts, statistics, and small option files live in

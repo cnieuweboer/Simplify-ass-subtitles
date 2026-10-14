@@ -155,6 +155,12 @@ class RealSeriesChecks(unittest.TestCase):
                  patch("sys.stdout", new_callable=io.StringIO) as console:
                 status = wrapper.main(base + ["-o", str(root / "consistent"), "--report", str(report_path)])
             self.assertEqual(status, 0, console.getvalue())
+            assessment, writing = console.getvalue().split("Batch subtitle groups:", 1)
+            first_episode = assessment.split("[Assess 2/", 1)[0]
+            self.assertIn("Simplifying 3 subtitle track(s)...", first_episode)
+            self.assertIn("Track 0 (A):", first_episode)
+            self.assertNotIn("Retaining", assessment)
+            self.assertNotIn("Simplifying", writing)
             self.assertEqual(len([call for call in extraction.call_args_list if call.args[2] == "tracks"]), 3)
             self.assertEqual(len([call for call in extraction.call_args_list if call.args[2] == "attachments"]), 3)
             self.assertEqual(list(scratch.iterdir()), [])
