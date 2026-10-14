@@ -6,7 +6,8 @@ to be installed beside the scripts. Python 3.10+ and the usual dependencies
 are required.
 
 Drop **folders containing MKVs** onto a target. The selected tool scans those
-folders normally; removal/font outputs go to each input folder's `output/`.
+folders normally; removal/font/simplification outputs go to each input folder's `output/`.
+Keep `simplify_ass.py` beside `simplify_subtitles.py` when using its helper.
 
 ## Windows
 

@@ -10,7 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPERS = ROOT / "dnd helper"
-TOOLS = ("subtitle_flags", "remove_subtitles", "sync_fonts")
+TOOLS = ("subtitle_flags", "remove_subtitles", "sync_fonts", "simplify_subtitles")
 
 
 def fake_tool(path):
@@ -106,6 +106,23 @@ class DropHelperChecks(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             for tool in TOOLS:
                 self.assertIn(str(moved), (moved / (tool + ".desktop")).read_text())
+
+    def test_installer_with_only_simplify_subtitles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            scripts = Path(directory)
+            fake_tool(scripts / "simplify_subtitles.py")
+            result = subprocess.run(["sh", str(HELPERS / "linux/setup-linux.sh"), str(scripts)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual([path.name for path in scripts.glob("*.desktop")], ["simplify_subtitles.desktop"])
+            first, second = scripts / "first", scripts / "second"
+            first.mkdir()
+            second.mkdir()
+            result = subprocess.run(["sh", str(scripts / "simplify_subtitles.sh"), str(first), str(second)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual([json.loads(line) for line in (scripts / "simplify_subtitles.log").read_text().splitlines()],
+                             [[str(first)], [str(second)]])
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 source_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-for tool in subtitle_flags remove_subtitles sync_fonts; do
+for tool in subtitle_flags remove_subtitles sync_fonts simplify_subtitles; do
     app="$source_dir/$tool.app"
     if [ -e "$app" ]; then
         printf 'Already exists: %s\n' "$app"

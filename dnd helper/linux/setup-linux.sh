@@ -49,7 +49,8 @@ def desktop_quote(value):
 
 created = 0
 for tool, label in (("subtitle_flags", "Subtitle flags"),
-                    ("remove_subtitles", "Remove subtitles"), ("sync_fonts", "Sync fonts")):
+                    ("remove_subtitles", "Remove subtitles"), ("sync_fonts", "Sync fonts"),
+                    ("simplify_subtitles", "Simplify subtitles")):
     if not (directory / (tool + ".py")).is_file():
         continue
     wrapper = directory / (tool + ".sh")
@@ -66,7 +67,7 @@ for tool, label in (("subtitle_flags", "Subtitle flags"),
     print(f"Created: {launcher}")
     created += 1
 if not created:
-    raise SystemExit("No subtitle_flags.py, remove_subtitles.py, or sync_fonts.py found.")
+    raise SystemExit("No subtitle_flags.py, remove_subtitles.py, sync_fonts.py, or simplify_subtitles.py found.")
 print("Allow launching/trust the desktop launchers if your file manager asks.")
 print("Rerun setup after moving the folder.")
 PY
