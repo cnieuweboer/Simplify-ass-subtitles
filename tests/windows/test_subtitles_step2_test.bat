@@ -4,7 +4,8 @@ echo Subtitle simplifier launcher v181
 rem Edit these settings before running.
 set "CACHE_FOLDER=%~dp0..\..\cache"
 set "OUTPUT_FOLDER=%~dp0..\..\results"
-set "SIMPLIFIER=%~dp0..\..\simplify_ass.py"
+set "SIMPLIFIER=%~dp0simplify_ass.py"
+if not exist "%SIMPLIFIER%" set "SIMPLIFIER=%~dp0..\..\simplify_ass.py"
 rem Use python or the full path to python.exe.
 set "PYTHON=python"
 set "MAX_PARALLEL=16"
