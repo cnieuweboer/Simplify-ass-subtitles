@@ -5,6 +5,8 @@ from copy import deepcopy
 import ast,collections,contextlib,hashlib,importlib.util,io,json,subprocess,sys
 from PIL import Image,ImageChops
 import simplify_ass as s
+from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
+freeze_caption_policy_for_legacy_comparison(s)
 from lyric_layer_fixtures import HEADER,event
 from executable_ast_audit import executable_ast
 from font_geometry_test_helpers import historical_final_tag_policy

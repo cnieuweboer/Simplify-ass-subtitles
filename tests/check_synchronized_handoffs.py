@@ -4,6 +4,8 @@ import ast,contextlib,hashlib,importlib.util,io,json,sys,tempfile
 from pathlib import Path
 from copy import deepcopy
 import simplify_ass as s
+from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
+freeze_caption_policy_for_legacy_comparison(s)
 ROOT=Path(__file__).resolve().parents[1]
 checks=[]
 def check(label,value):

@@ -116,3 +116,28 @@ def row_comparison_fields(row):
     fields = vars(row).copy()
     fields.setdefault('owned_backing',())
     return fields
+
+
+def freeze_caption_policy_for_legacy_comparison(module):
+    """Keep historical algorithm/ownership comparisons on their original paint policy.
+
+    v198 deliberately changes proved source contours. These extraction tests
+    compare unrelated parsing, matching and reconstruction algorithms with older
+    engines; the real policy is covered separately by native source-intent checks
+    and fresh full-corpus conversions. Only caption rendering is a test fixture.
+    """
+    import importlib.util
+    import sys
+    from pathlib import Path
+    path=Path(__file__).resolve().parent/'references/simplify_ass_v197.py'
+    name='legacy_caption_policy_reference'
+    if name not in sys.modules:
+        spec=importlib.util.spec_from_file_location(name,path)
+        reference=importlib.util.module_from_spec(spec);sys.modules[name]=reference
+        spec.loader.exec_module(reference)
+    reference=sys.modules[name]
+    def render(state,text,*args,**kwargs):
+        kwargs.pop('source_paint',None)
+        return reference.render_simplified_caption(state,text,*args,**kwargs)
+    module.render_simplified_caption=render
+    module._source_caption_paint=lambda *args,**kwargs: None

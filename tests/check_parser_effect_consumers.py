@@ -7,6 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 import importlib.util,json,math,random,sys
 import simplify_ass as current
+from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
+freeze_caption_policy_for_legacy_comparison(current)
 from event_evidence_test_helpers import event_comparison_fields,static_span_comparison_fields
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('parser_effect_reference',ROOT/'test-data/simplify_ass-v157-reference.py')

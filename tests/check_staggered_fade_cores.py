@@ -14,6 +14,8 @@ import tempfile
 from unittest.mock import patch
 from font_geometry_test_helpers import historical_static_phase_policy
 import simplify_ass as s
+from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
+freeze_caption_policy_for_legacy_comparison(s)
 from executable_ast_audit import executable_ast
 
 ROOT = Path(__file__).resolve().parents[1]

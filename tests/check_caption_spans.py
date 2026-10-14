@@ -72,9 +72,9 @@ events = load([r'\1c&H112233&\b1',r'\1c&HABCDEF&\i1',
 body = render(events,animated=True)
 ok('animated recovered whitespace remains literal',s.OVERRIDE_RE.sub('',body)==' ab  c d ')
 for (char,state),source in zip(glyph_states(body,events[0]),events):
-    expected = s.effective_state(s.render_simplified_caption(source.state,char),source.defaults,source.styles)
+    expected = s.effective_state(s.render_simplified_caption(source.state,char,source_paint=s._source_caption_paint(source.state,[source.state])),source.defaults,source.styles)
     ok(char+' keeps simplified color and decorations',all(state[k]==expected[k]
-       for k in ('b','i','u','s','1c','3c')))
+       for k in ('b','i','u','s','1c','3c','3a','bord')))
 ok('unmatched recovered characters reject animated spans',
    render(events,text='abXd',animated=True) is None)
 

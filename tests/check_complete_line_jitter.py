@@ -40,7 +40,7 @@ text=frames();out,n,stack=run(text)
 check('explicit frames freeze without animation tags',len(out)==1 and n==11 and stack==0)
 e=out[0]
 check('literal/font/placement/timing retained',s.OVERRIDE_RE.sub('',e.text)=='A complete line' and e.state['fn']=='Arial' and e.state['fs']==40 and e.start_s==1 and e.end_s==1.48 and abs(e.state['pos'][0]-960)<=.8)
-check('simple opaque caption paint',e.state['1a']==0 and e.state['1c']=='FFFFFF' and e.state['3c']=='000000' and e.state['bord']==2 and e.state['shad']==0)
+check('simple opaque caption paint',e.state['1a']==0 and e.state['1c']=='FFFFFF' and e.state['3c']=='000000' and e.state['bord']==0 and e.state['3a']==0 and e.state['shad']==0)
 check('pass idempotent',s.flatten_complete_line_jitter(out,{e.source_index:'A complete line'},e.styles)==s.CompleteLineJitterResult(out,0,0,()))
 for alpha in (0,87,127):
     out,n,_=run(frames(alpha=alpha));check('readable translucent core '+str(alpha),len(out)==1 and n==11 and out[0].state['1a']==0)

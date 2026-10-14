@@ -60,7 +60,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 74 current scripts. The runner uses three workers for
+The suite inventory lists 75 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
@@ -242,3 +242,8 @@ See [PROVED_BACKING_PAINT.md](PROVED_BACKING_PAINT.md) for the explicit settled
 paint handoff shared by proved backing rows and returning glow stacks (v197).
 `python validation/run_proved_backing_paint_corpus.py` compares fresh conversions
 with the verified local v196 baselines.
+
+See [CONTRAST_RECONSTRUCTION_FALLBACK.md](CONTRAST_RECONSTRUCTION_FALLBACK.md) for
+producer-owned source contours, borderless captions and uncertain-paint contrast
+repair (v198). `python validation/run_contrast_fallback_corpus.py` compares fresh
+outputs against the local verified v197 baselines, including fill/geometry timelines.

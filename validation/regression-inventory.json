@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.14.197",
+  "version": "2026.10.14.198",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -368,6 +368,11 @@
     },
     {
       "script": "tests/check_backed_paint_render.py",
+      "status": "current",
+      "category": "render"
+    },
+    {
+      "script": "tests/check_contrast_fallback_render.py",
       "status": "current",
       "category": "render"
     }

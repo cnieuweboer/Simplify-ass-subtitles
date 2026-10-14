@@ -5,6 +5,8 @@ from contextlib import contextmanager,redirect_stdout
 from pathlib import Path
 import importlib.util,json,random,sys,tempfile
 import simplify_ass as current
+from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
+freeze_caption_policy_for_legacy_comparison(current)
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
 install_row_test_doubles(current, historical_fade_timing=True)
 from event_evidence_test_helpers import event_comparison_fields
@@ -89,7 +91,8 @@ def recording(module,calls):
     originals={name:getattr(module,name) for name in ('select_static_state','render_simplified_caption','replace_event')}
     def wrap(name,original):
         def call(*args,**kwargs):
-            before=snapshot((args,kwargs));result=original(*args,**kwargs)
+            legacy_kwargs={k:v for k,v in kwargs.items() if not (name=='render_simplified_caption' and k=='source_paint')}
+            before=snapshot((args,legacy_kwargs));result=original(*args,**kwargs)
             calls.append((name,before,snapshot(result)));return result
         return call
     for name,original in originals.items():setattr(module,name,wrap(name,original))
@@ -122,7 +125,8 @@ for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass')
     for module in (previous,current):
         original=module.collapse_full_lyric_copies;captured=[]
         def wrapped(*args,**kwargs):
-            before=snapshot((args,kwargs));result=original(*args,**kwargs)
+            legacy_kwargs={k:v for k,v in kwargs.items() if not (name=='render_simplified_caption' and k=='source_paint')}
+            before=snapshot((args,legacy_kwargs));result=original(*args,**kwargs)
             if hasattr(result,"visibility_updates"):
                 assert before==snapshot((args,kwargs)),fixture
                 semantic=(result.events,result.removed_count)

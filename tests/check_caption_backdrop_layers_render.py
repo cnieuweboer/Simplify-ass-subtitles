@@ -5,6 +5,8 @@ from copy import deepcopy
 from unittest.mock import patch
 import ast,contextlib,hashlib,importlib.util,io,json,subprocess,sys
 import simplify_ass as s
+from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
+freeze_caption_policy_for_legacy_comparison(s)
 from PIL import Image,ImageChops,ImageDraw
 from executable_ast_audit import executable_ast
 

@@ -187,3 +187,9 @@ The v197 backing-paint handoff borrows the existing font owner and original
 backing/foreground states. `SourceCaptionPaint` contains only immutable scalar
 paint values; renderer consumers borrow it. Samples are pass-local, replacements
 own newly parsed paint tags, and the proof does not survive serialization.
+
+v198 extends `SourceCaptionPaint` with immutable border-width values. Producers
+establish contour authority/absence before rendering; the renderer borrows that
+proof. Source-aware span serialization and held-glyph matching retain the same
+formatting decision. Shadow transfer changes paint origin and invalidates a
+foreground proof. No event-history lifetime or replacement-invalidation rule changes.

@@ -7,6 +7,8 @@ from io import StringIO
 import ast, contextlib, hashlib, importlib.util, inspect, json, random, sys, tempfile
 from font_geometry_test_helpers import historical_static_phase_policy
 import simplify_ass as current
+from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
+freeze_caption_policy_for_legacy_comparison(current)
 from event_evidence_test_helpers import event_comparison_fields
 from font_geometry_audit import normalized_row_algorithm, normalized_font_caller
 from font_geometry_test_helpers import ROW_NAMES

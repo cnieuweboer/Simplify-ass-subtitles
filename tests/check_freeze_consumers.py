@@ -6,6 +6,8 @@ from pathlib import Path
 from collections.abc import Iterator
 import importlib.util,json,math,random,sys
 import simplify_ass as current
+from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
+freeze_caption_policy_for_legacy_comparison(current)
 from event_evidence_test_helpers import event_comparison_fields,selection_comparison_fields
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('freeze_consumer_reference',ROOT/'test-data/simplify_ass-v159-reference.py')

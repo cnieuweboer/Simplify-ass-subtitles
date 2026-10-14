@@ -5,6 +5,8 @@ from copy import deepcopy
 from unittest.mock import patch
 import contextlib,hashlib,importlib.util,io,json,sys
 import simplify_ass as s
+from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
+freeze_caption_policy_for_legacy_comparison(s)
 from lyric_layer_fixtures import HEADER,event
 from font_geometry_test_helpers import historical_final_tag_policy
 

@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.14.197"
+__version__ = "2026.10.14.198"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -668,6 +668,7 @@ class SourceCaptionPaint:
     fill: str
     outline: str
     outline_alpha: int
+    border: tuple[float,float] = (2.,2.)
 
 
 @dataclass(frozen=True)
@@ -1516,21 +1517,73 @@ def render_tag(name: str, value) -> str:
     return "\\" + name + (f"{value:g}" if isinstance(value, (float, int)) else str(value))
 
 
+def _source_caption_paint(state: dict, sources: Iterable[dict]) -> SourceCaptionPaint | None:
+    """Resolve complete producer-owned contour evidence, never guess missing paint.
+
+    Producers supply their whole compatible paint family after geometry/ownership
+    proofs. One visible authored contour is authoritative even at low contrast.
+    Borderless evidence requires visible foreground-only sources, with no shadow
+    support. Hidden, clipped, conflicting or unsupported paint remains uncertain.
+    """
+    selected = {**DEFAULT_STATE,**state}
+    fill = str(selected.get('1c','')).upper()
+    if (selected.get('1a',0) >= 255 or any(k in selected for k in ('clip','iclip')) or
+            not re.fullmatch(r'[0-9A-F]{6}',fill)):
+        return None
+    sources = [{**DEFAULT_STATE,**source} for source in sources]
+    if not sources:
+        return None
+    contours = set()
+    for source in sources:
+        if (source.get('borderstyle',1) != 1 or source.get('p',0) or
+                any(k in source for k in ('clip','iclip')) or
+                any(source.get(k) != selected.get(k) for k in
+                    ('fn','fs','b','i','frz','frx','fry','fax','fay'))):
+            return None
+        widths = tuple(source.get(k,source.get('bord',0)) for k in ('xbord','ybord'))
+        alpha = source.get('3a',0)
+        if (not all(isinstance(w,(int,float)) and math.isfinite(w) and w >= 0 for w in widths) or
+                not isinstance(alpha,(int,float)) or not math.isfinite(alpha) or not 0<=alpha<=255):
+            return None
+        if max(widths)>0 and alpha<255:
+            color = str(source.get('3c','')).upper()
+            if not re.fullmatch(r'[0-9A-F]{6}',color):
+                return None
+            # The renderer already freezes fill opacity to opaque. A coupled
+            # fill/outline fade must not make held and fading phases choose
+            # different contours. Independent contour opacity remains authored.
+            fill_alpha = source.get('1a',0)
+            if 0 <= fill_alpha < 255 and fill_alpha == alpha:
+                alpha = 0
+            contours.add((color,round(alpha),widths))
+    if len(contours)==1:
+        color,alpha,widths = next(iter(contours))
+        return SourceCaptionPaint(fill,color,alpha,tuple(min(2.,w) for w in widths))
+    if contours or any(source.get('1a',0) >= 255 or
+                       str(source.get('1c','')).upper() != fill or
+                       any(source.get(k,source.get('shad',0)) for k in ('xshad','yshad'))
+                       for source in sources):
+        return None
+    return SourceCaptionPaint(fill,'000000',0,(0.,0.))
+
+
 def render_simplified_caption(state: dict, text: str,
                        outline_states: Iterable[dict] | None = None, *,
                        measurement: DocumentMeasurementContext = DocumentMeasurementContext(),
                        source_paint: SourceCaptionPaint | None = None,
                        **layout) -> str:
-    """Retain the selected foreground and an unambiguous contrasting outline.
+    """Preserve proved source paint; contrast repair is for uncertain reconstruction.
 
     Unclipped visible primary paint supplies the fill; transparent or masked
-    textures cannot. Opaque glyph contours supply the outline. Ambiguous or
-    low-contrast contours use whichever of black/white contrasts with the fill.
+    textures cannot. Producer-owned source contours preserve authored color, alpha and width.
+    Uncertain contours use the neutral contrast fallback; selected state alone
+    does not prove that discarded support was unnecessary.
     Explicit source paint bypasses the fallback without changing layout.
     Preserve explicit wrapping in the selected layout. Document wrapping stays
     in measurement context; absence of q does not create an authored override.
     """
     state = {**state,**layout}
+    transferred_shadow = False
     canvas, pos = measurement.canvas,state.get("pos")
     if (canvas is not None and pos is not None and state.get("borderstyle",1) == 1 and
             "clip" not in state and "iclip" not in state and
@@ -1549,6 +1602,7 @@ def render_simplified_caption(state: dict, text: str,
                               pos[0] < -width_bound or pos[0] > canvas[0]+width_bound)
         if (foreground_outside and 0 <= shadow[0] <= canvas[0] and
                 0 <= shadow[1] <= canvas[1] and (dx or dy)):
+            transferred_shadow = True
             state.update(pos=shadow,**{"1c":state.get("4c","FFFFFF"),
                                      "1a":state.get("4a",0)})
     fill = str(state.get("1c","FFFFFF")).upper()
@@ -1586,16 +1640,21 @@ def render_simplified_caption(state: dict, text: str,
     # Proved source paint supplies settled RGBA, including subdued contour
     # strength. Ordinary/ambiguous captions keep the neutral fallback.
     outline_alpha = 0
-    if source_paint is not None:
+    border = (2.,2.)
+    if source_paint is not None and not transferred_shadow:
         fill,outline = source_paint.fill,source_paint.outline
         outline_alpha = min(255,max(0,int(source_paint.outline_alpha)))
+        border = source_paint.border
     state = {**DEFAULT_STATE, **state,
              "1c":fill, "3c":outline, "1a":0,
              "3a":outline_alpha,
-             "bord":2, "shad":0, "blur":0, "be":0}
+             "bord":max(border), "shad":0, "blur":0, "be":0}
+    state.pop('xbord',None);state.pop('ybord',None)
+    if border[0] != border[1]:
+        state.update(xbord=border[0],ybord=border[1])
     keys = ("an","pos","org","q","fn","fs","fscx","fscy","fsp","b","i",
             "u","s","frz","frx","fry","fax","fay",
-            "1c","3c","1a","3a","bord","shad","blur","be")
+            "1c","3c","1a","3a","bord","xbord","ybord","shad","blur","be")
     return "{"+"".join(render_tag(k,state[k]) for k in keys if k in state)+"}"+text
 
 
@@ -3000,7 +3059,11 @@ def collapse_full_lyric_copies(events: list[Event],
             state = select_static_state(best.state,[],set(),best.styles,best.defaults,
                                         paint_events=cluster,continuation=best.continuation).state
             text = render_simplified_caption(state, visible_map[best.source_index],
-                                      outline_states=[e.state for e in cluster],measurement=best.measurement)
+                                      outline_states=[e.state for e in cluster],measurement=best.measurement,
+                                      source_paint=_source_caption_paint(state,[best.state]) if
+                                      max(best.state.get(k,best.state.get('bord',0)) for k in ('xbord','ybord')) > 0 and
+                                      best.state.get('3a',0) < 255 else
+                                      _source_caption_paint(state,[e.state for e in cluster]))
             replacements[first.source_index] = replace_event(
                 first, layer="0", start=format_time(earlier), end=format_time(later),
                 start_s=earlier, end_s=later, effect="",
@@ -3056,7 +3119,10 @@ def merge_frame_animation(events: list[Event], visible_map: dict[int, str],
                     state=effective_state(prefix,resolve_event_style(
                         e.styles,e.style,e.defaults or DEFAULT_STATE),e.styles)
                     normalized.append(replace_event(e,text=render_simplified_caption(
-                        state,OVERRIDE_RE.sub("",e.text),measurement=e.measurement)))
+                        state,OVERRIDE_RE.sub("",e.text),measurement=e.measurement,
+                        source_paint=_source_caption_paint(state,[state]) if
+                        max(state.get(k,state.get('bord',0)) for k in ('xbord','ybord'))>0 and
+                        state.get('3a',0)<255 else None)))
                 group=normalized
         frozen,count=freeze_vector_sequences(group,max_piece_duration,max_gap,
                                              near_static=merge_near_static)
@@ -3760,7 +3826,8 @@ def _collapse_frame_echo_family(context: FrameEchoContext, frames: dict) -> None
         # Keep the preceding opaque pose and paint, never a translucent echo.
         anchor = previous.foreground
         text = render_simplified_caption(anchor.state,OVERRIDE_RE.sub("",anchor.text),
-                                         outline_states=[e.state for e in previous.stack],measurement=anchor.measurement)
+                                         outline_states=[e.state for e in previous.stack],measurement=anchor.measurement,
+                                         source_paint=_source_caption_paint(anchor.state,[e.state for e in previous.stack]))
         _replace_frame_echo(context,frame.members,anchor,text,layer="0")
         previous = FrameEchoPaintProfile(frame.end_s,paint.continuity,frame.center,anchor,previous.stack)
 
@@ -3806,7 +3873,8 @@ def static_text_paint_geometry(e: Event, paint: set[str]):
 
 def static_text_paint_caption(e: Event, outlines: list[dict], paint: set[str]):
     """Use simplified caption paint selection without rewriting authored text geometry."""
-    header = render_simplified_caption(e.state,"",outline_states=outlines,measurement=e.measurement)
+    header = render_simplified_caption(e.state,"",outline_states=outlines,measurement=e.measurement,
+                                       source_paint=_source_caption_paint(e.state,outlines))
     normalized = effective_state(header,e.defaults,e.styles)
     if normalized.get("pos") != e.state.get("pos"):
         return None
@@ -4724,7 +4792,8 @@ def _profile_outline_strip_sweep(chosen: Event, evidence: OutlineStripEvidence,
     candidate = {**chosen.state,'3c':color,'3a':0,'bord':2,'xbord':2,'ybord':2}
     # Reuse the ordinary renderer's contrast policy rather than duplicating it.
     text = render_simplified_caption(chosen.state,OVERRIDE_RE.sub('',chosen.text),
-                                     outline_states=[candidate],measurement=chosen.measurement)
+                                     outline_states=[candidate],measurement=chosen.measurement,
+                                     source_paint=SourceCaptionPaint(chosen.state.get("1c","FFFFFF"),color,0))
     color = effective_state(text,chosen.defaults,chosen.styles)['3c']
     visible_end = chosen.end_s
     for name,value in evidence.tokens_for(evidence.strips[0][0]):
@@ -4745,6 +4814,7 @@ def _render_stacked_text_caption(key: tuple, group: list[Event], proof: StackedT
     state = chosen.state
     outlines = [e.state for e in group]
     profile = None
+    source_paint = None
     if proof.shadow_text:
         state,outlines = _animated_stacked_shadow_paint(chosen,group,state)
     elif proof.static_shadow_text:
@@ -4757,13 +4827,27 @@ def _render_stacked_text_caption(key: tuple, group: list[Event], proof: StackedT
             representative = _representative_static_strip_outline(chosen,evidence)
             if representative is not None:
                 outlines.append(representative)
+                source_paint = _source_caption_paint(state,[representative])
+        if source_paint is None and evidence is None:
+            # The selected foreground owns its own complete glyph stroke.
+            # Decorative copies can have other contours; they do not make the
+            # original foreground's authored stroke ambiguous. An earlier
+            # fallback must not replace that stroke before row/phase joining.
+            original = (context.source_events or {}).get(chosen.source_index)
+            if original is not None and OVERRIDE_RE.sub('',original.text) == OVERRIDE_RE.sub('',chosen.text):
+                authored = event_evaluation(original).formatting
+                if (max(authored.get(k,authored.get('bord',0)) for k in ('xbord','ybord')) > 0 and
+                        authored.get('3a',0) < 255):
+                    source_paint = _source_caption_paint(state,[authored])
+            if source_paint is None:
+                source_paint = _source_caption_paint(state,outlines)
     glow = context.glow_paint.get(chosen.source_index)
     if glow is not None:
         state = {**state,'1c':glow.fill,'fscx':glow.scale[0],'fscy':glow.scale[1]}
         context.owned_glow_fragments.update(glow.fragments)
     text = render_simplified_caption(state,OVERRIDE_RE.sub('',chosen.text),
         outline_states=outlines,measurement=chosen.measurement,
-        source_paint=SourceCaptionPaint(glow.fill,glow.outline,glow.outline_alpha) if glow is not None else None)
+        source_paint=SourceCaptionPaint(glow.fill,glow.outline,glow.outline_alpha) if glow is not None else source_paint)
     caption = replace_event(chosen, text=text, layer=chosen.layer if proof.shadow_text or glow is not None else "0", effect="",
                         source_index=min(e.source_index for e in group),
                         lyric=chosen.lyric or proof.static_shadow_text)
@@ -6186,7 +6270,8 @@ def _render_moving_glyph_caption(proof: MovingGlyphChain, final_group: tuple, fi
         # retaining the authored font switches inside the whole fragment.
         spans = literal_font_spans(chosen)
         state = {**effective_state(text,chosen.defaults,chosen.styles),'fn':spans[0][1]}
-        text = render_simplified_caption(state,chosen.text[prefix:],measurement=chosen.measurement)
+        text = render_simplified_caption(state,chosen.text[prefix:],measurement=chosen.measurement,
+                                         source_paint=_source_caption_paint(state,[state]))
     beginning = prefix_caption if prefix_caption is not None else proof.before
     caption = replace_event(chosen,start=beginning.start,start_s=beginning.start_s,
                             end=format_time(finish),end_s=finish,text=text,
@@ -6663,13 +6748,20 @@ def _select_progressive_reveal_caption(holds: list, chain: list, literal: str) -
     """Select foreground paint by opacity/duration/source order and retain its fill transparency."""
     chosen,state = max(holds,key=lambda p:(-p[1].get('1a',0),
                                            p[0].duration,-p[0].source_index))
-    body = render_simplified_caption(state,literal,outline_states=[p[2] for p in chain],measurement=chosen.measurement)
+    source_paint = _source_caption_paint(state,[p[1] for p in holds])
+    body = render_simplified_caption(state,literal,outline_states=[p[2] for p in chain],measurement=chosen.measurement,
+                                     source_paint=source_paint)
     if state.get('1a',0):
         # The shared caption renderer normalizes opacity for effects.
         # This proof also accepts an already simplified translucent
         # foreground: keep its actual fill transparency.
         end_header = body.index('}')
-        body = body[:end_header]+render_tag('1a',state['1a'])+body[end_header:]
+        tags = render_tag('1a',state['1a'])
+        if source_paint is not None and max(source_paint.border)>0 and state.get('3a',0)==state['1a']:
+            # This route preserves fill transparency rather than freezing it.
+            # Restore the coupled source contour opacity as well.
+            tags += render_tag('3a',state['3a'])
+        body = body[:end_header]+tags+body[end_header:]
     return ProgressiveRevealCaption(chosen,body)
 
 
@@ -6915,7 +7007,8 @@ def _render_complete_line_jitter(group: list[JitterTextFamily], literal: str,
         paint_events=holds,continuation=chosen.continuation).state
     members = [e for f in group for e in f.members]
     text = render_simplified_caption(state,literal,outline_states=[e.state for e in members],
-                                     measurement=chosen.measurement)
+                                     measurement=chosen.measurement,
+                                     source_paint=_source_caption_paint(state,[e.state for e in members]))
     start,end = min(f.start_s for f in group),max(f.end_s for f in group)
     return replace_event(chosen,text=text,start=format_time(start),end=format_time(end),
         start_s=start,end_s=end,source_index=min(e.source_index for e in members),effect='')
@@ -7158,7 +7251,8 @@ def _construct_text_effect_sequence_caption(context: TextEffectSequenceContext,
     state,color_tags = _select_text_effect_sequence_paint(context,profile,chosen)
     if profile.clipped or profile.trail:
         text = render_simplified_caption(state,OVERRIDE_RE.sub("",chosen.text),
-                                        outline_states=[e.state for e in profile.members],measurement=chosen.measurement)
+                                        outline_states=[e.state for e in profile.members],measurement=chosen.measurement,
+                                        source_paint=_source_caption_paint(state,[e.state for e in profile.members]))
     elif color_tags and chosen.text.startswith('{'):
         index = chosen.text.index('}')
         text = chosen.text[:index]+color_tags+chosen.text[index:]
@@ -7358,12 +7452,14 @@ def match_authored_lyric_rows(events: list[Event], visible_map: dict[int, str],
             # It owns nested syllable removal and its font/actor/layer guards.
             # The model's centered placement does not alter the caption.
             pieces = [(replace_event(original,text=render_simplified_caption(
-                original.state,visible_map[e.source_index],an=5,pos=pos,measurement=original.measurement)),
+                original.state,visible_map[e.source_index],an=5,pos=pos,measurement=original.measurement,
+                source_paint=_source_caption_paint(original.state,[original.state]))),
                 visible_map[e.source_index],pos)
                 for (e,original,values),pos in zip(entrance,positions)]
             center = ((positions[0][0]+positions[-1][0])/2,statistics.median(p[1] for p in positions))
             base = replace_event(full,text=render_simplified_caption(full.state,visible_map[full.source_index],
-                                                              an=5,pos=center,measurement=full.measurement))
+                                                              an=5,pos=center,measurement=full.measurement,
+                                                              source_paint=_source_caption_paint(full.state,[full.state])))
             row_evidence.append(TextRow(base,pieces))
             removed.update(e.source_index for row in (entrance,exit_row) for e,original,values in row)
     source_updates = {index:source_successors[id(event)] for index,event in source_events.items()
@@ -7704,7 +7800,8 @@ def _render_proven_full_line_caption(full: Event, proof: FullLineCopyProof,
         if 'q' in full.state:
             body = '{'+render_tag('q',full.state['q'])+'}'+body
     else:
-        body = render_simplified_caption(full.state,visible_map[full.source_index],measurement=full.measurement)
+        body = render_simplified_caption(full.state,visible_map[full.source_index],measurement=full.measurement,
+                                         source_paint=_source_caption_paint(full.state,[full.state]))
     return body
 
 
@@ -8806,12 +8903,15 @@ def render_merged_caption(ordered: list[Event], fragments: list[str], text: str,
         # merging them must not spread the first glyph's fill over the row.
         body = render_simplified_caption(chosen.state,text,
                                   outline_states=[e.state for e in ordered],
+                                  source_paint=_source_caption_paint(chosen.state,[e.state for e in ordered]),
                                   an=alignment,pos=(x,y),fscx=sx,fscy=sy,measurement=chosen.measurement)
         header = body[:body.index('}')+1]
-        paints = [effective_state(render_simplified_caption(e.state,fragment,measurement=e.measurement),e.defaults,e.styles)
+        paints = [effective_state(render_simplified_caption(e.state,fragment,measurement=e.measurement,
+                                          source_paint=_source_caption_paint(e.state,[e.state])),e.defaults,e.styles)
                   for e,fragment in zip(ordered,fragments)]
-        span_tags = ('b','i','u','s','1c','3c')
-        formatting = [tuple(paint[k] for k in span_tags) for paint in paints]
+        span_tags = ('b','i','u','s','1c','3c','3a','bord','xbord','ybord')
+        formatting = [tuple(paint.get(k,paint.get('bord',0) if k in {'xbord','ybord'} else DEFAULT_STATE.get(k))
+                            for k in span_tags) for paint in paints]
         if len(set(formatting)) == 1:
             paints = None
     else:
@@ -9602,7 +9702,8 @@ def _render_translated_cue_proposal(
     # combined the held backing into one event. Its center alone is not
     # the row's horizontal extent for the shared overlap pass.
     pieces = [(replace_event(layout.sample,text=render_simplified_caption(
-        {**layout.sample.state,'pos':(x+layout.delta,layout.y)},char,measurement=layout.sample.measurement)),char,(x+layout.delta,layout.y))
+        {**layout.sample.state,'pos':(x+layout.delta,layout.y)},char,measurement=layout.sample.measurement,
+        source_paint=_source_caption_paint(layout.sample.state,[layout.sample.state]))),char,(x+layout.delta,layout.y))
         for (char,offset),x in zip(layout.positions,model.xs)]
     row = TextRow(caption,pieces,phase_core=core)
     return ids,row,layout.text
@@ -9772,7 +9873,8 @@ def _prove_fragment_phase_chain(context: FragmentPhaseContext, tail: Event) -> F
             any(p.source_index == q.source_index for i,p in enumerate(members) for q in members[:i])):
         return None
     tail = replace_event(tail,text=render_simplified_caption(
-        {**tail.state,'fscy':current.state.get('fscy',100)},word,measurement=tail.measurement))
+        {**tail.state,'fscy':current.state.get('fscy',100)},word,measurement=tail.measurement,
+        source_paint=_source_caption_paint(tail.state,[tail.state])))
     return FragmentPhaseProfile(tail,members,min(p.start_s for p in pieces),current.start_s,
             tail.start_s,len(pieces) > 1)
 
@@ -9950,7 +10052,9 @@ def _normalize_source_row_paint(
         state = paint.state or effective_state(paint.text,paint.defaults,paint.styles)
         pieces = [(replace_event(e,text=render_simplified_caption(
             {**e.state,"1c":state.get("1c","FFFFFF")},text,
-            outline_states=[p.state for p in row.foreground if p.state],measurement=e.measurement)),text,pos)
+            outline_states=[p.state for p in row.foreground if p.state],measurement=e.measurement,
+            source_paint=_source_caption_paint({**e.state,"1c":state.get("1c","FFFFFF")},
+                                             [p.state for p in row.foreground if p.state]))),text,pos)
             for e,text,pos in row.pieces]
         rows.append(dataclass_replace(row,base=pieces[0][0],pieces=pieces,
             paint_rows=[list(peers) for peers in row.paint_rows],
@@ -11322,7 +11426,8 @@ def _propose_sliced_text_caption(index: SlicedTextIndex, copies: list[Event], ba
             members.add(p.source_index)
     prefix = re.match(r'(?:\{[^}]*\})*',base.text).end()
     caption = replace_event(base,text=render_simplified_caption(
-                {**base.state,'fn':literal_font_spans(base)[0][1]},base.text[prefix:],measurement=base.measurement),
+                {**base.state,'fn':literal_font_spans(base)[0][1]},base.text[prefix:],measurement=base.measurement,
+                source_paint=_source_caption_paint(base.state,[e.state for e in copies])),
                 start=incoming[0][0].start,start_s=incoming[0][0].start_s,
                 source_index=min(members))
     return members,caption
@@ -12518,13 +12623,14 @@ def _collect_covered_held_glyphs(row_evidence: list[TextRow], animated_sources: 
                     abs(get_pos(row.base.text)[1]-pos[1]) > .001):
                 continue
             emitted = dataclass_replace(piece,state=paint,continuation=paint_continuation)
-            # Assembly intentionally replaces outlines, shadows and blur.
-            # Validate that known conversion rather than equating the output
+            # Assembly preserves proved contours and simplifies uncertain paint,
+            # shadows and blur. Validate the conversion rather than equating output
             # paint with the unsimplified held phase. Foreground formatting
             # and geometry, including per-glyph colours and scales, must agree.
             paint_key = state_key(emitted,{'pos','an'})
             if paint_key != state_key(piece,{'pos','an'}):
-                normalized = replace_event(piece,text=render_simplified_caption(piece.state,text,measurement=piece.measurement))
+                normalized = replace_event(piece,text=render_simplified_caption(piece.state,text,measurement=piece.measurement,
+                    source_paint=_source_caption_paint(piece.state,[piece.state])))
                 if paint_key != state_key(normalized,{'pos','an'}):
                     continue
             glyphs.append((piece,text,pos))

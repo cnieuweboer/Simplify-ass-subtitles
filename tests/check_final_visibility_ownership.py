@@ -9,6 +9,8 @@ from types import MappingProxyType, ModuleType
 from unittest.mock import patch
 import ast, contextlib, importlib.util, json, sys
 import simplify_ass as s
+from event_evidence_test_helpers import freeze_caption_policy_for_legacy_comparison
+freeze_caption_policy_for_legacy_comparison(s)
 from font_geometry_test_helpers import install_row_test_doubles, row_test_call
 from event_evidence_test_helpers import event_comparison_fields, row_comparison_fields
 
