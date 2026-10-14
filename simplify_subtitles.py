@@ -636,7 +636,7 @@ def finish_file(job, replacements, args, merge):
         partial.rename(destination)
         partial = None
         outcome = "simplified" if replacements else "copied unchanged"
-        print(f"  Saved ({outcome}).")
+        print("  Saved.")
         return outcome
     finally:
         if partial is not None:
