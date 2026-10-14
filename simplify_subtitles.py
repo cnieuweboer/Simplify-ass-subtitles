@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
@@ -102,6 +103,10 @@ def diagnostic_lines(text):
 def run(command, context, *, cwd=None, capture=False, warnings_ok=True):
     result = subprocess.run(command, cwd=cwd, text=True, encoding="utf-8-sig",
                             errors="replace", capture_output=True)
+    return command_result(result, context, capture=capture, warnings_ok=warnings_ok)
+
+
+def command_result(result, context, *, capture=False, warnings_ok=True):
     diagnostics = diagnostic_lines((result.stdout or "") + "\n" + (result.stderr or ""))
     if result.returncode not in ((0, 1) if warnings_ok else (0,)):
         detail = "\n".join(diagnostics)
@@ -434,6 +439,70 @@ def prepare_file(source, destination, args, merge, extract, work, scan=None):
             "work": work, "candidates": eligible, "fonts_ready": False}
 
 
+def simplify_tracks(command, eligible, work, workers):
+    """Bound child processes to this MKV and collect diagnostics in track order."""
+    workers = min(workers, len(eligible))
+    if workers == 1:
+        stats_path = work / "stats.json"
+        run([*command, "--stats-json", str(stats_path), "--",
+             *[str(candidate["input"]) for candidate in eligible]],
+            "subtitle simplification", warnings_ok=False)
+        return json.loads(stats_path.read_text(encoding="utf-8-sig"))["tracks"]
+    pending = iter(eligible)
+    active = []
+    finished = {}
+    try:
+        while True:
+            while len(active) < workers:
+                candidate = next(pending, None)
+                if candidate is None:
+                    break
+                track_id = candidate["track"]["id"]
+                stats_path = work / f"stats-{track_id}.json"
+                log = (work / f"simplifier-{track_id}.log").open("w+b")
+                try:
+                    process = subprocess.Popen(
+                        [*command, "--stats-json", str(stats_path), "--", str(candidate["input"])],
+                        stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+                except BaseException:
+                    log.close()
+                    raise
+                active.append((candidate, process, log, stats_path))
+            if not active:
+                break
+            for entry in active[:]:
+                candidate, process, log, stats_path = entry
+                code = process.poll()
+                if code is None:
+                    continue
+                log.seek(0)
+                output = log.read().decode("utf-8-sig", errors="replace")
+                result = subprocess.CompletedProcess(process.args, code, stdout=output, stderr="")
+                if code:
+                    command_result(result, f"subtitle simplification, track {candidate['track']['id']}",
+                                   warnings_ok=False)
+                records = json.loads(stats_path.read_text(encoding="utf-8-sig"))["tracks"]
+                finished[candidate["track"]["id"]] = (result, records)
+                log.close()
+                active.remove(entry)
+            if active:
+                time.sleep(0.05)
+        records = []
+        for candidate in eligible:
+            result, track_records = finished[candidate["track"]["id"]]
+            command_result(result, "subtitle simplification", warnings_ok=False)
+            records.extend(track_records)
+        return records
+    finally:
+        # Stop every active child before temporary fonts/subtitles can be removed.
+        for _, process, _, _ in active:
+            if process.poll() is None:
+                process.kill()
+        for _, process, log, _ in active:
+            process.wait()
+            log.close()
+
+
 def convert_candidates(job, eligible, args, merge, extract, engine, report, *, batch=False):
     if not eligible:
         return
@@ -458,17 +527,13 @@ def convert_candidates(job, eligible, args, merge, extract, engine, report, *, b
         if not targets:
             stage("Embedded fonts: [0/0]; using supplied or installed fonts.")
     job["fonts_ready"] = True
-    stats_path = work / "stats.json"
     command = [sys.executable, str(engine), "--level", str(args.level), "--suffix", ".simple",
-               "--scroll-concurrency-limit", str(args.scroll_concurrency_limit),
-               "--stats-json", str(stats_path)]
+               "--scroll-concurrency-limit", str(args.scroll_concurrency_limit)]
     if args.level == 1:
         for folder in [fonts, *args.fonts_dir]:
             command.extend(["--fonts-dir", str(folder)])
-    command.extend(["--", *[str(candidate["input"]) for candidate in eligible]])
     stage(f"Simplifying {len(eligible)} subtitle track(s)...")
-    run(command, "subtitle simplification", warnings_ok=False)
-    records = json.loads(stats_path.read_text(encoding="utf-8-sig"))["tracks"]
+    records = simplify_tracks(command, eligible, work, args.workers)
     for candidate in eligible:
         matches = [record for record in records if Path(record["input"]).resolve() == candidate["input"]]
         if len(matches) != 1 or matches[0].get("error") or not isinstance(matches[0].get("stats"), dict):
@@ -728,6 +793,8 @@ def parser():
     result.add_argument("-f", "--fonts-dir", action="append", type=Path, default=[], help="extra font folder; repeatable")
     result.add_argument("-r", "--recursive", action="store_true")
     result.add_argument("--temp-dir", type=Path, help="temporary subtitles/font storage (default: system temp)")
+    result.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 1) // 2),
+                        help="parallel subtitle processes per MKV (default: half the logical CPUs, minimum 1)")
     mode = result.add_mutually_exclusive_group()
     mode.add_argument("--keep-originals", "--add-simplified-subtitles", dest="mode", action="store_const", const="add")
     mode.add_argument("--replace-originals", dest="mode", action="store_const", const="replace")
@@ -750,10 +817,11 @@ def main(argv=None):
     args = argument_parser.parse_args(argv)
     if args.folder is not None and args.input_dir is not None:
         argument_parser.error("Specify input positionally or with -i, not both.")
-    if (args.minimum_subtitle_bytes < 0 or args.scroll_concurrency_limit < 0 or
+    if (args.workers < 1 or args.minimum_subtitle_bytes < 0 or args.scroll_concurrency_limit < 0 or
             not math.isfinite(args.minimum_event_reduction_percent) or
             not 0 <= args.minimum_event_reduction_percent <= 100):
-        argument_parser.error("Byte/scroll limits must be nonnegative; event reduction must be between 0 and 100.")
+        argument_parser.error("Workers must be positive; byte/scroll limits must be nonnegative; "
+                              "event reduction must be between 0 and 100.")
     root = (args.input_dir or args.folder or Path(__file__).resolve().parent).resolve()
     output = args.output_dir.resolve() if args.output_dir else root / "output"
     engine = args.simplifier.resolve() if args.simplifier else Path(__file__).resolve().parent / "simplify_ass.py"
@@ -805,6 +873,7 @@ def main(argv=None):
         print("Original tracks: " + ("keep and add simplified copies" if args.mode == "add" else "replace qualifying tracks"))
         print("Track policy: " + ("all ASS/SSA" if args.process_all_tracks else
                                  "consistent groups across the batch" if consistent else "per-track size and event-reduction thresholds"))
+        print(f"Subtitle workers: {args.workers}")
         if consistent:
             batch_warnings(scans)
         print(f"Scrolling concurrency limit: {args.scroll_concurrency_limit} (0 disables text dropping)")

@@ -9,6 +9,7 @@ python simplify_subtitles.py
 python simplify_subtitles.py -i media -o cleaned -f fonts --recursive
 python simplify_subtitles.py -i media --replace-originals --process-all-tracks --yes
 python simplify_subtitles.py -i media --report run.json
+python simplify_subtitles.py -i media --workers 4
 ```
 
 Input defaults to the script's folder; output defaults to INPUT/output. Additional
@@ -41,8 +42,13 @@ Other keys are ignored. Redirected input requires Enter after each answer.
 
 The wrapper extracts ASS/SSA tracks together, then skips extracted tracks carrying
 the engine's generated header marker. It extracts embedded fonts once per MKV
-under numeric filenames. Per-file modes run one engine process for eligible
-tracks; filtered add mode simplifies all original ASS/SSA tracks during
+under numeric filenames. Subtitle tracks within one MKV run in separate engine
+processes, using half the logical CPU count by default (minimum one), capped at
+the number of eligible tracks. `--workers N` overrides the limit; `--workers 1`
+uses one engine process for all eligible tracks and shares its font cache.
+MKVs stay sequential, and diagnostics and summaries appear in track order.
+Failure or cancellation stops active children before temporary data is removed.
+Filtered add mode simplifies all original ASS/SSA tracks during
 assessment, including small tracks. The displayed count includes all these
 tracks. Size and reduction thresholds still determine which groups qualify;
 writing reuses the assessed results without simplifying any track twice.
@@ -94,6 +100,7 @@ the end; other invocations do not pause.
 ```sh
 python tests/check_simplify_subtitles.py
 python tests/check_simplify_batch.py
+python tests/check_simplify_workers.py
 ```
 
 The focused checks cover menus, cancellation, threshold boundaries, marker

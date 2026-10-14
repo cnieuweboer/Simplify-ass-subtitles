@@ -39,6 +39,7 @@ python simplify_subtitles.py
 python simplify_subtitles.py -i media -o cleaned -f fonts --recursive
 python simplify_subtitles.py -i media --replace-originals --process-all-tracks
 python simplify_subtitles.py -i media --scroll-concurrency-limit 32
+python simplify_subtitles.py -i media --workers 4
 ```
 
 The menu offers adding simplified tracks or replacing originals, with either
