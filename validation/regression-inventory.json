@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.14.200",
+  "version": "2026.10.14.201",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -388,6 +388,16 @@
     },
     {
       "script": "tests/check_frame_pose_selection_render.py",
+      "status": "current",
+      "category": "native rendering"
+    },
+    {
+      "script": "tests/check_inline_paint_ownership.py",
+      "status": "current",
+      "category": "paint source ownership"
+    },
+    {
+      "script": "tests/check_inline_paint_ownership_render.py",
       "status": "current",
       "category": "native rendering"
     }

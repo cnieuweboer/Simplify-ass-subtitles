@@ -109,3 +109,8 @@ survives the responsible upstream handoffs; no downstream paint substitution is
 needed. The current corpus and equivalent-input tests reveal no conflicting frame
 selection routes requiring a larger review. Inline paint ownership remains v201's
 distinct task, while the global API and pass-local index reviews stay deferred.
+
+The inline handoff is now implemented in v201; see
+[INLINE_PAINT_OWNERSHIP.md](INLINE_PAINT_OWNERSHIP.md). It supplies original
+whole-span exposure before restoring fade paint and keeps the existing pose
+selection policy and displacement bounds.

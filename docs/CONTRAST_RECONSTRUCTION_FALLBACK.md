@@ -60,6 +60,11 @@ keeps the established representative prefix paint and uses its valid visible
 stroke. That prefix alone cannot prove borderless paint across a mixed-span line.
 These distinctions concern evidence, rather than anime, font or literal names.
 
+The v201 follow-up replaces the inline prefix shortcut and pooled inline-copy
+paint with corresponding literal-span ownership. Known borderless/transparent
+and invisible spacing ranges remain distinct; uncertain composite layers remain
+available to backing proofs. See [INLINE_PAINT_OWNERSHIP.md](INLINE_PAINT_OWNERSHIP.md).
+
 ## Validation policy
 
 `tests/check_contrast_fallback_render.py` checks authored white/pale contours,

@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.14.200"
+__version__ = "2026.10.14.201"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 
 
@@ -3206,14 +3206,14 @@ def _frame_sequence_paint_owner(events: list[Event]) -> Event:
     return min(events,key=lambda e:(paint[id(e)][channel],-e.duration,e.source_index))
 
 
-def _near_static_frame_fits(reference: Event, candidate: Event) -> bool:
+def _near_static_frame_fits(reference: Event, candidate: Event, *, allow_inline: bool = False) -> bool:
     """Bound jitter against one source anchor; never follow cumulative drift."""
     pose = {'pos','fscx','fscy','frz'}
     position,pos = get_pos(reference.text),get_pos(candidate.text)
     sx,sy = reference.state.get('fscx',100),reference.state.get('fscy',100)
     if (position is None or pos is None or sx<=0 or sy<=0 or
-            reference.state.get('p',0) or inline_layout_key(reference) or
-            inline_layout_key(candidate) or state_key(reference,pose)!=state_key(candidate,pose)):
+            reference.state.get('p',0) or (not allow_inline and (inline_layout_key(reference) or
+            inline_layout_key(candidate))) or state_key(reference,pose)!=state_key(candidate,pose)):
         return False
     height = text_height(reference)
     width = abs(reference.state.get('fs',20)*sx/100)*max(1,len(OVERRIDE_RE.sub('',reference.text)))
@@ -3222,6 +3222,176 @@ def _near_static_frame_fits(reference: Event, candidate: Event) -> bool:
     error = (math.dist(pos,position)+abs(candidate.state.get('fscx',100)-sx)/sx*width+
              abs(candidate.state.get('fscy',100)-sy)/sy*height+2*radius*abs(math.sin(angle/2)))
     return error<=.02*height
+
+
+def _literal_paint_ranges(events: list[Event]) -> list[tuple] | None:
+    """Align resolved paint by exact literal offsets, independent of tag splitting.
+
+    Geometry/ownership admission belongs to the caller. Inputs are borrowed;
+    drawings, animation or different literals cannot establish correspondence.
+    """
+    streams,boundaries,literal = [],{0},None
+    for e in events:
+        obj = static_object_key(e,e.styles,allow_unpositioned=True)
+        if obj is None or any(drawing for _,drawing,_ in obj[-1]):
+            return None
+        runs,cursor,words = [],0,''
+        for signature,_,payload in obj[-1]:
+            end = cursor+len(payload)
+            runs.append((cursor,end,dict(signature.formatting)))
+            boundaries.add(end);cursor=end;words+=payload
+        if literal is not None and words != literal:
+            return None
+        literal=words;streams.append(runs)
+    if not literal:
+        return None
+    points=sorted(boundaries);indices=[0]*len(streams);result=[]
+    for start,end in zip(points,points[1:]):
+        states=[]
+        for i,runs in enumerate(streams):
+            while runs[indices[i]][1]<=start:
+                indices[i]+=1
+            states.append(runs[indices[i]][2])
+        result.append((literal[start:end],states))
+    return result
+
+
+def _literal_source_paint(state: dict, sources: list[dict], *, own_contour: bool,
+                          measurement: DocumentMeasurementContext = DocumentMeasurementContext()) -> dict:
+    """Apply existing contour/fallback policy to one corresponding literal range."""
+    if (state.get('1a',0)>=255 and
+            (max(abs(state.get(k,state.get('bord',0))) for k in ('xbord','ybord'))<=0 or state.get('3a',0)>=255) and
+            (max(abs(state.get(k,state.get('shad',0))) for k in ('xshad','yshad'))<=0 or state.get('4a',0)>=255)):
+        # Known absence of paint is complete evidence, not an uncertain contour
+        # requiring contrast repair. The literal still supplies its advance.
+        return {**state,'1a':255,'3c':'000000','3a':0,'bord':0,'xbord':0,'ybord':0,
+                'shad':0,'xshad':0,'yshad':0,'blur':0,'be':0}
+    stroke = max(state.get(k,state.get('bord',0)) for k in ('xbord','ybord'))>0 and state.get('3a',0)<255
+    proof = _source_caption_paint(state,[state] if own_contour and stroke else sources)
+    body = render_simplified_caption(state,'',outline_states=sources,source_paint=proof,measurement=measurement)
+    selected = effective_state(body,DEFAULT_STATE,{})
+    # Complete authored span evidence retains its base transparency. A coupled
+    # source fade settles at that base, rather than becoming an opaque stroke.
+    selected['1a']=state.get('1a',0)
+    if proof is not None and max(proof.border)>0 and state.get('1a',0)==state.get('3a',0):
+        selected['3a']=state.get('1a',0)
+    return selected
+
+
+def _render_literal_paint(e: Event, ranges: list[tuple], paints: list[dict],
+                          paint_tags: set[str], *, strip_clip: bool = False) -> str:
+    """Replay authored geometry/resets, emitting proved paint at exact offsets."""
+    boundaries=[];cursor=0
+    for fragment,_ in ranges:
+        cursor+=len(fragment);boundaries.append(cursor)
+    live=e.defaults.copy();continuation=OverrideContinuation()
+    output=[];cursor=index=0
+    def value(state,tag):
+        return state.get(tag,state.get(tag[1:],0) if tag in
+            {'xbord','ybord','xshad','yshad'} else DEFAULT_STATE.get(tag,0))
+    for part in re.split(r'(\{[^}]*\})',e.text):
+        if part.startswith('{') and part.endswith('}'):
+            tokens=[(k,v) for k,v in tokenize_override(part[1:-1])
+                    if k not in paint_tags and not (strip_clip and k in {'clip','iclip'})]
+            block=''.join('\\'+k+v for k,v in tokens)
+            if block:output.append('{'+block+'}')
+            for k,v in tokens:
+                continuation=apply_override(live,k,v,e.styles,e.defaults,continuation)
+        elif part:
+            offset=0
+            while offset<len(part):
+                while boundaries[index]<=cursor:index+=1
+                end=min(len(part)-offset,boundaries[index]-cursor)
+                tags=''
+                for k in CAPTION_PAINT_TAGS:
+                    if k in paint_tags and k not in {'2c','2a','4c','4a'} and value(live,k)!=value(paints[index],k):
+                        tag=render_tag(k,value(paints[index],k));tags+=tag
+                        continuation=apply_override(live,k,tag[len(k)+1:],e.styles,e.defaults,continuation)
+                if tags:output.append('{'+tags+'}')
+                output.append(part[offset:offset+end]);offset+=end;cursor+=end
+    return ''.join(output)
+
+
+def _normalize_inline_frame_paint(events: list[Event]) -> list[Event] | None:
+    """Settle corresponding span paint, preserving intentional spatial variation."""
+    ranges=_literal_paint_ranges(events)
+    if ranges is None:return None
+    paint=set(CAPTION_PAINT_TAGS)|{'alpha','c'}
+    # Preserve existing geometry eligibility: every span of an event must have
+    # the same resolved layout. Equivalent paint resets are now admissible.
+    for i,e in enumerate(events):
+        layouts={state_key(dataclass_replace(e,state=states[i]),paint) for _,states in ranges}
+        if len(layouts)!=1:return None
+    palettes,blocked={1:{},3:{}},set()
+    for fragment,states in ranges:
+        for e,state in zip(events,states):
+            if state.get('1a',0)>=255:continue
+            for channel in (1,3):
+                color=str(state.get(f'{channel}c','')).upper()
+                if (not re.fullmatch(r'[0-9A-F]{6}',color) or state.get(f'{channel}a',0)>=254 or
+                        channel==3 and (state.get('borderstyle',1)!=1 or
+                        max(abs(state.get(k,state.get('bord',0))) for k in ('xbord','ybord'))<=0)):
+                    blocked.add(channel);continue
+                votes=palettes[channel]
+                votes[color]=votes.get(color,0)+round(e.duration,6)*len(fragment)
+    representatives={c:_bounded_text_color(votes) for c,votes in palettes.items() if c not in blocked}
+    paints=[]
+    for fragment,states in ranges:
+        states=[{**state,**{f'{c}c':color for c,color in representatives.items() if color is not None}}
+                for state in states]
+        visible=[(e,s) for e,s in zip(events,states) if s.get('1a',0)<255]
+        if not visible:
+            if any(any(a<255 for a in _frame_paint_alphas(dataclass_replace(e,state=state)))
+                   for e,state in zip(events,states)):
+                return None
+            # Authored invisible glyphs can provide spacing. Preserve their
+            # advance and absence of paint instead of inventing a visible glyph.
+            paints.append(_literal_source_paint(states[0],states,own_contour=False))
+            continue
+        chosen,state=min(visible,key=lambda p:(p[1].get('1a',0),-round(p[0].duration,6),p[0].source_index))
+        # Visible temporal color/contour changes are not evidence of a fade.
+        # Keep those phases rather than freeze a gradient or flashing outline.
+        if len({s.get('1c') for _,s in visible})>1:return None
+        sources=[s for _,s in visible]
+        proof=_source_caption_paint(state,sources)
+        if proof is None and any(max(s.get(k,s.get('bord',0)) for k in ('xbord','ybord'))>0
+                                 and s.get('3a',0)<255 for s in sources):
+            return None
+        selected=_literal_source_paint(state,sources,own_contour=False,measurement=chosen.measurement)
+        if selected.get('pos')!=state.get('pos'):return None
+        paints.append(selected)
+    normalized=[]
+    fragments=[fragment for fragment,_ in ranges];literal=''.join(fragments)
+    for i,e in enumerate(events):
+        state=ranges[0][1][i]
+        if any(k in state for k in ('clip','iclip')):return None
+        header=render_simplified_caption(state,'',source_paint=_source_caption_paint(state,[state]),
+                                         measurement=e.measurement)
+        if effective_state(header,e.defaults,e.styles).get('pos')!=state.get('pos'):return None
+        # All spans have proved uniform geometry. Resolve equivalent resets
+        # once, then attach paint by exact literal offsets rather than keeping
+        # incidental phase tag splitting in the frame identity.
+        span_tags=tuple(k for k in CAPTION_PAINT_TAGS if k not in {'2c','2a','4c','4a'})
+        text=render_caption_spans(header,fragments,literal,paints,span_tags,e,exact=True)
+        normalized.append(replace_event(e,text=text))
+    # Reuse the final bounded palette policy; never chain nearby colors or
+    # collapse a wider gradient. Hidden/unused channels retain its veto rules.
+    normalized,_=normalize_near_text_colors(normalized)
+    for i,(source,caption) in enumerate(zip(events,normalized)):
+        if source.evidence.frame_pose_intervals is not None:
+            intervals=_frame_pose_intervals(source)
+        else:
+            # Geometry is uniform, but visibility need not be. Hand source
+            # exposure to v200's selector before restored exit paint can vote
+            # as though every hidden letter had actually been displayed.
+            weights=[len(''.join(fragment.split())) for fragment,_ in ranges]
+            total=sum(weights)
+            alphas=tuple(sum(weight*_frame_paint_alphas(dataclass_replace(source,state=states[i]))[c]
+                for weight,(_,states) in zip(weights,ranges))/total if total else 255 for c in range(3))
+            intervals=((source.start_s,source.end_s,alphas),)
+        normalized[i]=dataclass_replace(caption,evidence=dataclass_replace(
+            caption.evidence,frame_pose_intervals=intervals))
+    return normalized
 
 
 def merge_frame_animation(events: list[Event], visible_map: dict[int, str],
@@ -3240,41 +3410,31 @@ def merge_frame_animation(events: list[Event], visible_map: dict[int, str],
         groups.setdefault((e.style,e.name,e.layer,visible),[]).append(e)
     removed=0
     for group in groups.values():
+        inline_paint_sources=set()
         ordered=sorted(group,key=lambda e:(e.start_s,e.end_s,e.source_index)) if merge_near_static else []
         if (merge_near_static and
-                sum(e.duration<=max_piece_duration and bool(inline_layout_key(e)) and
+                any(inline_layout_key(e) for e in group) and
+                sum(e.duration<=max_piece_duration and
                     bool(re.search(r"\\(?:alpha|[1-4]a)&HFF&",e.text,re.I))
                     for e in group)>=2 and
                 all(b.start_s>=a.end_s-1e-6 for a,b in zip(ordered,ordered[1:]))):
-            # Paint-only span changes can hide letters during an exit. They do
-            # not change the literal text or its layout. Normalize the complete
-            # family so its static hold and exit frames still match. Font,
-            # geometry and drawing changes within a line remain unsupported.
-            paint={"alpha","1a","2a","3a","4a","c","1c","2c","3c","4c",
-                   "bord","xbord","ybord","shad","xshad","yshad","blur","be"}
-            safe=True
-            for e in group:
-                seen_text=False
-                for part in re.split(r"(\{[^}]*\})",e.text):
-                    if part.startswith("{"):
-                        if seen_text and any(k not in paint for k,v in tokenize_override(part[1:-1])):
-                            safe=False
-                    elif part:
-                        seen_text=True
-            if safe:
-                normalized=[]
-                for e in group:
-                    prefix=re.match(r"(?:\{[^}]*\})*",e.text).group()
-                    state=effective_state(prefix,resolve_event_style(
-                        e.styles,e.style,e.defaults or DEFAULT_STATE),e.styles)
-                    normalized.append(replace_event(e,text=render_simplified_caption(
-                        state,OVERRIDE_RE.sub("",e.text),measurement=e.measurement,
-                        source_paint=_source_caption_paint(state,[state]) if
-                        max(state.get(k,state.get('bord',0)) for k in ('xbord','ybord'))>0 and
-                        state.get('3a',0)<255 else None)))
-                group=normalized
+            families=[]
+            for e in ordered:
+                if not families or e.start_s>families[-1][-1].end_s+max_gap+1e-6:
+                    families.append([])
+                families[-1].append(e)
+            group=[]
+            for family in families:
+                eligible=(any(inline_layout_key(e) for e in family) and
+                    sum(e.duration<=max_piece_duration and
+                        bool(re.search(r"\\(?:alpha|[1-4]a)&HFF&",e.text,re.I)) for e in family)>=2)
+                normalized=_normalize_inline_frame_paint(family) if eligible else None
+                if normalized is not None:
+                    inline_paint_sources.update(e.source_index for e in normalized)
+                group.extend(normalized if normalized is not None else family)
         frozen,count=freeze_vector_sequences(group,max_piece_duration,max_gap,
-                                             near_static=merge_near_static)
+                                             near_static=merge_near_static,
+                                             inline_paint_sources=frozenset(inline_paint_sources))
         output.extend(frozen)
         removed+=count
     return sorted(output,key=lambda e:e.source_index),removed
@@ -3282,22 +3442,37 @@ def merge_frame_animation(events: list[Event], visible_map: dict[int, str],
 
 def freeze_vector_sequences(events: list[Event], short_duration: float = 0.16,
                             max_gap: float = 0.011,
-                            near_static: bool = False) -> tuple[list[Event], int]:
+                            near_static: bool = False, *,
+                            inline_paint_sources: frozenset[int] = frozenset()) -> tuple[list[Event], int]:
     """Freeze frame-by-frame drawings, including their longer static hold.
 
     Match actual paths and static paint, not style names or colors specific
     to a show. Overlapping copies are ambiguous and remain separate.
+    inline_paint_sources is a pass-local producer proof: those source identities
+    have uniform resolved geometry and settled per-literal paint. Descendants
+    retain a contributing identity; ordinary inline guards stay unchanged.
     """
     frame_removed=0
     if near_static:
         # First retain the established treatment of actual moving frames.
         # Its frozen holds can then be joined when only tracking jitter differs.
-        events,frame_removed=freeze_vector_sequences(events,short_duration,max_gap)
+        events,frame_removed=freeze_vector_sequences(events,short_duration,max_gap,
+                                                     inline_paint_sources=inline_paint_sources)
     changing = {"pos","fscx","fscy","frz","frx","fry","fax","fay",
                 "1a","2a","3a","4a"}
     groups: dict[tuple, list[Event]] = {}
     for e in events:
-        key = (e.kind,e.layer,e.name,geometry_key(e.text),state_key(e,changing),placement_key(e))
+        placement=placement_key(e)
+        if e.source_index in inline_paint_sources and inline_layout_key(e):
+            # The producer proved uniform geometry separately from span paint.
+            # Match every settled paint range; raw inline tag spelling must not
+            # block the existing motion proof. No general inline guard is relaxed.
+            obj=static_object_key(e,e.styles,allow_unpositioned=True)
+            pose={'pos','fscx','fscy','frz','frx','fry','fax','fay'}
+            ranges=tuple((tuple((k,v) for k,v in sig.formatting if k not in pose),drawing,literal)
+                         for sig,drawing,literal in obj[-1])
+            placement=placement[:-1]+(('proved-span-paint',ranges),)
+        key = (e.kind,e.layer,e.name,geometry_key(e.text),state_key(e,changing),placement)
         groups.setdefault(key,[]).append(e)
 
     output: list[Event] = []
@@ -3313,7 +3488,8 @@ def freeze_vector_sequences(events: list[Event], short_duration: float = 0.16,
             output.extend(run)
             return
         chosen,intervals = _representative_frame_pose(run)
-        if settled and not all(_near_static_frame_fits(chosen,e) for e in run):
+        if settled and not all(_near_static_frame_fits(chosen,e,
+                allow_inline=chosen.source_index in inline_paint_sources and e.source_index in inline_paint_sources) for e in run):
             # The fixed admission anchor prevents drift. The actual selected
             # pose must independently meet the same final displacement bound.
             output.extend(run)
@@ -3358,7 +3534,8 @@ def freeze_vector_sequences(events: list[Event], short_duration: float = 0.16,
                 reference=None
                 for candidate in component:
                     settled=(bool(run) and abs(candidate.start_s-run[-1].end_s)<=1e-6 and
-                             _near_static_frame_fits(reference,candidate))
+                             _near_static_frame_fits(reference,candidate,
+                                allow_inline=reference.source_index in inline_paint_sources and candidate.source_index in inline_paint_sources))
                     if run and not settled:
                         emit(run,True)
                         run=[]
@@ -3995,8 +4172,18 @@ def static_text_paint_geometry(e: Event, paint: set[str]):
     return (tuple(geometry),obj[-1]) if geometry else None
 
 
-def static_text_paint_caption(e: Event, outlines: list[dict], paint: set[str]):
+def static_text_paint_caption(e: Event, outlines: list[dict], paint: set[str], *,
+                              source_events: list[Event] | None = None):
     """Use simplified caption paint selection without rewriting authored text geometry."""
+    if inline_layout_key(e):
+        sources=[e]+[p for p in (source_events or []) if p is not e]
+        ranges=_literal_paint_ranges(sources)
+        if ranges is None:return None
+        paints=[_literal_source_paint(states[0],states if source_events is not None else outlines,
+                                     own_contour=True,measurement=e.measurement) for _,states in ranges]
+        if any(paint.get('pos')!=states[0].get('pos') for paint,(_,states) in zip(paints,ranges)):
+            return None
+        return _render_literal_paint(e,ranges,paints,paint,strip_clip=True)
     header = render_simplified_caption(e.state,"",outline_states=outlines,measurement=e.measurement,
                                        source_paint=_source_caption_paint(e.state,outlines))
     normalized = effective_state(header,e.defaults,e.styles)
@@ -4545,6 +4732,14 @@ def _select_inline_stacked_text_foreground(context: StackedTextContext, key: tup
     chosen = max(opaque, key=lambda e: (
         int(e.layer) if e.layer.lstrip("-").isdigit() else 0,
         e.source_index))
+    if any(dict(signature.formatting).get('1a',0)>0 for signature,_,_ in spans[chosen.source_index]):
+        ranges=_literal_paint_ranges([chosen]+[e for e in peers if e is not chosen])
+        if ranges is None or any(0<states[0].get('1a',0)<255 and
+                any(state.get('1a',0)<255 for state in states[1:]) for _,states in ranges):
+            # A translucent foreground over another visible fill is composite
+            # paint, not redundant lettering. Keep the layers until a backing
+            # proof can reconstruct it; do not silently make it opaque.
+            return None
     return chosen,ids
 
 
@@ -4556,7 +4751,7 @@ def _render_inline_stacked_text_caption(context: StackedTextContext, peers: list
                 for signature, _, _ in spans[e.source_index]]
     # Reuse standard simplification paint choice while retaining all authored
     # geometry, including resets, wrapping and inline tracking.
-    text = static_text_paint_caption(chosen,outlines,context.paint)
+    text = static_text_paint_caption(chosen,outlines,context.paint,source_events=peers)
     if text is None:
         return peers,0
     caption = replace_event(chosen, text=text, effect="",
@@ -8981,16 +9176,19 @@ CAPTION_PAINT_TAGS = ('1c','2c','3c','4c','1a','2a','3a','4a',
 
 def render_caption_spans(header: str, fragments: list[str], text: str,
                          paints: list[dict], span_tags: tuple[str,...],
-                         chosen: Event) -> str | None:
+                         chosen: Event, *, exact: bool = False) -> str | None:
     """Attach selected span formatting to literal recovered characters.
 
     Callers choose the paint policy; this helper only maps fragments and emits
     state changes. Spaces belong to the recovered text, never to a word guess.
     Replay emitted tags so base border/shadow changes reset their axes exactly
     as the renderer does before comparing the next tag or fragment.
+    Exact correspondence retains literal whitespace at its authored offsets;
+    recovered glyph rows keep their existing whitespace-insensitive mapping.
     """
     norm = lambda value: ''.join(value.split())
-    if len(fragments) != len(paints) or norm(text) != norm(''.join(fragments)):
+    if len(fragments) != len(paints) or (text != ''.join(fragments) if exact else
+                                       norm(text) != norm(''.join(fragments))):
         return None
     def value(state,tag):
         return state.get(tag,state.get(tag[1:],0) if tag in
@@ -9000,9 +9198,12 @@ def render_caption_spans(header: str, fragments: list[str], text: str,
     cursor,segments = 0,[]
     for fragment,paint in zip(fragments,paints):
         begin,remaining = cursor,len(norm(fragment))
-        while remaining and cursor < len(text):
-            remaining -= not text[cursor].isspace()
-            cursor += 1
+        if exact:
+            cursor+=len(fragment)
+        else:
+            while remaining and cursor < len(text):
+                remaining -= not text[cursor].isspace()
+                cursor += 1
         tags = ''
         for tag in span_tags:
             target = value(paint,tag)
@@ -17982,6 +18183,15 @@ def normalize_shadow_lettering(events: list[Event]) -> tuple[list[Event], int]:
     return output, count
 
 
+def _bounded_text_color(votes: dict[str,float]) -> str | None:
+    """Use one observed color only when the complete palette fits two RGB levels."""
+    if len(votes)<2:return None
+    rgb=[tuple(int(color[i:i+2],16) for i in (0,2,4)) for color in votes]
+    if any(max(c[axis] for c in rgb)-min(c[axis] for c in rgb)>2 for axis in range(3)):
+        return None
+    return min(votes,key=lambda color:(-votes[color],color))
+
+
 def normalize_near_text_colors(events: list[Event]) -> tuple[list[Event], int]:
     """Collapse bounded static text palettes, preserving wider gradients.
 
@@ -18016,13 +18226,11 @@ def normalize_near_text_colors(events: list[Event]) -> tuple[list[Event], int]:
                 votes[color] = votes.get(color, 0) + event.duration * len(text)
     representatives = {}
     for key, votes in palettes.items():
-        if key in blocked or len(votes) < 2:
+        if key in blocked:
             continue
-        rgb = [tuple(int(color[i:i+2], 16) for i in (0, 2, 4)) for color in votes]
-        if any(max(c[axis] for c in rgb) - min(c[axis] for c in rgb) > 2
-               for axis in range(3)):
-            continue
-        representatives[key] = min(votes, key=lambda color: (-votes[color], color))
+        representative=_bounded_text_color(votes)
+        if representative is not None:
+            representatives[key]=representative
     output, count = [], 0
     color_tag = re.compile(r'\\(1c|3c|c)(?![A-Za-z])[^\\]*', re.I)
     for event in events:

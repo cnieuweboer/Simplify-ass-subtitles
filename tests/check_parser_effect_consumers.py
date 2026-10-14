@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare direct span consumers, paint-copy reduction and reveals with v157."""
+"""Keep historical admission contracts and verify current inline source paint."""
 import test_paths  # Resolve the repository for direct test execution.
 from event_evidence_test_helpers import contour_independent_contract as contract
 from copy import deepcopy
@@ -32,6 +32,23 @@ def fixtures(name):
  exec(compile(path.read_text().split('SPY_NAMES=')[0],str(path),'exec'),namespace)
  return namespace
 
+def common_event(event):
+ """Resolve legacy output with the real parser; do not compare tag spelling."""
+ return next(iter(current._resolve_document_state(current.parse_subtitle_document(
+     stack['HEADER']+'Dialogue: '+','.join(event.fields())+'\n')).events.values()))
+
+def literal_contract(event, *, primary=False):
+ obj=current.static_object_key(event,event.styles,allow_unpositioned=True)
+ if obj is None:return None
+ result=[]
+ for signature,drawing,literal in obj[-1]:
+  state=dict(signature.formatting)
+  value=(state.get('1c'),state.get('1a',0)) if primary else (
+      tuple((k,v) for k,v in signature.formatting if k not in current.CAPTION_PAINT_TAGS),
+      signature.continuation,drawing)
+  result.extend((char,value) for char in literal)
+ return tuple(result)
+
 stack=fixtures('check_stacked_copy_stages.py')
 modes=('static','empty_flags','animated','partly_animated','source_static','source_animated','empty_sources')
 stack_cases=0
@@ -39,7 +56,7 @@ for case in stack['CASES']:
  for order in ('original','reverse','shuffle'):
   for mode in modes:
    if case.get('static_only') and mode not in ('static','empty_flags'):continue
-   compared=[]
+   compared=[];outputs=[]
    for module in (previous,current):
     events=stack['parse'](module,case['records']);visible={e.source_index:module.simplify_text(e.text,visible_only=True)[1] for e in events}
     if case.get('missing_visible') and events:visible.pop(events[1].source_index)
@@ -54,7 +71,25 @@ for case in stack['CASES']:
     with refusal:out,n=module.flatten_stacked_text_copies(events,visible,animated,source_events=sources)
     check(case['name']+order+mode+module.__version__+' input ownership',before==snapshot((events,visible,animated,sources)))
     compared.append((snapshot(out),n,[any(e is source for source in events) for e in out]))
-   check(case['name']+order+mode+' stacked parity',contract(compared[0]) == contract(compared[1]));stack_cases+=1
+    outputs.append(out)
+   if any(current.inline_layout_key(e) for e in events):
+    # v201 intentionally replaces the pooled/prefix paint with corresponding
+    # source spans. Historical raw text and paint spelling are obsolete here.
+    check(case['name']+order+mode+' inline admission/identity',compared[0][1:]==compared[1][1:])
+    for old,new in zip(outputs[0],outputs[1]):
+     check(case['name']+order+mode+' inline fields',old.fields()[:-1]==new.fields()[:-1])
+     old=common_event(old)
+     check(case['name']+order+mode+' inline geometry/history',literal_contract(old)==literal_contract(new))
+     if n and current.inline_layout_key(new) and literal_contract(new,primary=True) is not None:
+      candidates=[e for e in events if e.kind=='Dialogue' and e.style==new.style and
+                  e.layer==new.layer and e.start==new.start and e.end==new.end and
+                  current.OVERRIDE_RE.sub('',e.text)==current.OVERRIDE_RE.sub('',new.text)]
+      owner=max(candidates,key=lambda e:e.source_index)
+      check(case['name']+order+mode+' inline source primary paint',
+          literal_contract(owner,primary=True)==literal_contract(new,primary=True))
+   else:
+    check(case['name']+order+mode+' stacked parity',contract(compared[0]) == contract(compared[1]))
+   stack_cases+=1
 
 reveal=fixtures('check_progressive_reveal_stages.py');reveal_cases=0
 for case in reveal['CASES']:

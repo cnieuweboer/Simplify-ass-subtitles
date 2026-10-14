@@ -59,6 +59,14 @@ geometry, layout and measurement context. This does not retain historical contou
 or opaque-span proofs. See [REPRESENTATIVE_FRAME_POSES.md](REPRESENTATIVE_FRAME_POSES.md)
 for capture, clipping and completed-run ownership.
 
+The v201 inline paint producer resolves corresponding literal ranges with the
+existing static-span parser. Its uniform-geometry admission stays separate from
+paint ownership. A local frozen set of approved source identities authorizes the
+frame merger to match resolved span paint; descendants retain a contributing
+identity. This proof does not outlive that merge call or cross serialization.
+Original span visibility supplies source exposure before fade restoration. See
+[INLINE_PAINT_OWNERSHIP.md](INLINE_PAINT_OWNERSHIP.md).
+
 `dataclass_replace()` is intentionally lower-level: it preserves fields by default
 and does not reparse or invalidate evidence. Its production formatting probes
 carry corresponding branch/span continuation, retain source history for derived

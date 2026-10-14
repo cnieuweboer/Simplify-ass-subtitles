@@ -60,7 +60,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 78 current scripts. The runner uses three workers for
+The suite inventory lists 80 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
@@ -259,3 +259,8 @@ source-frame exposure policy, immutable pose evidence, independent paint selecti
 and bounded-jitter admission. `python validation/run_frame_pose_corpus.py` compares
 fresh conversions with verified local v198 outputs, preserving all non-pose
 visibility and tracing changed placements to supplied candidates.
+
+See [INLINE_PAINT_OWNERSHIP.md](INLINE_PAINT_OWNERSHIP.md) for v201's corresponding
+source spans, retained transparency and invisible spacing, and separate paint/
+geometry handoff. `python validation/run_inline_paint_corpus.py` compares fresh
+outputs against verified local v200 baselines and traces retained composites.

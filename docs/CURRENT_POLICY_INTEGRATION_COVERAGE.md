@@ -99,6 +99,10 @@ The pose-evidence handoff is now implemented in v200; see
 [REPRESENTATIVE_FRAME_POSES.md](REPRESENTATIVE_FRAME_POSES.md). Whole-span paint
 ownership and thick-outline policy remain separate follow-ups.
 
+Whole-span paint ownership is now implemented in v201; see
+[INLINE_PAINT_OWNERSHIP.md](INLINE_PAINT_OWNERSHIP.md). Thick-outline policy remains
+the next separate follow-up.
+
 ## Completed validation
 
 All 76 Windows-backend regression scripts pass, including 177 new live-paint
