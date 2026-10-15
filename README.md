@@ -2,6 +2,37 @@
 
 Simplify ASS/SSA subtitles and manage subtitle tracks and fonts in MKV files.
 
+## Windows quick start
+
+Install Python 3.10+ and MKVToolNix, with MKVToolNix on PATH. Download and extract
+the complete repository ZIP, then run:
+
+```cmd
+installer\windows\install.cmd
+```
+
+The default location is `C:\Tools`; append `"D:\My Tools"` to choose another.
+The installer offers to install missing Python packages and add `bin` to your
+user PATH. Restart your terminal afterward.
+
+Run `subtitle_tools` (`subtitle_tools.cmd`) from a media folder. Press a single
+key: **1** simplify, **2** remove subtitles, **3** default/forced flags,
+**4** fonts, **5** update.
+
+```cmd
+subtitle_tools
+subtitle_tools -i "D:\Media" -o "D:\Cleaned" -r
+```
+
+- `-i` / `--input`: folder or one MKV; defaults to the current folder.
+- `-o` / `--output`: output folder; defaults to `output/` beside each MKV.
+- `-r` / `--recursive`: include subfolders; off by default.
+- `-f` / `--fonts-dir`: loose-font folder for simplification or font sync.
+- `--help`: show options for the tool selected in the menu.
+
+Flag changes edit originals in place and do not accept `-o`. Update ignores
+media-processing options. [Installer details](installer/windows/README.md).
+
 | Script | Task |
 | --- | --- |
 | `simplify_subtitles.py` | Simplify embedded ASS/SSA subtitles |
