@@ -52,6 +52,13 @@ inline spelling as an obstruction for those proved families. Ordinary inline
 admission remains guarded; motion and jitter displacement bounds are unchanged.
 No show-specific rule, new ownership graph or serialized proof marker is added.
 
+The v204 vector-mask crash fix preserves drawing command strings in resolved
+`state_key()` tuples while rounding only numeric coordinates to the existing
+six decimal places. Both `clip` and `iclip` remain geometry evidence; different
+commands, coordinates and path lengths remain distinct. Inline frame paint still
+refuses clipped reconstruction. The fix changes neither clip admission nor the
+source/cache ownership contract.
+
 Restored fade paint also explicitly hands off original source exposure to v200's
 pose selector. Existing support intervals remain authoritative. When only inline
 source states are available, primary/outline/shadow alpha is averaged across

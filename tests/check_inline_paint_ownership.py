@@ -39,6 +39,28 @@ def fixture(body):
     # the same literal, not the number or spelling of override blocks.
     literal=s.OVERRIDE_RE.sub('',body)
     return event(body)+event(r'\alpha&HFF&'.join(['{','}'])+literal[:1]+r'{\alpha&HFF&}'+literal[1:],2,2.04)+event(r'{\alpha&HFF&}'+literal,2.04,2.08)
+# Resolved vector masks contain command strings as well as numeric coordinates.
+# They must remain distinct geometry and take the existing clipped-paint refusal.
+for tag in ('clip','iclip'):
+    body='{\\'+tag+r'(m 10 20 l 30 20 30 40)}AB'
+    clipped=parse(event(body)+event(body,2,2.1));before=deepcopy(clipped)
+    ranges=s._literal_paint_ranges(clipped)
+    check(tag+' vector mask reaches resolved span matching',ranges is not None)
+    sample=s.dataclass_replace(clipped[0],state=ranges[0][1][0])
+    key=s.state_key(sample)
+    check(tag+' vector mask retains command tokens',dict(key)[tag]==('m',10,20,'l',30,20,30,40))
+    for other in ('(m 10 20 l 31 20 30 40)','(m 10 20 b 30 20 30 40)',
+                  '(m 10 20 l 30 20 30 40 10 40)'):
+        changed={**sample.state,tag:s.geometry_key(other)}
+        check(tag+' different vector geometry stays distinct '+other,
+              key!=s.state_key(s.dataclass_replace(sample,state=changed)))
+    rounded={**sample.state,tag:('m',10.00000001,20,'l',30,20,30,40)}
+    check(tag+' numeric tuple tolerance preserved',key==s.state_key(s.dataclass_replace(sample,state=rounded)))
+    check(tag+' clipped frame paint remains protected',s._normalize_inline_frame_paint(clipped) is None)
+    check(tag+' source masks remain immutable',clipped==before and [e.text for e in clipped]==[e.text for e in before])
+position=parse(event('AB'))[0]
+check('numeric position tuple tolerance preserved',s.state_key(position)==s.state_key(
+    s.dataclass_replace(position,state={**position.state,'pos':(320.00000001,100)})))
 CASES=[('borderless then outlined',r'A{\bord1\3c&HDDDDDD&}B'),
        ('mixed colors and independent contour alpha',r'{\bord.5\1c&H112233&\3c&H223344&\3a&H40&}A{\bord1.5\1c&H445566&\3c&H667788&\3a&H80&}B'),
        ('gradient',r'{\bord1\1c&H102030&\3c&H204060&}A{\1c&H405060&\3c&H6080A0&}B{\1c&H708090&\3c&HA0C0E0&}C'),
