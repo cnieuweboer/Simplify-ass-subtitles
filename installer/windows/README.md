@@ -87,8 +87,3 @@ Updates preserve the saved launcher selection and do not recreate manually
 removed optional launchers. Older installations without saved preferences keep
 their existing launchers until you choose differently during reinstall.
 Rerun the installer and answer No to remove existing individual launchers.
-
-Updating an older installation replaces `remove_subtitles` with `subtitle_tracks`
-and `subtitle_flags` with `subtitle_properties`, preserving optional launcher
-choices. Old installed Python/CMD files are removed. The old download filenames
-remain in this repository so already-installed updaters can complete that migration.

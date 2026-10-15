@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from check_windows_installer import INSTALLER, TOOLS, LEGACY, checkout, legacy_install, load_installer
+from check_windows_installer import INSTALLER, TOOLS, checkout, load_installer
 
 
 def load_updater():
@@ -47,10 +47,6 @@ class UpdaterChecks(unittest.TestCase):
         for tool in (*TOOLS, "subtitle_tools_update", "subtitle_tools"):
             name = "installer/windows/bin/" + tool + ".cmd"
             self.files[name] = (INSTALLER / "bin" / (tool + ".cmd")).read_bytes()
-        # Older running updaters require these names in the remote download.
-        for old in LEGACY:
-            self.files[old + ".py"] = b"# legacy download entry point\n"
-            self.files["installer/windows/bin/" + old + ".cmd"] = (INSTALLER / "bin" / (old + ".cmd")).read_bytes()
         self.calls = []
 
     def fetch(self, url):
@@ -84,25 +80,6 @@ class UpdaterChecks(unittest.TestCase):
         self.assertEqual(self.calls.count(self.updater.API + "/commits/main"), 1)
         self.assertFalse(any("fixtures" in url for url in self.calls))
         self.assertFalse(list(self.target.glob(".subtitle-tools-install-*")))
-
-    def test_old_updater_can_bootstrap_migration_without_reinstall(self):
-        legacy_install(self.repository, self.target)
-        (self.target / "bin/remove_subtitles.cmd").unlink()
-        self.before = snapshot(self.target)
-        old_tools = ("simplify_subtitles", "remove_subtitles", "subtitle_flags", "sync_fonts")
-        with patch.object(self.updater, "TOOLS", old_tools), \
-             patch.object(self.updater, "download", side_effect=self.fetch), \
-             patch("sys.stdout", new_callable=io.StringIO):
-            self.assertEqual(self.updater.update(self.target), self.sha)
-        for old, new in LEGACY.items():
-            self.assertFalse((self.target / "simplify-ass" / (old + ".py")).exists())
-            self.assertFalse((self.target / "bin" / (old + ".cmd")).exists())
-            self.assertEqual((self.target / "simplify-ass" / (new + ".py")).read_bytes(), self.files[new + ".py"])
-        self.assertFalse((self.target / "bin/subtitle_tracks.cmd").exists())
-        self.assertTrue((self.target / "bin/subtitle_properties.cmd").is_file())
-        settings = json.loads((self.target / "simplify-ass/install_settings.json").read_text())
-        self.assertIn("subtitle_properties", settings["launchers"])
-        self.assertNotIn("subtitle_tracks", settings["launchers"])
 
     def test_download_failure_or_invalid_content_never_modifies_installation(self):
         for mode in ("network", "hash", "syntax", "missing"):

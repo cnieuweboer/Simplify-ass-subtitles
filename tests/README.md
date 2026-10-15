@@ -22,10 +22,11 @@ lookup. The step-two BAT defaults to `cache/` and `results/` beside the BAT.
 .\tests\windows\check_simplifier_lookup.ps1
 ```
 
-Standalone track-removal checks:
+Standalone track/property checks:
 
 ```sh
-python tests/check_remove_subtitles.py
+python tests/check_subtitle_tracks.py
+python tests/check_subtitle_properties.py
 ```
 
 These cover automatic detection, manual selection, review/cancellation, output

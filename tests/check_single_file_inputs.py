@@ -14,13 +14,18 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-TOOLS = ("subtitle_flags", "remove_subtitles", "sync_fonts", "simplify_subtitles")
+TOOLS = ("subtitle_properties", "subtitle_tracks", "sync_fonts", "simplify_subtitles")
 modules = {}
 for name in TOOLS:
     spec = importlib.util.spec_from_file_location(name, ROOT / (name + ".py"))
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
+    # These checks exercise input/output routing; action menus have focused checks.
+    if name == "subtitle_properties":
+        module.property_action = lambda: "flags"
+    elif name == "subtitle_tracks":
+        module.action_mode = lambda: "remove"
     modules[name] = module
 
 INFO = {"tracks": [{"id": 0, "type": "subtitles", "properties": {
@@ -39,7 +44,7 @@ class SingleFileChecks(unittest.TestCase):
                     (root / "another.mkv").touch()
                     args = ([alias] if alias else []) + [str(source)]
                     with patch("sys.stdout", new_callable=io.StringIO):
-                        if name == "subtitle_flags":
+                        if name == "subtitle_properties":
                             with patch.object(module.shutil, "which", return_value="tool"), \
                                  patch.object(module, "identify", return_value=INFO) as scan, \
                                  patch.object(module, "edit_file", return_value=True) as edit, \
@@ -47,7 +52,7 @@ class SingleFileChecks(unittest.TestCase):
                                 self.assertEqual(module.main(args), 0)
                             scan.assert_called_once_with(source)
                             self.assertEqual(edit.call_args.args[0], source)
-                        elif name == "remove_subtitles":
+                        elif name == "subtitle_tracks":
                             with patch.object(module.shutil, "which", return_value="tool"), \
                                  patch.object(module, "identify", return_value=INFO) as scan, \
                                  patch.object(module, "find_files") as find, \
@@ -127,7 +132,7 @@ class SingleFileChecks(unittest.TestCase):
             (custom / "generated.mkv").touch()
             for name, module in modules.items():
                 with self.subTest(tool=name):
-                    if name == "subtitle_flags":
+                    if name == "subtitle_properties":
                         self.assertEqual(module.find_files(root, False), [sources[0]])
                         self.assertEqual(set(module.find_files(root, True)), set(sources + [custom / "generated.mkv"]))
                     else:
@@ -135,7 +140,7 @@ class SingleFileChecks(unittest.TestCase):
                         self.assertEqual(set(module.find_files(root, custom, True)), set(sources))
 
     def test_folder_menus_only_include_children_with_recursive_flag(self):
-        flags = modules["subtitle_flags"]
+        flags = modules["subtitle_properties"]
         sync = modules["sync_fonts"]
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -195,14 +200,14 @@ class SingleFileChecks(unittest.TestCase):
             shutil.copyfile(sources[0], previous_output)
             previous_hash = hashlib.sha256(previous_output.read_bytes()).hexdigest()
             with patch("sys.stdout", new_callable=io.StringIO), patch("builtins.input", side_effect=["1", "3", "y"]):
-                self.assertEqual(modules["subtitle_flags"].main(["--input", str(root), "-r"]), 0)
+                self.assertEqual(modules["subtitle_properties"].main(["--input", str(root), "-r"]), 0)
             for source in sources:
                 info = json.loads(subprocess.check_output([merge, "-J", str(source)]))
                 self.assertTrue(all(not t["properties"]["default_track"] for t in info["tracks"]))
             self.assertEqual(hashlib.sha256(previous_output.read_bytes()).hexdigest(), previous_hash)
             previous_output.unlink()
             hashes = {source: hashlib.sha256(source.read_bytes()).hexdigest() for source in sources}
-            for tool in ("remove_subtitles", "sync_fonts", "simplify_subtitles"):
+            for tool in ("subtitle_tracks", "sync_fonts", "simplify_subtitles"):
                 for explicit in (False, True):
                     with self.subTest(tool=tool, explicit_output=explicit):
                         output = Path(folder) / (tool + "-D")
@@ -216,7 +221,7 @@ class SingleFileChecks(unittest.TestCase):
                             target = output / source.relative_to(root) if explicit else source.parent / "output" / source.name
                             self.assertTrue(target.is_file(), str(target))
                             info = json.loads(subprocess.check_output([merge, "-J", str(target)]))
-                            self.assertEqual(len(info["tracks"]), 1 if tool == "remove_subtitles" else 2)
+                            self.assertEqual(len(info["tracks"]), 1 if tool == "subtitle_tracks" else 2)
                             if tool == "sync_fonts":
                                 self.assertEqual(info["attachments"], [])
                             self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), hashes[source])
@@ -248,13 +253,13 @@ class SingleFileChecks(unittest.TestCase):
             shutil.copyfile(source, neighbor)
             neighbor_hash = hashlib.sha256(neighbor.read_bytes()).hexdigest()
             with patch("sys.stdout", new_callable=io.StringIO), patch("builtins.input", side_effect=["1", "3", "y"]):
-                self.assertEqual(modules["subtitle_flags"].main(["-i", str(source)]), 0)
+                self.assertEqual(modules["subtitle_properties"].main(["-i", str(source)]), 0)
             info = json.loads(subprocess.check_output([merge, "-J", str(source)]))
             self.assertTrue(all(not t["properties"]["default_track"] for t in info["tracks"]))
             source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
             removed = root / "removed"
             with patch("sys.stdout", new_callable=io.StringIO), patch("builtins.input", side_effect=["1", "y"]):
-                self.assertEqual(modules["remove_subtitles"].main(["-i", str(source), "-o", str(removed)]), 0)
+                self.assertEqual(modules["subtitle_tracks"].main(["-i", str(source), "-o", str(removed)]), 0)
             output_info = json.loads(subprocess.check_output([merge, "-J", str(removed / source.name)]))
             self.assertEqual([t["properties"]["track_name"] for t in output_info["tracks"]], ["German"])
             engine = Path(os.environ.get("SIMPLIFY_SUBTITLES_TEST_ENGINE", ROOT / "simplify_ass.py"))

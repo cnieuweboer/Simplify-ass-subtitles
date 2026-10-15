@@ -354,7 +354,7 @@ class RemovalChecks(unittest.TestCase):
 class RealRemuxChecks(unittest.TestCase):
     def test_real_unnamed_duplicate_flags_and_removal_in_legacy_mkv(self):
         flag_spec = importlib.util.spec_from_file_location(
-            "duplicate_flags", Path(__file__).resolve().parents[1] / "subtitle_flags.py")
+            "duplicate_flags", Path(__file__).resolve().parents[1] / "subtitle_properties.py")
         flags = importlib.util.module_from_spec(flag_spec)
         flag_spec.loader.exec_module(flags)
         tool = shutil.which("mkvmerge")

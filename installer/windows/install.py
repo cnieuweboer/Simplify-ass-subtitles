@@ -14,7 +14,6 @@ import tempfile
 
 
 TOOLS = ("simplify_subtitles", "subtitle_tracks", "subtitle_properties", "sync_fonts")
-LEGACY_TOOLS = {"remove_subtitles": "subtitle_tracks", "subtitle_flags": "subtitle_properties"}
 WINDOWS = os.name == "nt"
 MAINTENANCE = ("install.py", "subtitle_tools_update.py", "subtitle_tools.py")
 OPTIONAL_LAUNCHERS = (*TOOLS, "subtitle_tools_update")
@@ -22,24 +21,19 @@ SETTINGS = "install_settings.json"
 REQUIREMENTS = {"Pillow": "PIL.ImageFont", "fonttools": "fontTools.ttLib", "uharfbuzz": "uharfbuzz"}
 
 
-def legacy_files(target):
-    return ([target / "simplify-ass" / (tool + ".py") for tool in LEGACY_TOOLS]
-            + [target / "bin" / (tool + ".cmd") for tool in LEGACY_TOOLS])
-
-
 def installed_files(target):
     return ([target / "simplify-ass" / (tool + ".py") for tool in (*TOOLS, "simplify_ass")]
             + [target / "simplify-ass" / name for name in MAINTENANCE]
             + [target / "bin" / (tool + ".cmd") for tool in (*OPTIONAL_LAUNCHERS, "subtitle_tools")]
-            + [target / "simplify-ass" / SETTINGS] + legacy_files(target))
+            + [target / "simplify-ass" / SETTINGS])
 
 
 def selected_launchers(target, individual):
     if individual is not None:
         return {"subtitle_tools", *OPTIONAL_LAUNCHERS} if individual else {"subtitle_tools"}
     settings = target / "simplify-ass" / SETTINGS
-    supported = (*OPTIONAL_LAUNCHERS, *LEGACY_TOOLS, "subtitle_tools")
-    present = {LEGACY_TOOLS.get(tool, tool) for tool in supported
+    supported = (*OPTIONAL_LAUNCHERS, "subtitle_tools")
+    present = {tool for tool in supported
                if (target / "bin" / (tool + ".cmd")).is_file()}
     if settings.is_file():
         try:
@@ -48,7 +42,7 @@ def selected_launchers(target, individual):
             if data.get("version") != 1 or not isinstance(names, list) or any(
                     not isinstance(name, str) or name not in supported for name in names):
                 raise ValueError("invalid launcher preferences")
-            present.intersection_update(LEGACY_TOOLS.get(name, name) for name in names)
+            present.intersection_update(names)
         except (ValueError, KeyError, TypeError) as error:
             raise RuntimeError("Cannot read launcher preferences; reinstall to select them again.") from error
     return {"subtitle_tools", *present}
@@ -262,9 +256,8 @@ def install(repository, target, individual_launchers=None):
                 backup = staging / ("old-" + destination.name)
                 shutil.copy2(destination, backup)
             pending.append((replacement, destination, backup))
-        # Remove obsolete names in the same transaction as their replacements.
+        # Remove unselected optional launchers in the same transaction.
         removals = [bin_dir / (tool + ".cmd") for tool in OPTIONAL_LAUNCHERS if tool not in selected]
-        removals.extend(legacy_files(target))
         for destination in removals:
             if destination.is_file():
                 backup = staging / ("old-" + destination.name)

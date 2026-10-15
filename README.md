@@ -23,7 +23,7 @@ subtitle_tools -i "D:\Media" -o "D:\Cleaned" -r
 ```
 
 Menu: **1** simplify, **2** add/remove tracks, **3** rename/edit flags,
-**4** fonts, **5** update. Existing installations migrate through **5. Update**.
+**4** fonts, **5** update.
 
 - `-i` / `--input`: folder or one MKV; defaults to the current folder.
 - `-o` / `--output`: output folder; defaults to `output/` beside each MKV.

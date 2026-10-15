@@ -11,9 +11,6 @@ Use the Python tool with `-r` / `--recursive` to include subfolders. Track/font/
 outputs go to `output/` under the input folder or the dropped file's parent.
 For example, dropping `A/X.mkv` onto a helper in `B/` writes `A/output/X.mkv`.
 The properties helper edits names/flags in the selected originals in place.
-Replace copied `remove_subtitles` / `subtitle_flags` targets with the new
-`subtitle_tracks` / `subtitle_properties` targets; rebuild macOS apps or rerun
-Linux setup as needed.
 Keep `simplify_ass.py` beside `simplify_subtitles.py` when using its helper.
 
 ## Windows
