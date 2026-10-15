@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.15.205"
+__version__ = "2026.10.15.206"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 # Reconstructed source contours keep thinner/axis-specific widths, but cap each
 # axis in ASS script units. Ordinary retained events are not subject to this cap.
@@ -4907,7 +4907,15 @@ def _render_inline_stacked_text_caption(context: StackedTextContext, peers: list
                 for signature, _, _ in spans[e.source_index]]
     # Reuse standard simplification paint choice while retaining all authored
     # geometry, including resets, wrapping and inline tracking.
-    text = static_text_paint_caption(chosen,outlines,context.paint,source_events=peers)
+    contour = _stacked_source_contour_paint(context,chosen,peers)
+    if contour is None:
+        text = static_text_paint_caption(chosen,outlines,context.paint,source_events=peers)
+    else:
+        ranges,proofs = contour
+        paints = [effective_state(render_simplified_caption(states[0],'',source_paint=proof,
+                    measurement=chosen.measurement),chosen.defaults,chosen.styles)
+                  for (_,states),proof in zip(ranges,proofs)]
+        text = _render_literal_paint(chosen,ranges,paints,context.paint)
     if text is None:
         return peers,0
     caption = replace_event(chosen, text=text, effect="",
@@ -4995,6 +5003,134 @@ def _select_stacked_text_foreground(group: list[Event], proof: StackedTextProof)
         int(e.layer) if e.layer.lstrip("-").isdigit() else 0,
         e.source_index))
     return chosen
+
+
+def _settled_stacked_contour_source(source: Event) -> tuple[Event,tuple] | None:
+    """Borrow static paint, or settle a shared opacity-only header animation.
+
+    This is paint evidence, not a new timing decision. The existing freezer
+    owns visibility. The caller must match the complete opacity progression
+    between planes before using their opaque source colors.
+    """
+    tokens=event_override_tokens(source)
+    transforms=[value for tag,value in tokens if tag=='t']
+    if not transforms:
+        return source,()
+    prefix=re.match(r'(?:\{[^}]*\})*',source.text).end()
+    if any(tag in {'t','r','alpha','1a','3a'} for tag,value in event_override_tokens(
+            dataclass_replace(source,text=source.text[prefix:]))):
+        # Resets or later opacity overrides can give separate spans different
+        # progressions even when their initial alpha is identical.
+        return None
+    def without(tags):
+        return OVERRIDE_RE.sub(lambda m:'{'+''.join('\\'+tag+value
+            for tag,value in tokenize_override(m[1]) if tag not in tags)+'}',source.text)
+    base=replace_event(source,text=without({'t'}))
+    ranges=_literal_paint_ranges([base])
+    if ranges is None:
+        return None
+    alphas={(state.get('1a',0),state.get('3a',0)) for _,states in ranges for state in states}
+    if len(alphas)!=1 or next(iter(alphas))[0]!=next(iter(alphas))[1]:
+        return None
+    alpha=next(iter(alphas))[0];profile=[alpha];state={'1a':alpha,'3a':alpha}
+    continuation=OverrideContinuation()
+    for value in transforms:
+        parsed=parse_effect_transform(value,source.duration,{'alpha','1a','3a'},allow_instant=True)
+        if parsed is None:
+            return None
+        begin,end,changes=parsed
+        for tag,argument in changes:
+            continuation=apply_override(state,tag,argument,source.styles,source.defaults,continuation)
+        if state.get('1a')!=state.get('3a'):
+            return None
+        args=[float(v.strip()) for v in value[1:-1].partition('\\')[0].rstrip(', ').split(',') if v.strip()]
+        accel=args[-1] if len(args) in (1,3) else 1.
+        profile.append((begin,end,accel,state['1a']))
+    if min([alpha]+[item[-1] for item in profile[1:]])!=0:
+        return None
+    # Contour proof below rejects shadows altogether; no hidden shadow can
+    # become evidence by stripping its global alpha here.
+    settled=replace_event(source,text=without({'t','alpha','1a','3a'}))
+    progression=tuple(profile) if any(item[-1]!=alpha for item in profile[1:]) else ()
+    return settled,progression
+
+
+def _stacked_source_contour_paint(context: StackedTextContext, chosen: Event,
+                                  group: list[Event]) -> tuple[list[tuple],list[SourceCaptionPaint]] | None:
+    """Prove the immediate opaque stroke beneath an opaque borderless foreground.
+
+    Coincident lower copies can have several contour colors without being
+    contradictory: the top sharp stroke owns the retained inner band. Wider
+    contours below it are decoration. Use original spans before freezing erased
+    blur/animation, and keep ordinary fallback when that ownership is uncertain.
+    Layout admission and removal remain the stack producer's responsibility.
+    """
+    if any(not e.layer.lstrip('-').isdigit() for e in group):
+        return None
+    ordered = sorted(group,key=lambda e:(int(e.layer),e.source_index),reverse=True)
+    if ordered[0] is not chosen:
+        return None
+    opacity=[]
+    def original(event):
+        source=event if context.source_events is None else context.source_events.get(event.source_index)
+        if source is None:
+            return None
+        if ((source.start,source.end)!=(event.start,event.end) or
+                _faded_cue_is_scrolling(source)):
+            return None
+        source=dataclass_replace(source,effect='')  # Other Effect annotations are inert.
+        settled=_settled_stacked_contour_source(source)
+        if settled is None:
+            return None
+        source,progression=settled
+        if opacity and progression!=opacity[0]:
+            return None
+        opacity.append(progression)
+        profile=static_text_paint_geometry(source,context.paint)
+        current=static_text_paint_geometry(event,context.paint)
+        if profile is None or current is None or profile[0]!=current[0]:
+            return None
+        return source
+    foreground=original(chosen)
+    if foreground is None:
+        return None
+    # A borderless lower fill cannot reach beyond the selected glyph. Inspect
+    # source paint even for skipped planes: freezing can erase their blur.
+    for backing in ordered[1:]:
+        source=original(backing)
+        if source is None:
+            return None
+        spans=_literal_paint_ranges([source])
+        if spans is None:
+            return None
+        if any(max(state.get(k,state.get('bord',0)) for k in ('xbord','ybord'))>0 and state.get('3a',0)<255 or
+               state.get('blur',0) or state.get('be',0) or
+               state.get('4a',0)<255 and any(state.get(k,state.get('shad',0)) for k in ('xshad','yshad'))
+               for _,states in spans for state in states):
+            break
+    else:
+        return None
+    ranges=_literal_paint_ranges([chosen,backing,foreground,source])
+    if ranges is None:
+        return None
+    proofs=[]
+    for fragment,states in ranges:
+        selected,_,front,back=states
+        if (selected.get('1a',0)!=0 or front.get('1a',0)!=0 or
+                selected.get('1c')!=front.get('1c') or
+                any(front.get(k,front.get('bord',0))!=0 for k in ('xbord','ybord')) or
+                back.get('3a',0)!=0 or
+                max(back.get(k,back.get('bord',0)) for k in ('xbord','ybord'))<=0 or
+                any(any(k in state for k in ('clip','iclip')) or
+                    state.get('blur',0) or state.get('be',0) or
+                    any(state.get(k,state.get('shad',0)) for k in ('xshad','yshad'))
+                    for state in (front,back))):
+            return None
+        proof=_source_caption_paint(selected,[back])
+        if proof is None:
+            return None
+        proofs.append(proof)
+    return ranges,proofs
 
 
 def _animated_stacked_shadow_paint(chosen: Event, group: list[Event], state: dict
@@ -5316,6 +5452,10 @@ def _render_stacked_text_caption(key: tuple, group: list[Event], proof: StackedT
                     source_paint = _source_caption_paint(state,[authored])
             if source_paint is None:
                 source_paint = _source_caption_paint(state,outlines)
+            if source_paint is None:
+                contour = _stacked_source_contour_paint(context,chosen,group)
+                if contour is not None:
+                    source_paint = contour[1][0]
     glow = context.glow_paint.get(chosen.source_index)
     if glow is not None:
         state = {**state,'1c':glow.fill,'fscx':glow.scale[0],'fscy':glow.scale[1]}

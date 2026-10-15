@@ -105,3 +105,8 @@ black border. Twelve native comparison panels cover source/v197/v198 samples.
 After rebasing concurrent menu/worker/flag updates, all 37 Python wrapper/batch,
 worker and flag checks pass. The MKV/font extraction, simplification, remuxing and
 font-sync smoke test passes. Engine and regression harness hashes remain unchanged.
+
+The v206 stack producer additionally proves the immediate opaque supporting
+contour from source paint order rather than pooling decorative outer strokes.
+See [ORDERED_STACK_CONTOURS.md](ORDERED_STACK_CONTOURS.md). Shared opacity-only
+source progressions supply paint evidence without changing timing ownership.

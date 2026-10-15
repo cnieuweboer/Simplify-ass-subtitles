@@ -124,3 +124,8 @@ uncertain translucent composites would require a genuine backing/compositing
 proof, rather than treating them as redundant copies; they are deliberately kept.
 The planned thick-outline policy review (v202), global API review and pass-local
 index review remain separate work.
+
+The v206 stack producer additionally proves the immediate opaque supporting
+contour from source paint order rather than pooling decorative outer strokes.
+See [ORDERED_STACK_CONTOURS.md](ORDERED_STACK_CONTOURS.md). Shared opacity-only
+source progressions supply paint evidence without changing timing ownership.

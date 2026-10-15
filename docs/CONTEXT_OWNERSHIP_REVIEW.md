@@ -227,3 +227,9 @@ verified before final rendering. No proof crosses serialization, and no late
 consumer reconstructs ownership from the simplified output. See
 [SYLLABLE_LIFECYCLES.md](SYLLABLE_LIFECYCLES.md). The broader API and pass-local
 index reviews remain separate.
+
+The v206 ordered-contour proof reads original corresponding spans before frozen
+blur/opacity can erase their meaning. Settled opacity-only source views and
+selected paints are private, temporary buffers; source events and parser caches
+remain unchanged. The existing stack producer owns emission and removal.
+See [ORDERED_STACK_CONTOURS.md](ORDERED_STACK_CONTOURS.md).
