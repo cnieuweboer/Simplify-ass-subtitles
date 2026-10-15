@@ -2,6 +2,7 @@
 """Interactively clear/set MKV subtitle flags in place using MKVToolNix."""
 
 import argparse
+from collections import Counter
 import json
 import os
 from pathlib import Path
@@ -32,6 +33,43 @@ def subtitle_key(track):
     return (props.get("track_name") or "",
             props.get("language_ietf") or props.get("language") or "und",
             props.get("codec_id") or track.get("codec") or "unknown")
+
+
+def subtitle_groups(info, duplicate_keys=()):
+    """Map subtitle IDs to metadata groups, separating duplicates by occurrence."""
+    seen = Counter()
+    groups = {}
+    for track in info.get("tracks", []):
+        if track["type"] != "subtitles":
+            continue
+        key = subtitle_key(track)
+        seen[key] += 1
+        groups[track["id"]] = (*key, seen[key]) if key in duplicate_keys else key
+    return groups
+
+
+def subtitle_catalog(infos):
+    """Use the same occurrence keys throughout the batch, including missing peers."""
+    layouts = [tuple(subtitle_key(track) for track in info.get("tracks", [])
+                     if track["type"] == "subtitles") for info in infos]
+    duplicates = {key for layout in layouts for key, count in Counter(layout).items()
+                  if count > 1}
+    catalog = sorted({key for info in infos
+                      for key in subtitle_groups(info, duplicates).values()})
+    if duplicates:
+        print("\nIdentical subtitle metadata found; duplicate entries use occurrence in subtitle track order.")
+        print("Track order cannot confirm the contents of unnamed or identically named subtitles.")
+        if any(layout != layouts[0] for layout in layouts[1:]):
+            print("WARNING: Subtitle names, languages, formats, counts, or order differ across MKVs.")
+            print("Cannot verify subtitle groups across this batch. Check each file before confirming;")
+            print("process individual files separately if their track order does not correspond.")
+    return catalog, duplicates
+
+
+def group_label(key):
+    name, language, codec = key[:3]
+    suffix = f" [occurrence {key[3]}]" if len(key) == 4 else ""
+    return f"[{language}] {name or '(unnamed)'} [{codec}]{suffix}"
 
 
 def single_key(prompt, allowed):
@@ -122,9 +160,10 @@ def selection(prompt, catalog):
         return {catalog[number - 1] for number in numbers}
 
 
-def desired_flags(info, clear_default, clear_forced, defaults, forced):
+def desired_flags(info, clear_default, clear_forced, defaults, forced, duplicate_keys=()):
     """Return expected flags for every subtitle, preserving unselected flags."""
     expected = {}
+    groups = subtitle_groups(info, duplicate_keys)
     for track in info.get("tracks", []):
         if track["type"] != "subtitles":
             continue
@@ -132,7 +171,7 @@ def desired_flags(info, clear_default, clear_forced, defaults, forced):
         number = props.get("number")
         if not isinstance(number, int) or number < 1 or number in expected:
             raise RuntimeError("Missing or duplicate subtitle track number")
-        key = subtitle_key(track)
+        key = groups[track["id"]]
         expected[number] = (
             key in defaults or (not clear_default and bool(props.get("default_track", True))),
             key in forced or (not clear_forced and bool(props.get("forced_track", False))),
@@ -140,8 +179,8 @@ def desired_flags(info, clear_default, clear_forced, defaults, forced):
     return expected
 
 
-def edit_file(path, info, clear_default, clear_forced, defaults, forced):
-    expected = desired_flags(info, clear_default, clear_forced, defaults, forced)
+def edit_file(path, info, clear_default, clear_forced, defaults, forced, duplicate_keys=()):
+    expected = desired_flags(info, clear_default, clear_forced, defaults, forced, duplicate_keys)
     args = ["mkvpropedit", str(path)]
     for track in info.get("tracks", []):
         if track["type"] != "subtitles":
@@ -219,8 +258,7 @@ def main(argv=None):
         except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
             print(f"ERROR reading {path.name}: {exc}")
             failures += 1
-    catalog = sorted({subtitle_key(track) for _, info in items
-                      for track in info.get("tracks", []) if track["type"] == "subtitles"})
+    catalog, duplicate_keys = subtitle_catalog([info for _, info in items])
     if not catalog:
         print("No subtitle tracks found.")
         return int(bool(failures))
@@ -251,8 +289,8 @@ def main(argv=None):
         defaults, forced = set(), set()
         if setting != 3:
             print("\nOption 3: Available subtitles across all scanned MKVs")
-            for number, (name, language, codec) in enumerate(catalog, 1):
-                print(f"  {number}. [{language}] {name or '(unnamed)'} [{codec}]")
+            for number, key in enumerate(catalog, 1):
+                print(f"  {number}. {group_label(key)}")
             if setting == 1:
                 defaults = selection("Select subtitles for both default and forced", catalog)
                 forced = defaults.copy()
@@ -274,7 +312,8 @@ def main(argv=None):
     for path, info in items:
         print(f"Processing: {path.name}")
         try:
-            updated += edit_file(path, info, clear_default, clear_forced, defaults, forced)
+            updated += edit_file(path, info, clear_default, clear_forced, defaults, forced,
+                                 duplicate_keys=duplicate_keys)
         except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
             print(f"  ERROR: {exc}")
             failures += 1

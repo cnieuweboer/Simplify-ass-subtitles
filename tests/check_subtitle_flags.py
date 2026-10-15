@@ -24,6 +24,73 @@ def track(number, codec="S_TEXT/ASS", default=False, forced=False, kind="subtitl
 
 
 class FlagChecks(unittest.TestCase):
+    def test_duplicate_catalog_and_layout_warnings(self):
+        from copy import deepcopy
+        first = {"tracks": [track(3), track(5)]}
+        for entry in first["tracks"]:
+            entry["properties"]["track_name"] = ""
+        second = deepcopy(first)
+        for entry in second["tracks"]:
+            entry["id"] += 10
+        with patch("sys.stdout", new_callable=io.StringIO) as output:
+            catalog, duplicates = flags.subtitle_catalog([first, second])
+        self.assertEqual(len(catalog), 2)
+        self.assertEqual([key[3] for key in catalog], [1, 2])
+        self.assertNotIn("WARNING:", output.getvalue())
+        self.assertIn("occurrence 2", flags.group_label(catalog[1]))
+        self.assertEqual(list(flags.subtitle_groups(first, duplicates).values()), catalog)
+        self.assertEqual(list(flags.subtitle_groups(second, duplicates).values()), catalog)
+        # Missing peer, missing entire group, different name/codec/language, reordered layout.
+        for variant in ({"tracks": second["tracks"][:1]}, {"tracks": []}):
+            with patch("sys.stdout", new_callable=io.StringIO) as output:
+                _, other_duplicates = flags.subtitle_catalog([first, variant])
+            self.assertEqual(duplicates, other_duplicates)
+            self.assertIn("Cannot verify subtitle groups", output.getvalue())
+        for field, value in (("track_name", "Signs"), ("language", "jpn"),
+                             ("codec_id", "S_TEXT/UTF8")):
+            variant = deepcopy(second)
+            if field == "language":
+                variant["tracks"][0]["properties"].pop("language_ietf", None)
+            variant["tracks"][0]["properties"][field] = value
+            with patch("sys.stdout", new_callable=io.StringIO) as output:
+                flags.subtitle_catalog([first, variant])
+            self.assertIn("Cannot verify subtitle groups", output.getvalue())
+        other = deepcopy(second["tracks"][0])
+        other["id"] = 99
+        other["properties"]["track_name"] = "Signs"
+        for variant in ({"tracks": [other, *second["tracks"]]},
+                        {"tracks": [*second["tracks"], other]}):
+            with patch("sys.stdout", new_callable=io.StringIO) as output:
+                flags.subtitle_catalog([{"tracks": [other, *first["tracks"]]}, variant])
+            self.assertEqual("WARNING:" in output.getvalue(), variant["tracks"][0] != other)
+        with patch("sys.stdout", new_callable=io.StringIO):
+            groups = flags.subtitle_groups({"tracks": first["tracks"][:1]}, duplicates)
+        self.assertEqual(list(groups.values()), catalog[:1])
+
+    def test_duplicate_selection_only_changes_selected_occurrence(self):
+        info = {"tracks": [track(2), track(4)]}
+        for entry in info["tracks"]:
+            entry["properties"]["track_name"] = ""
+        with patch("sys.stdout", new_callable=io.StringIO):
+            catalog, duplicates = flags.subtitle_catalog([info])
+        self.assertEqual(flags.desired_flags(info, True, True, {catalog[1]}, {catalog[0]}, duplicates),
+                         {2: (False, True), 4: (True, False)})
+        with tempfile.TemporaryDirectory() as folder:
+            for name in ("a.mkv", "b.mkv"):
+                Path(folder, name).touch()
+            with patch.object(flags.shutil, "which", return_value="tool"), \
+                 patch.object(flags, "identify", return_value=info), \
+                 patch.object(flags, "edit_file", return_value=True) as edit, \
+                 patch("builtins.input", side_effect=["1", "2", "y"]), \
+                 patch("sys.stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(flags.main([folder]), 0)
+            self.assertEqual(edit.call_count, 2)
+            for call in edit.call_args_list:
+                self.assertEqual(call.args[4:6], ({catalog[1]}, {catalog[1]}))
+                self.assertEqual(call.kwargs["duplicate_keys"], duplicates)
+            self.assertIn("occurrence 1", output.getvalue())
+            self.assertIn("occurrence 2", output.getvalue())
+
     def test_single_key_fallback_ignores_unlisted_answers(self):
         with patch.object(sys.stdin, "isatty", return_value=False), \
              patch("builtins.input", side_effect=["3", "12", "yes", "Y"]) as read:

@@ -27,6 +27,84 @@ def track(track_id, name="English", language="en", codec="S_TEXT/ASS", kind="sub
 
 
 class RemovalChecks(unittest.TestCase):
+    def test_duplicate_catalog_and_layout_warnings(self):
+        from copy import deepcopy
+        first = {"tracks": [track(3, ""), track(9, "")]}
+        for entry in first["tracks"]:
+            entry["properties"]["track_name"] = ""
+        second = deepcopy(first)
+        for entry in second["tracks"]:
+            entry["id"] += 10
+        with patch("sys.stdout", new_callable=io.StringIO) as output:
+            catalog, duplicates = remove.subtitle_catalog([first, second])
+        self.assertEqual(len(catalog), 2)
+        self.assertEqual([key[3] for key in catalog], [1, 2])
+        self.assertNotIn("WARNING:", output.getvalue())
+        self.assertIn("occurrence 2", remove.group_label(catalog[1]))
+        self.assertEqual(list(remove.subtitle_groups(first, duplicates).values()), catalog)
+        self.assertEqual(list(remove.subtitle_groups(second, duplicates).values()), catalog)
+        # Missing peer, missing entire group, different name/codec/language, reordered layout.
+        for variant in ({"tracks": second["tracks"][:1]}, {"tracks": []}):
+            with patch("sys.stdout", new_callable=io.StringIO) as output:
+                _, other_duplicates = remove.subtitle_catalog([first, variant])
+            self.assertEqual(duplicates, other_duplicates)
+            self.assertIn("Cannot verify subtitle groups", output.getvalue())
+        for field, value in (("track_name", "Signs"), ("language", "jpn"),
+                             ("codec_id", "S_TEXT/UTF8")):
+            variant = deepcopy(second)
+            if field == "language":
+                variant["tracks"][0]["properties"].pop("language_ietf", None)
+            variant["tracks"][0]["properties"][field] = value
+            with patch("sys.stdout", new_callable=io.StringIO) as output:
+                remove.subtitle_catalog([first, variant])
+            self.assertIn("Cannot verify subtitle groups", output.getvalue())
+        other = deepcopy(second["tracks"][0])
+        other["id"] = 99
+        other["properties"]["track_name"] = "Signs"
+        for variant in ({"tracks": [other, *second["tracks"]]},
+                        {"tracks": [*second["tracks"], other]}):
+            with patch("sys.stdout", new_callable=io.StringIO) as output:
+                remove.subtitle_catalog([{"tracks": [other, *first["tracks"]]}, variant])
+            self.assertEqual("WARNING:" in output.getvalue(), variant["tracks"][0] != other)
+        with patch("sys.stdout", new_callable=io.StringIO):
+            groups = remove.subtitle_groups({"tracks": first["tracks"][:1]}, duplicates)
+        self.assertEqual(list(groups.values()), catalog[:1])
+
+    def test_duplicate_remove_keep_and_language_selection(self):
+        first = {"tracks": [track(3, ""), track(9, "")]}
+        second = {"tracks": [track(4, ""), track(6, "")]}
+        for answer, wanted in (("1", [{3}, {4}]), ("k 1", [{9}, {6}]),
+                               ("en", [{3, 9}, {4, 6}])):
+            with tempfile.TemporaryDirectory() as folder:
+                for name in ("a.mkv", "b.mkv"):
+                    Path(folder, name).touch()
+                with patch.object(remove.shutil, "which", return_value="tool"), \
+                     patch.object(remove, "identify", side_effect=[first, second]), \
+                     patch.object(remove, "remux", return_value=True) as remux, \
+                     patch("builtins.input", side_effect=[answer, "y"]), \
+                     patch("sys.stdout", new_callable=io.StringIO) as output:
+                    self.assertEqual(remove.main([folder]), 0)
+                self.assertEqual([call.args[3] for call in remux.call_args_list], wanted)
+                self.assertIn("occurrence 1", output.getvalue())
+                self.assertIn("occurrence 2", output.getvalue())
+
+    def test_legacy_language_verification_accepts_only_new_ietf_tags(self):
+        before = {"tracks": [track(3, ""), track(9, "")]}
+        for entry in before["tracks"]:
+            del entry["properties"]["language_ietf"]
+            entry["properties"]["language"] = "eng"
+        after = deepcopy(before)
+        after["tracks"] = after["tracks"][:1]
+        after["tracks"][0]["properties"]["language_ietf"] = "en"
+        remove.verify_output(before, after, {9})
+        after["tracks"][0]["properties"]["language"] = "jpn"
+        with self.assertRaises(RuntimeError):
+            remove.verify_output(before, after, {9})
+        after["tracks"][0]["properties"]["language"] = "eng"
+        before["tracks"][0]["properties"]["language_ietf"] = "en-US"
+        with self.assertRaises(RuntimeError):
+            remove.verify_output(before, after, {9})
+
     def test_same_language_pairs_and_unnamed_originals(self):
         info = {"tracks": [track(0, "English", codec="S_TEXT/SSA"),
                            track(1, "English (Simplified)"),
@@ -269,6 +347,46 @@ class RemovalChecks(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("mkvmerge"), "MKVToolNix is required for real remux checks")
 class RealRemuxChecks(unittest.TestCase):
+    def test_real_unnamed_duplicate_flags_and_removal_in_legacy_mkv(self):
+        flag_spec = importlib.util.spec_from_file_location(
+            "duplicate_flags", Path(__file__).resolve().parents[1] / "subtitle_flags.py")
+        flags = importlib.util.module_from_spec(flag_spec)
+        flag_spec.loader.exec_module(flags)
+        tool = shutil.which("mkvmerge")
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            audio = root / "audio.wav"
+            with wave.open(str(audio), "wb") as out:
+                out.setnchannels(1)
+                out.setsampwidth(2)
+                out.setframerate(8000)
+                out.writeframes(b"\x00\x00" * 8000)
+            subtitle = root / "text.srt"
+            subtitle.write_text("1\n00:00:00,000 --> 00:00:00,900\nText\n")
+            source = root / "episode.mkv"
+            args = [tool, "--disable-language-ietf", "-o", str(source), str(audio)]
+            for _ in range(2):
+                args += ["--language", "0:eng", "--default-track-flag", "0:0", str(subtitle)]
+            result = subprocess.run(args, capture_output=True, text=True)
+            self.assertIn(result.returncode, (0, 1), result.stdout + result.stderr)
+            before = remove.identify(tool, source)
+            subs = [t for t in before["tracks"] if t["type"] == "subtitles"]
+            with patch("sys.stdout", new_callable=io.StringIO):
+                catalog, duplicates = flags.subtitle_catalog([before])
+                flags.edit_file(source, before, True, True, {catalog[1]}, {catalog[1]}, duplicates)
+            flagged = flags.identify(source)
+            values = list(flags.desired_flags(flagged, False, False, set(), set()).values())
+            self.assertEqual(values, [(False, False), (True, True)])
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            with patch("builtins.input", side_effect=["k 1", "y"]), \
+                 patch("sys.stdout", new_callable=io.StringIO):
+                self.assertEqual(remove.main([str(source)]), 0)
+            after = remove.identify(tool, root / "output" / source.name)
+            kept = [t for t in after["tracks"] if t["type"] == "subtitles"]
+            self.assertEqual(len(kept), 1)
+            self.assertEqual(kept[0]["properties"]["uid"], subs[0]["properties"]["uid"])
+            self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), digest)
+
     def test_real_remux_preserves_original_audio_flags_chapters_and_attachment(self):
         tool = shutil.which("mkvmerge")
         with tempfile.TemporaryDirectory() as folder:

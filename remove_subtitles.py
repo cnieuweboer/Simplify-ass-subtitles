@@ -50,6 +50,43 @@ def subtitle_key(track):
             props.get("codec_id") or track.get("codec") or "unknown")
 
 
+def subtitle_groups(info, duplicate_keys=()):
+    """Map subtitle IDs to metadata groups, separating duplicates by occurrence."""
+    seen = Counter()
+    groups = {}
+    for track in info.get("tracks", []):
+        if track["type"] != "subtitles":
+            continue
+        key = subtitle_key(track)
+        seen[key] += 1
+        groups[track["id"]] = (*key, seen[key]) if key in duplicate_keys else key
+    return groups
+
+
+def subtitle_catalog(infos):
+    """Use the same occurrence keys throughout the batch, including missing peers."""
+    layouts = [tuple(subtitle_key(track) for track in info.get("tracks", [])
+                     if track["type"] == "subtitles") for info in infos]
+    duplicates = {key for layout in layouts for key, count in Counter(layout).items()
+                  if count > 1}
+    catalog = sorted({key for info in infos
+                      for key in subtitle_groups(info, duplicates).values()})
+    if duplicates:
+        print("\nIdentical subtitle metadata found; duplicate entries use occurrence in subtitle track order.")
+        print("Track order cannot confirm the contents of unnamed or identically named subtitles.")
+        if any(layout != layouts[0] for layout in layouts[1:]):
+            print("WARNING: Subtitle names, languages, formats, counts, or order differ across MKVs.")
+            print("Cannot verify subtitle groups across this batch. Check each file before confirming;")
+            print("process individual files separately if their track order does not correspond.")
+    return catalog, duplicates
+
+
+def group_label(key):
+    name, language, codec = key[:3]
+    suffix = f" [occurrence {key[3]}]" if len(key) == 4 else ""
+    return f"[{language}] {name or '(unnamed)'} [{codec}]{suffix}"
+
+
 def track_label(track):
     name, language, codec = subtitle_key(track)
     return f"[{language}] {name or '(unnamed)'} [{codec}]"
@@ -135,8 +172,8 @@ def parse_selection(answer, catalog):
 
 def manual_selection(catalog):
     print("\nOption 2: Available subtitles across all scanned MKVs")
-    for number, (name, language, codec) in enumerate(catalog, 1):
-        print(f"  {number}. [{language}] {name or '(unnamed)'} [{codec}]")
+    for number, key in enumerate(catalog, 1):
+        print(f"  {number}. {group_label(key)}")
     print("\nSelect subtitles to remove using numbers or listed languages (1,3 or en,ja).")
     print("Use the k prefix to keep only selected subtitles (k 1,3 or k en,ja).")
     print("Blank or q to cancel.")
@@ -159,14 +196,15 @@ def removal_mode():
         print("Enter 1 or 2.")
 
 
-def preview(items, root, output, automatic, selected, failures, keep=False):
+def preview(items, root, output, automatic, selected, failures, keep=False, duplicate_keys=()):
     print("\nReview removals before remuxing:")
     if keep:
         print("Keep selected subtitle groups; remove all other subtitles from every file.")
     plan = []
     for item in items:
         subtitles = [track for track in item.info["tracks"] if track["type"] == "subtitles"]
-        matching = {track["id"] for track in subtitles if subtitle_key(track) in selected}
+        groups = subtitle_groups(item.info, duplicate_keys)
+        matching = {track["id"] for track in subtitles if groups[track["id"]] in selected}
         relative = item.path.relative_to(root)
         if automatic:
             removed = set(item.pairs)
@@ -189,7 +227,7 @@ def preview(items, root, output, automatic, selected, failures, keep=False):
             if track["type"] != "subtitles":
                 continue
             action = "REMOVE" if track["id"] in removed else "KEEP"
-            print(f"    {action} ID {track['id']}: {track_label(track)}")
+            print(f"    {action} ID {track['id']}: {group_label(groups[track['id']])}")
             if automatic and track["id"] in removed:
                 original_ids = ", ".join(str(number) for number in item.pairs[track["id"]])
                 print(f"      Matching original subtitle ID(s): {original_ids}")
@@ -200,16 +238,25 @@ def preview(items, root, output, automatic, selected, failures, keep=False):
     return plan
 
 
-def track_signature(track):
+def track_signature(track, include_ietf=True):
     props = track.get("properties", {})
-    return (track["type"], *subtitle_key(track), props.get("uid"),
+    name, _, codec = subtitle_key(track)
+    return (track["type"], name, codec, props.get("language") or "und",
+            (props.get("language_ietf") or "").casefold() if include_ietf else "",
+            props.get("uid"),
             bool(props.get("default_track", True)), bool(props.get("forced_track", False)),
             bool(props.get("enabled_track", True)))
 
 
 def verify_output(before, after, removed):
-    expected = Counter(track_signature(track) for track in before["tracks"] if track["id"] not in removed)
-    actual = Counter(track_signature(track) for track in after["tracks"])
+    retained = [track for track in before["tracks"] if track["id"] not in removed]
+    # MKVToolNix adds IETF tags to older files; preserve existing tags and legacy codes.
+    ietf_uids = {track.get("properties", {}).get("uid") for track in retained
+                 if track.get("properties", {}).get("language_ietf")}
+    expected = Counter(track_signature(track, track.get("properties", {}).get("uid") in ietf_uids)
+                       for track in retained)
+    actual = Counter(track_signature(track, track.get("properties", {}).get("uid") in ietf_uids)
+                     for track in after["tracks"])
     if actual != expected:
         raise RuntimeError("Verification failed: retained tracks or their metadata differ")
     def attachments(info):
@@ -305,15 +352,14 @@ def main(argv=None):
             except ERRORS as exc:
                 print(f"ERROR reading {path}: {exc}")
                 failures += 1
-        catalog = sorted({subtitle_key(track) for item in items
-                          for track in item.info["tracks"] if track["type"] == "subtitles"})
+        catalog, duplicate_keys = subtitle_catalog([item.info for item in items])
         if not catalog:
             print("No subtitle tracks found.")
             return int(bool(failures))
         automatic = removal_mode() if any(item.pairs for item in items) else False
         selected, keep = (set(), False) if automatic else manual_selection(catalog)
         while True:
-            plan = preview(items, root, output, automatic, selected, failures, keep)
+            plan = preview(items, root, output, automatic, selected, failures, keep, duplicate_keys)
             prompt = "Remux these files? (y/N; m for manual selection): " if automatic else \
                      "Remux these files? (y/N; m to revise selection): "
             answer = input(prompt).strip().lower()
