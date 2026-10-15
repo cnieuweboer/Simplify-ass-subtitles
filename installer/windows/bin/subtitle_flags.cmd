@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-set "SUBTITLE_SCRIPT=%~dp0..\simplify-ass\subtitle_flags.py"
+set "SUBTITLE_SCRIPT=%~dp0..\simplify-ass\subtitle_properties.py"
 if not exist "%SUBTITLE_SCRIPT%" (
     echo Missing installed Python script: "%SUBTITLE_SCRIPT%"
     exit /b 2

@@ -10,7 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPERS = ROOT / "dnd helper"
-TOOLS = ("subtitle_flags", "remove_subtitles", "sync_fonts", "simplify_subtitles")
+TOOLS = ("subtitle_properties", "subtitle_tracks", "sync_fonts", "simplify_subtitles")
 
 
 def fake_tool(path):
@@ -41,12 +41,12 @@ class DropHelperChecks(unittest.TestCase):
     def test_no_drop_defaults_to_the_sibling_folder(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            wrapper = root / "remove_subtitles.sh"
+            wrapper = root / "subtitle_tracks.sh"
             shutil.copyfile(HELPERS / "linux" / wrapper.name, wrapper)
-            fake_tool(root / "remove_subtitles.py")
+            fake_tool(root / "subtitle_tracks.py")
             result = subprocess.run(["sh", str(wrapper)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(json.loads((root / "remove_subtitles.log").read_text()), [str(root)])
+            self.assertEqual(json.loads((root / "subtitle_tracks.log").read_text()), [str(root)])
 
     def test_missing_script_and_missing_drop_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -83,10 +83,10 @@ class DropHelperChecks(unittest.TestCase):
             # The installer is also portable when copied beside a single tool.
             setup = scripts / "setup-linux.sh"
             shutil.copyfile(HELPERS / "linux/setup-linux.sh", setup)
-            fake_tool(scripts / "remove_subtitles.py")
+            fake_tool(scripts / "subtitle_tracks.py")
             result = subprocess.run(["sh", str(setup)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            launcher = scripts / "remove_subtitles.desktop"
+            launcher = scripts / "subtitle_tracks.desktop"
             entry = configparser.ConfigParser(interpolation=None)
             entry.read(launcher)
             self.assertEqual(entry["Desktop Entry"]["Terminal"], "true")
@@ -97,11 +97,11 @@ class DropHelperChecks(unittest.TestCase):
                 result = subprocess.run(["desktop-file-validate", str(launcher)],
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            wrapper = scripts / "remove_subtitles.sh"
+            wrapper = scripts / "subtitle_tracks.sh"
             result = subprocess.run(["sh", str(wrapper), str(scripts)],
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(json.loads((scripts / "remove_subtitles.log").read_text()), [str(scripts)])
+            self.assertEqual(json.loads((scripts / "subtitle_tracks.log").read_text()), [str(scripts)])
 
     def test_installer_accepts_an_external_tools_folder_and_can_relocate(self):
         with tempfile.TemporaryDirectory() as directory:

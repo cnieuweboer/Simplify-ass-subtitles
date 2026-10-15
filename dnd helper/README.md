@@ -7,15 +7,18 @@ are required.
 
 Drop **MKV files or folders containing MKVs** onto a target. A file drop processes
 only that MKV; a folder drop scans only that folder's MKVs, without subfolders.
-Use the Python tool with `-r` / `--recursive` to include subfolders. Removal/font/simplification
+Use the Python tool with `-r` / `--recursive` to include subfolders. Track/font/simplification
 outputs go to `output/` under the input folder or the dropped file's parent.
 For example, dropping `A/X.mkv` onto a helper in `B/` writes `A/output/X.mkv`.
-The flag helper edits the selected originals in place.
+The properties helper edits names/flags in the selected originals in place.
+Replace copied `remove_subtitles` / `subtitle_flags` targets with the new
+`subtitle_tracks` / `subtitle_properties` targets; rebuild macOS apps or rerun
+Linux setup as needed.
 Keep `simplify_ass.py` beside `simplify_subtitles.py` when using its helper.
 
 ## Windows
 
-Copy `windows/remove_subtitles.bat` beside `remove_subtitles.py`
+Copy `windows/subtitle_tracks.bat` beside `subtitle_tracks.py`
 (and similarly for the other tools), then drop an MKV or folder onto the BAT.
 
 ## macOS
@@ -49,7 +52,7 @@ universal drop handler. If necessary, use **Open With** or run the optional
 wrapper directly:
 
 ```sh
-sh /path/to/python/tools/remove_subtitles.sh /path/to/media
+sh /path/to/python/tools/subtitle_tracks.sh /path/to/media
 ```
 
 Native Windows/macOS drag-and-drop still needs testing on those systems.

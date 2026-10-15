@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "installer" / "windows"
-TOOLS = ("simplify_subtitles", "remove_subtitles", "subtitle_flags", "sync_fonts")
+TOOLS = ("simplify_subtitles", "subtitle_tracks", "subtitle_properties", "sync_fonts")
 
 
 def checkout(root):
@@ -178,7 +178,7 @@ class InstallerChecks(unittest.TestCase):
             before = {str(path.relative_to(target)): path.read_bytes() for path in target.rglob("*") if path.is_file()}
             original = Path.unlink
             def unlink(path, *args, **kwargs):
-                if path == target / "bin/remove_subtitles.cmd":
+                if path == target / "bin/subtitle_tracks.cmd":
                     raise PermissionError("locked launcher")
                 return original(path, *args, **kwargs)
             with patch.object(Path, "unlink", unlink), self.assertRaises(PermissionError):
@@ -341,7 +341,7 @@ class MaintenanceChecks(unittest.TestCase):
             target = root / "tools"
             with patch.object(installer, "unblock") as unblock:
                 installer.install(repository, target, individual_launchers=True)
-            self.assertEqual(set(call.args[0] for call in unblock.call_args_list), set(installer.installed_files(target)))
+            self.assertEqual(set(call.args[0] for call in unblock.call_args_list), set(path for path in installer.installed_files(target) if path.is_file()))
             placed = root / "placed"
             placed.mkdir()
             repository.rename(placed / "simplify-ass")
@@ -427,6 +427,94 @@ class MaintenanceChecks(unittest.TestCase):
             self.installer.unblock(script)
             self.assertFalse(marker.exists())
             self.assertEqual(script.read_text(), "@echo off\n")
+
+
+LEGACY = {"remove_subtitles": "subtitle_tracks", "subtitle_flags": "subtitle_properties"}
+
+
+def legacy_install(repository, target, individual=True, saved=True):
+    installer = load_installer()
+    installer.install(repository, target, individual_launchers=individual)
+    for old, new in LEGACY.items():
+        (target / "simplify-ass" / (new + ".py")).rename(target / "simplify-ass" / (old + ".py"))
+        current = target / "bin" / (new + ".cmd")
+        if current.exists():
+            current.rename(current.with_name(old + ".cmd"))
+    settings = target / "simplify-ass/install_settings.json"
+    if saved:
+        data = json.loads(settings.read_text())
+        inverse = {new: old for old, new in LEGACY.items()}
+        data["launchers"] = [inverse.get(name, name) for name in data["launchers"]]
+        settings.write_text(json.dumps(data))
+    else:
+        settings.unlink()
+
+
+class MigrationChecks(unittest.TestCase):
+    def test_old_names_migrate_with_saved_or_inferred_preferences(self):
+        for saved in (False, True):
+            for individual in (False, True):
+                for missing in (None, "remove_subtitles"):
+                    with self.subTest(saved=saved, individual=individual, missing=missing), tempfile.TemporaryDirectory() as folder:
+                        root = Path(folder)
+                        repository, target = checkout(root), root / "relocated tools"
+                        legacy_install(repository, target, individual, saved)
+                        if missing:
+                            (target / "bin" / (missing + ".cmd")).unlink(missing_ok=True)
+                        unrelated = target / "bin/other.cmd"
+                        unrelated.write_text("keep")
+                        installer = load_installer()
+                        installer.install(repository, target)
+                        for old, new in LEGACY.items():
+                            self.assertFalse((target / "simplify-ass" / (old + ".py")).exists())
+                            self.assertFalse((target / "bin" / (old + ".cmd")).exists())
+                            self.assertTrue((target / "simplify-ass" / (new + ".py")).exists())
+                            self.assertEqual((target / "bin" / (new + ".cmd")).exists(), individual and old != missing)
+                        self.assertEqual(unrelated.read_text(), "keep")
+                        self.assertTrue((target / "bin/subtitle_tools.cmd").is_file())
+                        settings = json.loads((target / "simplify-ass/install_settings.json").read_text())
+                        self.assertFalse(set(settings["launchers"]) & LEGACY.keys())
+                        # A later update must not recreate a deliberately absent launcher.
+                        installer.install(repository, target)
+                        if not individual or missing:
+                            self.assertFalse((target / "bin/subtitle_tracks.cmd").exists())
+
+    def test_failed_migration_restores_old_files_launchers_and_settings(self):
+        for failure in ("deletion", "unblock", "interrupt"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                repository, target = checkout(root), root / "tools"
+                legacy_install(repository, target)
+                before = {str(path.relative_to(target)): path.read_bytes() for path in target.rglob("*") if path.is_file()}
+                installer = load_installer()
+                original = Path.unlink
+                def unlink(path, *args, **kwargs):
+                    if failure == "deletion" and path == target / "bin/subtitle_flags.cmd":
+                        raise PermissionError("locked old launcher")
+                    return original(path, *args, **kwargs)
+                error = KeyboardInterrupt if failure == "interrupt" else PermissionError
+                with patch.object(Path, "unlink", unlink), \
+                     patch.object(installer, "unblock", side_effect=error("blocked") if failure != "deletion" else None), \
+                     self.assertRaises(error):
+                    installer.install(repository, target)
+                after = {str(path.relative_to(target)): path.read_bytes() for path in target.rglob("*") if path.is_file()}
+                self.assertEqual(after, before)
+                self.assertFalse(list(target.glob(".subtitle-tools-install-*")))
+
+    def test_uninstall_removes_legacy_and_current_managed_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            repository, target = checkout(root), root / "tools"
+            legacy_install(repository, target)
+            for new in LEGACY.values():
+                (target / "simplify-ass" / (new + ".py")).write_text("new")
+                (target / "bin" / (new + ".cmd")).write_text("new")
+            unrelated = target / "bin/keep.cmd"
+            unrelated.write_text("keep")
+            with patch("sys.stdout", new_callable=io.StringIO):
+                load_installer().remove(target)
+            self.assertEqual(list(target.rglob("*.py")), [])
+            self.assertEqual(list((target / "bin").iterdir()), [unrelated])
 
 
 if __name__ == "__main__":

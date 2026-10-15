@@ -9,8 +9,8 @@ import sys
 
 OPTIONS = (
     ("Simplify subtitles", "simplify_subtitles.py"),
-    ("Remove subtitles", "remove_subtitles.py"),
-    ("Set or remove default/forced flags", "subtitle_flags.py"),
+    ("Add or remove subtitle tracks", "subtitle_tracks.py"),
+    ("Rename tracks or edit default/forced flags", "subtitle_properties.py"),
     ("Synchronize fonts", "sync_fonts.py"),
     ("Update", "subtitle_tools_update.py"),
 )

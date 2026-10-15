@@ -13,7 +13,8 @@ from urllib.request import Request, urlopen
 REPOSITORY = "cnieuweboer/Simplify-ass-subtitles"
 API = f"https://api.github.com/repos/{REPOSITORY}"
 RAW = f"https://raw.githubusercontent.com/{REPOSITORY}"
-TOOLS = ("simplify_subtitles", "remove_subtitles", "subtitle_flags", "sync_fonts")
+TOOLS = ("simplify_subtitles", "subtitle_tracks", "subtitle_properties", "sync_fonts")
+LEGACY_TOOLS = ("remove_subtitles", "subtitle_flags")
 MAX_DOWNLOAD = 16 * 1024 * 1024
 
 
@@ -72,7 +73,7 @@ def fetch_checkout(directory):
 
 
 def update(target):
-    markers = [target / "simplify-ass" / (tool + ".py") for tool in (*TOOLS, "simplify_ass")]
+    markers = [target / "simplify-ass" / (tool + ".py") for tool in (*TOOLS, *LEGACY_TOOLS, "simplify_ass")]
     if not any(path.is_file() for path in markers):
         raise RuntimeError(f"No subtitle-tools installation found in {target}. Run the installer first.")
     print(f"Updating installation: {target}", flush=True)

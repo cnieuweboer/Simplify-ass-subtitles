@@ -1,6 +1,6 @@
 #!/bin/sh
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 2
-script="$script_dir/remove_subtitles.py"
+script="$script_dir/subtitle_tracks.py"
 status=0
 if [ ! -f "$script" ]; then
     printf 'Missing Python script: %s\n' "$script"

@@ -25,6 +25,11 @@ def load_menu():
 
 
 class MenuChecks(unittest.TestCase):
+    def test_menu_routes_track_and_property_actions_to_new_scripts(self):
+        menu = load_menu()
+        self.assertEqual(menu.OPTIONS[1], ("Add or remove subtitle tracks", "subtitle_tracks.py"))
+        self.assertEqual(menu.OPTIONS[2], ("Rename tracks or edit default/forced flags", "subtitle_properties.py"))
+
     def test_all_choices_run_only_selected_tool_and_forward_arguments(self):
         menu = load_menu()
         for number, (_, tool) in enumerate(menu.OPTIONS, 1):

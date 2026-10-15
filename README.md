@@ -22,6 +22,9 @@ subtitle_tools
 subtitle_tools -i "D:\Media" -o "D:\Cleaned" -r
 ```
 
+Menu: **1** simplify, **2** add/remove tracks, **3** rename/edit flags,
+**4** fonts, **5** update. Existing installations migrate through **5. Update**.
+
 - `-i` / `--input`: folder or one MKV; defaults to the current folder.
 - `-o` / `--output`: output folder; defaults to `output/` beside each MKV.
 - `-r` / `--recursive`: include subfolders; off by default.
@@ -115,9 +118,6 @@ Choose **1** for default/forced flags or **2** to rename tracks. Select groups b
 number, then accept or replace each suggested name; `-` clears a name. Review the
 changes before confirming. Both actions edit originals in place.
 
-Run directly for now; installed launchers still use `subtitle_flags.py` until
-the installer migration.
-
 ## Add or remove subtitle tracks
 
 ```console
@@ -141,9 +141,6 @@ Complete groups match by basename first, then by natural filename order within e
 folder. The preview shows every pairing; enter a group number to edit its language/name,
 `x NUMBER` to exclude/include it, or `y` to remux. New tracks have default/forced off.
 Single-file input matches its basename only. Incomplete or ambiguous groups are skipped.
-
-Run `subtitle_tracks.py` directly for now; installed launchers still use
-`remove_subtitles.py` until the installer migration.
 
 At manual removal selection:
 

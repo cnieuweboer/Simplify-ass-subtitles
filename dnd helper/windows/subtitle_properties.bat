@@ -1,9 +1,9 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-set "DND_SCRIPT=%~dp0subtitle_flags.py"
+set "DND_SCRIPT=%~dp0subtitle_properties.py"
 set "DND_RESULT=0"
 if not exist "%DND_SCRIPT%" (
-    echo Place this BAT beside subtitle_flags.py.
+    echo Place this BAT beside subtitle_properties.py.
     set "DND_RESULT=2"
     goto finished
 )

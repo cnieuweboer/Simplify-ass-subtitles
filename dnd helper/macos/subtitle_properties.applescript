@@ -20,7 +20,7 @@ on launchFolders(droppedFolders)
         end if
     end repeat
     set bundlePath to POSIX path of (path to me)
-    set scriptPath to bundlePath & "../subtitle_flags.py"
+    set scriptPath to bundlePath & "../subtitle_properties.py"
     set commandText to ""
     repeat with droppedFolder in droppedFolders
         set folderPath to POSIX path of droppedFolder
