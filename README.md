@@ -15,9 +15,7 @@ The default location is `C:\Tools`; append `"D:\My Tools"` to choose another.
 The installer offers to install missing Python packages and add `<installation folder>/bin` to your
 user PATH. Restart your terminal afterward.
 
-Run `subtitle_tools` (`subtitle_tools.cmd`) from a media folder. Press a single
-key: **1** simplify, **2** remove subtitles, **3** default/forced flags,
-**4** fonts, **5** update.
+Run `subtitle_tools` (`subtitle_tools.cmd`) from a folder containing MKV files. Or with with -i argument to point to a folder or individual MKV file 
 
 ```cmd
 subtitle_tools
