@@ -216,3 +216,14 @@ establish contour authority/absence before rendering; the renderer borrows that
 proof. Source-aware span serialization and held-glyph matching retain the same
 formatting decision. Shadow transfer changes paint origin and invalidates a
 foreground proof. No event-history lifetime or replacement-invalidation rule changes.
+
+## Syllable replacement ownership — v205
+
+The existing source lifecycle producer retains disconnected letter endpoints
+until whole-syllable replacement and complete-row ownership are proved. Shared
+source-ID requirements keep boundary paint donors and multi-letter pulses atomic.
+Intermediate poses retain original anchor precision; selected advance scale is
+verified before final rendering. No proof crosses serialization, and no late
+consumer reconstructs ownership from the simplified output. See
+[SYLLABLE_LIFECYCLES.md](SYLLABLE_LIFECYCLES.md). The broader API and pass-local
+index reviews remain separate.

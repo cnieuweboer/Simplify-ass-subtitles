@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.15.204"
+__version__ = "2026.10.15.205"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 # Reconstructed source contours keep thinner/axis-specific widths, but cap each
 # axis in ASS script units. Ordinary retained events are not subject to this cap.
@@ -1428,10 +1428,12 @@ def apply_override(state: dict, name: str, value: str, styles: dict, default: di
     elif name in {"1c", "2c", "3c", "4c", "alpha", "1a", "2a", "3a", "4a"}:
         # Some generated tags append one stray ')' after a complete hex value.
         # libass still reads that value; do not accept other trailing garbage.
-        if re.fullmatch(r"&[Hh][0-9A-Fa-f]+&\s*\)", value):
+        if re.fullmatch(r"&[Hh]?[0-9A-Fa-f]+&\s*\)", value):
             value = value[:-1].rstrip()
         try:
-            v = int(value.upper().removeprefix("&H").rstrip("&"), 16)
+            raw = value.upper()
+            raw = raw[2:] if raw.startswith('&H') else raw[1:] if raw.startswith('&') else raw
+            v = int(raw.rstrip('&'), 16)
         except ValueError:
             return continuation
         if name == "alpha":
@@ -8965,6 +8967,7 @@ class FontProcessingReport:
 def recover_font_row(
     metrics: FontMetrics, ordered, fragments, *, max_size_error: float | None=None,
     allow_internal_spaces: bool=False, font_report: FontProcessingReport | None=None,
+    fit_scale: bool=False,
 ):
     if not metrics.available or len(ordered) < 4:
         return None
@@ -9070,6 +9073,11 @@ def recover_font_row(
         return None
     center = (xs[0]-anchor*widths[0]*factor +
               xs[-1]+(1-anchor)*widths[-1]*factor)/2
+    if fit_scale:
+        nominal = metrics.ass_em_scale(face)
+        if nominal is None:
+            return None
+        sx *= factor/nominal
     return text, center, sx, sy, ((alignment-1)//3)*3+2
 
 
@@ -13827,11 +13835,14 @@ class GlyphPhaseLife:
     start_s: float
     end_s: float
     core: tuple[float,float]
+    # A syllable can bridge several glyphs. Its whole source family must be
+    # owned by the completed row before any shared replacement is consumed.
+    required_members: frozenset[int] = frozenset()
 
 
 def _index_glyph_phase_slots(parsed: dict[int,Event], metric: FontMetrics,
                               max_piece_duration: float,
-                              font_report: FontProcessingReport | None) -> tuple[list,dict]:
+                              font_report: FontProcessingReport | None) -> tuple[list,dict,list]:
     """Normalize exact-font anchors, retaining rejected nearby text as blockers."""
     profiles = {}
     for e in parsed.values():
@@ -13844,7 +13855,9 @@ def _index_glyph_phase_slots(parsed: dict[int,Event], metric: FontMetrics,
         profile[0] += bool(re.search(r'\\fad\s*\(',e.text,re.I))
         profile[1] += e.duration <= max_piece_duration+1e-6
     families = {key for key,(fades,frames) in profiles.items() if fades >= 8 and frames >= 12}
-    slots,spatial,obstacles,widths = [],{}, {},{}
+    families.update((e.style,e.name) for e in parsed.values() if e.kind == 'Dialogue' and
+                    re.search(r'\\t\s*\(',e.text) and re.search(r'\\fsc[xy]',e.text))
+    slots,spatial,obstacles,widths,endpoints = [],{}, {},{},[]
     forbidden = {'t','move','fade','clip','iclip','org','p','r','k','kf','ko','kt'}
     for source in sorted(parsed.values(),key=lambda e:(e.start_s,e.end_s,e.source_index)):
         family = (source.style,source.name)
@@ -13873,7 +13886,7 @@ def _index_glyph_phase_slots(parsed: dict[int,Event], metric: FontMetrics,
         tokens = event_override_tokens(e)
         if (len(literal) != 1 or literal.isspace() or unicodedata.combining(literal) or
                 unicodedata.bidirectional(literal) in {'R','AL','AN'} or
-                OVERRIDE_RE.search(e.text,prefix) or e.effect or
+                OVERRIDE_RE.search(e.text,prefix) or _faded_cue_is_scrolling(e) or
                 any(tag in forbidden for tag,value in tokens) or
                 not unrotated_text_state(e.state) or
                 any(abs(e.state.get(k,0)) > .001 for k in ('fax','fay','fsp','pbo')) or
@@ -13915,6 +13928,8 @@ def _index_glyph_phase_slots(parsed: dict[int,Event], metric: FontMetrics,
         obstacle[1] = center
         tags = ''.join('\\'+tag+value for tag,value in tokens if tag not in {'pos','an','a'})
         canonical = replace_event(e,text='{'+tags+r'\an5'+('\\pos('+','.join(format(v,'.12g') for v in center)+')')+'}'+literal)
+        if fade is not None:
+            endpoints.append((canonical,fade))
         unit = .06*height
         cell = (math.floor(center[0]/unit),math.floor(center[1]/unit))
         candidates = {i for dx in (-1,0,1) for dy in (-1,0,1)
@@ -13940,7 +13955,214 @@ def _index_glyph_phase_slots(parsed: dict[int,Event], metric: FontMetrics,
             index = len(slots);slots.append([])
             spatial.setdefault((key,literal,*cell),[]).append(index)
         slots[index].append((canonical,fade))
-    return slots,obstacles
+    return slots,obstacles,endpoints
+
+
+def _profile_glyph_replacement(source: Event) -> tuple[Event,dict,float] | None:
+    """Recognize one stationary readable syllable shrinking into a fading exit."""
+    literal = OVERRIDE_RE.sub('',source.text)
+    if (source.kind != 'Dialogue' or source.duration <= 0 or not literal or
+            any(c.isspace() or unicodedata.combining(c) or
+                unicodedata.bidirectional(c) in {'R','AL','AN'} for c in literal) or
+            '\\' in literal or _faded_cue_is_scrolling(source) or not source.layer.lstrip('-').isdigit()):
+        return None
+    evaluated = event_evaluation(source)
+    e = dataclass_replace(source,state=evaluated.formatting,continuation=evaluated.continuation)
+    state = e.state
+    if (get_pos(e.text) is None or inline_layout_key(e) or not unrotated_text_state(state) or
+            state.get('an') != 5 or state.get('borderstyle',1) != 1 or
+            any(k in state for k in ('clip','iclip','org')) or
+            any(abs(state.get(k,0)) > .001 for k in ('fax','fay','fsp','p','pbo')) or
+            any(abs(state.get(k,state.get('shad',0))) > .001 for k in ('xshad','yshad')) or
+            not all(math.isfinite(v) for v in get_pos(e.text)) or
+            not 0 <= state.get('1a',0) < 128):
+        return None
+    final = state.copy();continuation = e.continuation;scaled = False;fade_begin = None
+    for tag,value in event_override_tokens(e):
+        if tag in {'move','fad','fade','r','k','kf','ko','kt'}:
+            return None
+        if tag != 't':
+            continue
+        # A target-free transform has no visual effect (including template
+        # annotations with unused timing); it supplies no evidence either.
+        if not tokenize_override(value[1:-1]):
+            continue
+        transform = parse_effect_transform(value,e.duration,
+            {'fscx','fscy','alpha','1a','3a','4a','blur','be'},allow_instant=True)
+        if transform is None:
+            return None
+        begin,_,changes = transform
+        previous = final.copy()
+        for name,argument in changes:
+            continuation = apply_override(final,name,argument,e.styles,e.defaults,continuation)
+        for axis in ('fscx','fscy'):
+            a,b = previous.get(axis,100),final.get(axis,100)
+            if not all(math.isfinite(v) and v > 0 for v in (a,b)) or b > a+.001:
+                return None
+            scaled |= b < a-.001
+        if final.get('1a',0) < previous.get('1a',0):
+            return None
+        if final.get('1a',0) > previous.get('1a',0):
+            fade_begin = e.start_s+begin/1000
+    if not scaled or final.get('1a',0) < 254:
+        return None
+    return e,final,fade_begin
+
+
+def _prove_replacement_glyph_lives(endpoints: list, parsed: dict[int,Event],
+                                  metric: FontMetrics) -> list[GlyphPhaseLife]:
+    """Bridge complete letter stacks through uniquely owned whole-syllable phases.
+
+    Only original source evidence is used. Shared pulse ownership is provisional
+    until the ordinary whole-row font, obstacle and competing-claim proofs pass.
+    """
+    def family(e):
+        return (e.style,e.name,e.margin_l,e.margin_r,e.margin_v,e.measurement,
+                tuple((k,v) for k,v in text_layout_key(e) if k not in {'an','fscx','fscy'}))
+    entries,tails = {},{}
+    for e,fade in endpoints:
+        if e.state.get('1a',0) != 0 or e.state.get('3a',0) != 0:
+            continue
+        key = family(e)
+        if fade[0]:
+            entries.setdefault(key,[]).append((e,fade))
+        else:
+            tails.setdefault((key,e.layer,get_pos(e.text),OVERRIDE_RE.sub('',e.text)),[]).append((e,fade))
+    profiles,cohorts = [],{}
+    for source in parsed.values():
+        # Avoid parsing unrelated ordinary text and already sampled frames.
+        if not re.search(r'\\t\s*\(',source.text) or not re.search(r'\\fsc[xy]',source.text):
+            continue
+        profile = _profile_glyph_replacement(source)
+        if profile is None:
+            continue
+        profiles.append(profile)
+        pulse,final,fade_begin = profile;key = family(pulse);pos = get_pos(pulse.text)
+        literal = OVERRIDE_RE.sub('',pulse.text);groups = {}
+        for entry,fade in entries.get(key,[]):
+            anchor = get_pos(entry.text);height = text_height(entry)
+            if (abs(entry.end_s-pulse.start_s) > .011 or
+                    abs(anchor[1]-pos[1]) > .02*height):
+                continue
+            word = OVERRIDE_RE.sub('',entry.text)
+            options = [(tail,exit_fade) for tail,exit_fade in tails.get((key,entry.layer,anchor,word),[])
+                       if pulse.start_s-.011 <= tail.start_s <= pulse.end_s+.011 and
+                       tail.end_s >= fade_begin-.011 and
+                       text_layout_key(entry) == text_layout_key(tail)]
+            if len(options) != 1:
+                continue
+            tail,exit_fade = options[0]
+            groups.setdefault((entry.start_s,tail.end_s,tail.start_s,entry.layer),[]).append(
+                (entry,tail,fade,exit_fade))
+        stacks = []
+        for group,pairs in groups.items():
+            pairs.sort(key=lambda p:get_pos(p[0].text)[0])
+            xs = [get_pos(p[0].text)[0] for p in pairs]
+            if (''.join(OVERRIDE_RE.sub('',p[0].text) for p in pairs) != literal or
+                    len(set(xs)) != len(xs) or int(group[-1]) >= int(pulse.layer) or
+                    not matches_authored_glyph_positions(metric,final,xs,literal,pos[0],.05*text_height(pairs[0][0]))):
+                continue
+            stacks.append((group,pairs))
+        if (not stacks or len({g[-1] for g,p in stacks}) != len(stacks) or
+                len({g[:3] for g,p in stacks}) != 1 or
+                len({tuple(get_pos(p[0].text) for p in pairs) for g,pairs in stacks}) != 1):
+            continue
+        for group,pairs in stacks:
+            cohort = cohorts.setdefault((key,group[0],group[1],pos[1]),{})
+            cohort.setdefault(group[-1],{}).update({p[0].source_index:p for p in pairs})
+
+    # Complete interior pairs prove cue bounds and the observed before/after
+    # paint relation. Boundary syllables may legitimately have no entrance or
+    # no post-highlight hold; borrow that relation only when it is unambiguous.
+    proposals = []
+    paint_tags = set(CAPTION_PAINT_TAGS)
+    def paint_key(state):
+        return tuple((k,state.get(k,DEFAULT_STATE.get(k))) for k in sorted(paint_tags))
+    for pulse,final,fade_begin in profiles:
+        pos = get_pos(pulse.text);literal = OVERRIDE_RE.sub('',pulse.text)
+        expected = authored_glyph_positions(metric,final,literal,pos[0],.05*text_height(pulse))
+        if expected is None:
+            continue
+        for (key,start,end,y),layers in cohorts.items():
+            if (family(pulse) != key or not start-.011 <= pulse.start_s < end or
+                    abs(y-pos[1]) > .02*text_height(pulse)):
+                continue
+            stacks = [];donors = set()
+            for layer,known in sorted(layers.items(),key=lambda item:int(item[0])):
+                if int(layer) >= int(pulse.layer):
+                    break
+                palette = {}
+                for entry,tail,ingress,exit_fade in known.values():
+                    palette.setdefault(paint_key(entry.state),{}).setdefault(paint_key(tail.state),tail.state)
+                    donors.update((entry.source_index,tail.source_index))
+                reference = next(iter(known.values()))
+                pairs = []
+                for char,x in expected:
+                    radius = .075*text_height(reference[0])
+                    before = [(e,f) for e,f in entries.get(key,[]) if e.layer == layer and
+                              e.start_s == start and abs(e.end_s-pulse.start_s) <= .011 and
+                              OVERRIDE_RE.sub('',e.text) == char and
+                              abs(get_pos(e.text)[0]-x) <= radius and abs(get_pos(e.text)[1]-y) <= .001]
+                    after = [(e,f) for (k,l,anchor,word),phases in tails.items()
+                             if k == key and l == layer and word == char and
+                             abs(anchor[0]-x) <= radius and abs(anchor[1]-y) <= .001
+                             for e,f in phases if e.end_s == end and
+                             pulse.start_s-.011 <= e.start_s <= pulse.end_s+.011]
+                    if (len(before)>1 or len(after)>1 or not before and not after or
+                            not before and abs(pulse.start_s-start)>.011 or
+                            not after and abs(fade_begin-end)>.011):
+                        break
+                    entry,ingress = before[0] if before else (None,reference[2])
+                    tail,exit_fade = after[0] if after else (None,reference[3])
+                    if entry is not None and tail is not None and (
+                            get_pos(entry.text) != get_pos(tail.text) or
+                            text_layout_key(entry) != text_layout_key(tail)):
+                        break
+                    if tail is not None:
+                        state = tail.state
+                    else:
+                        choices = palette.get(paint_key(entry.state),{})
+                        if len(choices) != 1:
+                            break
+                        selected = next(iter(choices.values()))
+                        state = {**entry.state,**{k:selected[k] for k in paint_tags if k in selected}}
+                    pairs.append((entry,tail,ingress,exit_fade,state))
+                else:
+                    stacks.append((layer,pairs))
+                    continue
+                break
+            if len(stacks) != len(layers):
+                continue
+            # Every plane must describe the same letters and anchors. Shared
+            # source IDs authorize only atomic whole-cue ownership downstream.
+            anchors = [tuple(get_pos((p[1] or p[0]).text) for p in pairs) for layer,pairs in stacks]
+            if len(set(anchors)) != 1:
+                continue
+            members = tuple(e for layer,pairs in stacks for p in pairs for e in p[:2] if e is not None)+(pulse,)
+            required = frozenset(donors)|frozenset(e.source_index for e in members)
+            lives = []
+            for i,(entry,tail,ingress,exit_fade,state) in enumerate(stacks[-1][1]):
+                supports = [pairs[i][4] for layer,pairs in stacks]
+                proof = _source_caption_paint(state,supports)
+                if proof is None:
+                    break
+                source = tail or entry
+                text = render_simplified_caption(state,expected[i][0],source_paint=proof,measurement=source.measurement)
+                # Keep original anchor precision until the whole-row advance
+                # fit finishes; this is an evidence pose, not final output.
+                anchor = get_pos(source.text)
+                text = POS_RE.sub(lambda _: '\\pos('+','.join(format(v,'.12g') for v in anchor)+')',text,count=1)
+                pose = replace_event(source,text=text,effect='')
+                owned = tuple(e for layer,pairs in stacks for e in pairs[i][:2] if e is not None)+(pulse,)
+                core = (min(entry.end_s,start+ingress[0]) if entry is not None else start,
+                        max(tail.start_s,end-exit_fade[1]) if tail is not None else fade_begin)
+                if core[1]-core[0] < .32-1e-6:
+                    break
+                lives.append(GlyphPhaseLife(owned,pose,expected[i][0],start,max(end,pulse.end_s),core,required))
+            else:
+                proposals.append((frozenset(e.source_index for e in members),lives))
+    claims = collections.Counter(i for ids,lives in proposals for i in ids)
+    return [life for ids,lives in proposals if all(claims[i] == 1 for i in ids) for life in lives]
 
 
 def _prove_glyph_phase_lives(slots: list, max_piece_duration: float) -> list[GlyphPhaseLife]:
@@ -14022,6 +14244,88 @@ def _prove_glyph_phase_lives(slots: list, max_piece_duration: float) -> list[Gly
     return lives
 
 
+def _glyph_replacement_row_is_clear(caption: Event, core: tuple[float,float],
+                                    members: set[int], highest: int,
+                                    parsed: dict[int,Event], metric: FontMetrics,
+                                    poses: list[Event]) -> bool:
+    """Prove intervening paint cannot obscure newly assembled readable content.
+
+    The established fade-core handoff owns neighboring cue tails. This check
+    covers independent content during the common readable core, including
+    other styles and ordinary implicit-position captions.
+    """
+    # Layout and source advances have already been proved for every glyph.
+    # Measure the common geometry with the union of its contour footprints;
+    # intentional paint spans must not make that geometry unknown again.
+    state = caption.state.copy()
+    for k in ('bord','xbord','ybord','blur','be'):
+        state[k] = max(e.state.get(k,e.state.get('bord',0) if k.endswith('bord') else 0) for e in poses)
+    probe = dataclass_replace(caption,state=state,
+        text='{'+render_tag('pos',get_pos(caption.text))+'}'+OVERRIDE_RE.sub('',caption.text))
+    box = caption_bounds(probe,metric)
+    if box is None:
+        return False
+    for other in parsed.values():
+        if (other.kind != 'Dialogue' or other.source_index in members or
+                other.start_s >= core[1] or other.end_s <= core[0]):
+            continue
+        if other.layer.lstrip('-').isdigit() and not int(caption.layer) <= int(other.layer) <= highest:
+            continue
+        evaluated = event_evaluation(other)
+        peer = dataclass_replace(other,state=evaluated.formatting,continuation=evaluated.continuation)
+        geometry = {k for k,_ in text_layout_key(peer)}|{'pos','move','clip','iclip','r','fr','a','fe',
+            'bord','xbord','ybord','shad','xshad','yshad','blur','be','p'}
+        bounded = {'fscx','fscy','bord','xbord','ybord','shad','xshad','yshad','blur','be'}
+        samples = [peer.state];live = peer.state.copy();continuation = peer.continuation
+        for tag,value in event_override_tokens(peer):
+            if tag != 't':
+                continue
+            changes = tokenize_override(value[1:-1])
+            if any(k in geometry-bounded for k,_ in changes):
+                return False
+            if not changes:
+                continue
+            transform = parse_effect_transform(value,peer.duration,bounded|set(CAPTION_PAINT_TAGS)|{'alpha','c'},allow_instant=True)
+            if transform is None:
+                return False
+            for name,argument in changes:
+                continuation = apply_override(live,name,argument,peer.styles,peer.defaults,continuation)
+            samples.append(live.copy())
+        # Fixed-anchor, fixed-font scale/stroke changes have a conservative
+        # envelope from component maxima, even with overlapping transforms.
+        # This keeps distant animated peers eligible without trusting just
+        # their initial box or mistaking a growing peer for disjoint content.
+        envelope = peer.state.copy()
+        for k in bounded:
+            values = [st.get(k,st.get(k[1:],0) if k in {'xbord','ybord','xshad','yshad'} else
+                             100 if k in {'fscx','fscy'} else 0) for st in samples]
+            if any(not math.isfinite(v) or k in {'fscx','fscy'} and v<=0 for v in values):
+                return False
+            envelope[k] = max(abs(v) for v in values)
+        envelope['1a'] = 0  # Bound possible primary ink, including fade-ins.
+        peer = dataclass_replace(peer,state=envelope)
+        implicit = get_pos(peer.text) is None
+        available = None
+        if implicit and peer.measurement.canvas is not None and not re.search(r'\\(?:move|t)\s*\(',peer.text):
+            width,height = peer.measurement.canvas
+            st = peer.state;alignment = int(st.get('an',2))
+            if alignment not in range(1,10):
+                return False
+            left,right,vertical = (float(value) or st.get(tag,0) for value,tag in
+                ((peer.margin_l,'marginl'),(peer.margin_r,'marginr'),(peer.margin_v,'marginv')))
+            x = (left,(width+left-right)/2,width-right)[(alignment-1)%3]
+            y = (height-vertical,height/2,vertical)[(alignment-1)//3]
+            peer = replace_event(peer,text=set_pos(peer.text,(x,y)))
+            available = width-left-right
+        peer_box = caption_bounds(peer,metric)
+        if implicit and peer_box is not None and available is not None and peer_box[2]-peer_box[0] > available:
+            peer_box = None  # Automatic wrapping could change its footprint.
+        if (peer_box is None or not (peer_box[2] < box[0] or box[2] < peer_box[0] or
+                                     peer_box[3] < box[1] or box[3] < peer_box[1])):
+            return False
+    return True
+
+
 def reconstruct_glyph_lifecycles(parsed: dict[int,Event], metric: FontMetrics | None, *,
                                   max_piece_duration: float=.16,
                                   font_report: FontProcessingReport | None=None) -> TextPhaseRowsResult:
@@ -14034,8 +14338,9 @@ def reconstruct_glyph_lifecycles(parsed: dict[int,Event], metric: FontMetrics | 
     events = list(parsed.values())
     if metric is None or not metric.available:
         return TextPhaseRowsResult(events,0,[],{})
-    slots,obstacles = _index_glyph_phase_slots(parsed,metric,max_piece_duration,font_report)
+    slots,obstacles,endpoints = _index_glyph_phase_slots(parsed,metric,max_piece_duration,font_report)
     lives = _prove_glyph_phase_lives(slots,max_piece_duration)
+    lives += _prove_replacement_glyph_lives(endpoints,parsed,metric)
     groups = {}
     bands = {}
     for life in sorted(lives,key=lambda l:get_pos(l.pose.text)[1]):
@@ -14065,12 +14370,17 @@ def reconstruct_glyph_lifecycles(parsed: dict[int,Event], metric: FontMetrics | 
         if len(run) < 4:
             continue
         ordered = [l.pose for l in run];fragments = [l.literal for l in run]
-        fit = recover_font_row(metric,ordered,fragments,max_size_error=.05,font_report=font_report)
+        replacement = any(l.required_members for l in run)
+        fit = recover_font_row(metric,ordered,fragments,max_size_error=.05,
+                               font_report=font_report,fit_scale=replacement)
         if fit is None:
             continue
         literal,center,sx,sy,alignment = fit
         core = (max(l.core[0] for l in run),min(l.core[1] for l in run))
+        start,end = min(l.start_s for l in run),max(l.end_s for l in run)
         members = {e.source_index for l in run for e in l.members}
+        if any(not life.required_members <= members for life in run):
+            continue
         xs = [get_pos(e.text)[0] for e in ordered];y = statistics.median(get_pos(e.text)[1] for e in ordered);height=text_height(ordered[0])
         if any(e.source_index not in members and e.start_s < core[1] and e.end_s > core[0] and
                (pos is None or abs(pos[1]-y) <= .15*height and
@@ -14079,16 +14389,20 @@ def reconstruct_glyph_lifecycles(parsed: dict[int,Event], metric: FontMetrics | 
             continue
         # Verify every glyph against the completed literal at the retained
         # font size, not merely successive pairwise spacing fits.
-        if not matches_authored_glyph_positions(metric,ordered[0].state,xs,literal,center,.05*height):
+        measured = {**ordered[0].state,'fscx':sx}
+        if not matches_authored_glyph_positions(metric,measured,xs,literal,center,.05*height):
             continue
         body = render_merged_caption(ordered,fragments,literal,animated=True,
             an=alignment,pos=(center,y),fscx=sx,fscy=sy,fsp=0)
         if body is None:
             continue
-        start,end = min(l.start_s for l in run),max(l.end_s for l in run)
         index = min(members)
         caption = replace_event(ordered[0],text=body,source_index=index,
             start=format_time(start),end=format_time(end),start_s=start,end_s=end,effect='')
+        if replacement:
+            highest = max(int(e.layer) for life in run for e in life.members)
+            if not _glyph_replacement_row_is_clear(caption,core,members,highest,parsed,metric,ordered):
+                continue
         row = TextRow(caption,[(e,word,get_pos(e.text)) for e,word in zip(ordered,fragments)],phase_core=core)
         proposals.append((members,row,literal))
     claims = collections.Counter(i for ids,row,literal in proposals for i in ids)

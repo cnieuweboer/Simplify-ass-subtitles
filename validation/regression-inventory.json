@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.14.201",
+  "version": "2026.10.15.205",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -415,6 +415,16 @@
       "script": "tests/check_matched_backing_fades_render.py",
       "status": "current",
       "category": "native rendering"
+    },
+    {
+      "script": "tests/check_syllable_lifecycles.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "tests/check_syllable_lifecycles_render.py",
+      "status": "current",
+      "category": "render"
     }
   ],
   "historical": [

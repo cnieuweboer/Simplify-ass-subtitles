@@ -60,7 +60,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 83 current scripts. The runner uses three workers for
+The suite inventory lists 85 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
@@ -277,3 +277,7 @@ paint handoff through shared foreground/backing fades. The optional scrolling
 cap and motion policy are unchanged. Its corpus runner regenerates v202 with the
 current fonts before comparing; the native probe verifies the MKV's actual
 Uniform Bold face and checks actual viewport pixels separately from paint crops.
+
+Source-aware letter-to-syllable replacements (v205), exact-font ownership,
+annotation admission and native shorthand alpha handling are documented in
+[SYLLABLE_LIFECYCLES.md](SYLLABLE_LIFECYCLES.md).
