@@ -33,6 +33,11 @@ and justify algorithmic complexity with measured performance gains. Tests should
 protect intended text, paint, timing, ownership and compositing behavior;
 historical release scope audits must not dictate the future implementation.
 
+After each change, briefly report whether anything was introduced or uncovered
+that deserves a dedicated follow-up review. Examples include workarounds, local
+exceptions, duplicated logic, unclear ownership, fragile assumptions, or changes
+that interact with unrelated subsystems. If nothing stands out, say so briefly.
+
 For a behavior change, reproduce the failure, add or extend a focused existing
 check, and verify representative text, paint, timing, source ownership and
 idempotence where relevant. Preserve source/cache immutability and document

@@ -34,6 +34,10 @@ They apply to future changes and reviews of existing code.
   multiplicity, compositing, source ownership and useful reductions. Historical
   AST/scope audits can document a release, but exact function counts, helper
   names or pass placement should not obstruct a justified structural change.
+- After each change, briefly report whether anything was introduced or uncovered
+  that deserves a dedicated follow-up review. Examples include workarounds, local
+  exceptions, duplicated logic, unclear ownership, fragile assumptions, or changes
+  that interact with unrelated subsystems. If nothing stands out, say so briefly.
 
 ## Review of v183–v185
 
