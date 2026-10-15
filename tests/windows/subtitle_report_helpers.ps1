@@ -1,5 +1,40 @@
-# Shared aggregate reporting for both test wrappers (Windows PowerShell 5.1+).
+# Shared lookup and aggregate reporting for both test wrappers (Windows PowerShell 5.1+).
 # Raw per-track statistics remain untouched, including legacy and unknown keys.
+function Resolve-SubtitleSimplifier([string] $ScriptRoot, [string] $Simplifier) {
+    if ($Simplifier) {
+        if (-not (Test-Path -LiteralPath $Simplifier -PathType Leaf)) {
+            throw "Cannot find the requested simplifier: $Simplifier"
+        }
+        return (Resolve-Path -LiteralPath $Simplifier).Path
+    }
+    foreach ($candidate in @(
+        (Join-Path $ScriptRoot 'simplify_ass.py'),
+        (Join-Path $ScriptRoot '../../simplify_ass.py')
+    )) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+    foreach ($directory in ($env:PATH -split [IO.Path]::PathSeparator)) {
+        if ([string]::IsNullOrWhiteSpace($directory)) { continue }
+        $directory = [Environment]::ExpandEnvironmentVariables($directory.Trim().Trim('"'))
+        if (-not (Test-Path -LiteralPath $directory -PathType Container -ErrorAction SilentlyContinue)) { continue }
+        $candidate = Join-Path $directory 'simplify_ass.py'
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+        foreach ($launcher in @('subtitle_tools.cmd', 'simplify_subtitles.cmd', 'subtitle_tools_update.cmd')) {
+            if (Test-Path -LiteralPath (Join-Path $directory $launcher) -PathType Leaf) {
+                $candidate = Join-Path $directory '../simplify-ass/simplify_ass.py'
+                if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                    return (Resolve-Path -LiteralPath $candidate).Path
+                }
+            }
+        }
+    }
+    throw 'Cannot find simplify_ass.py beside the test script, at the repository root, or on PATH. Use -Simplifier to specify it.'
+}
+
 function Get-SubtitleCounterCatalog([int] $Level = 1) {
     $filters = [ordered]@{
         deduped = 'duplicate layers removed'

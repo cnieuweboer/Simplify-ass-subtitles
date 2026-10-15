@@ -120,12 +120,7 @@ function Get-SimplifierHelp([string] $PythonPath, [string] $SimplifierPath) {
 
 $ErrorActionPreference = 'Stop'
 if (-not $InputFolder) { $InputFolder = (Get-Location).Path }
-if (-not $Simplifier) {
-    $Simplifier = Join-Path $PSScriptRoot 'simplify_ass.py'
-    if (-not (Test-Path -LiteralPath $Simplifier -PathType Leaf)) {
-        $Simplifier = Join-Path $PSScriptRoot '../../simplify_ass.py'
-    }
-}
+$Simplifier = Resolve-SubtitleSimplifier -ScriptRoot $PSScriptRoot -Simplifier $Simplifier
 
 function Resolve-MkvTool([string] $Name) {
     if ($MkvToolNixFolder) {

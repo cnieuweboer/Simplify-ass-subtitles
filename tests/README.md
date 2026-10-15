@@ -14,8 +14,13 @@ Restore local fonts and fixtures as described in
 `validation/` distinguishes current checks from historical harnesses.
 
 Windows batch-testing and PowerShell reporting scripts are in `windows/`.
-Their default converter paths point back to the production script at the root;
-the step-two batch launcher defaults to root-level `cache/` and `results/`.
+They look for `simplify_ass.py` beside themselves, at the repository root, then
+on PATH (including the Windows installer's `bin` layout). `-Simplifier` overrides
+lookup. The step-two BAT defaults to `cache/` and `results/` beside the BAT.
+
+```powershell
+.\tests\windows\check_simplifier_lookup.ps1
+```
 
 Standalone track-removal checks:
 
