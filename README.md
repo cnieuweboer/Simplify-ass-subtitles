@@ -30,8 +30,7 @@ subtitle_tools -i "D:\Media" -o "D:\Cleaned" -r
 - `-f` / `--fonts-dir`: loose-font folder for simplification or font sync.
 - `--help`: show options for the tool selected in the menu.
 
-Flag changes edit originals in place and do not accept `-o`. Update ignores
-media-processing options. [Installer details](installer/windows/README.md).
+Flag changes edit originals in place and do not require or accept `-o`.
 
 | Script | Task |
 | --- | --- |
