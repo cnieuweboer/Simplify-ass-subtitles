@@ -41,7 +41,6 @@ media-processing options. [Installer details](installer/windows/README.md).
 | `sync_fonts.py` | Remove unused fonts and optionally add missing fonts |
 
 For file/folder drag-and-drop targets, see [dnd helper](dnd%20helper/README.md).
-For Windows PATH launchers, see [installer/windows](installer/windows/README.md).
 
 ## Setup
 
