@@ -42,9 +42,9 @@ class UpdaterChecks(unittest.TestCase):
         self.sha = "a" * 40
         self.tree_sha = "b" * 40
         self.files = {tool + ".py": ("# updated " + tool + "\n").encode() for tool in (*TOOLS, "simplify_ass")}
-        for name in ("install.py", "subtitle_tools_update.py"):
+        for name in ("install.py", "subtitle_tools_update.py", "subtitle_tools.py"):
             self.files["installer/windows/" + name] = (INSTALLER / name).read_bytes()
-        for tool in (*TOOLS, "subtitle_tools_update"):
+        for tool in (*TOOLS, "subtitle_tools_update", "subtitle_tools"):
             name = "installer/windows/bin/" + tool + ".cmd"
             self.files[name] = (INSTALLER / "bin" / (tool + ".cmd")).read_bytes()
         self.calls = []
@@ -71,9 +71,9 @@ class UpdaterChecks(unittest.TestCase):
             self.assertEqual(self.updater.update(self.target), self.sha)
         for tool in (*TOOLS, "simplify_ass"):
             self.assertEqual((self.target / "simplify-ass" / (tool + ".py")).read_bytes(), self.files[tool + ".py"])
-        for name in ("install.py", "subtitle_tools_update.py"):
+        for name in ("install.py", "subtitle_tools_update.py", "subtitle_tools.py"):
             self.assertEqual((self.target / "simplify-ass" / name).read_bytes(), self.files["installer/windows/" + name])
-        for tool in (*TOOLS, "subtitle_tools_update"):
+        for tool in (*TOOLS, "subtitle_tools_update", "subtitle_tools"):
             self.assertEqual((self.target / "bin" / (tool + ".cmd")).read_bytes(), self.files["installer/windows/bin/" + tool + ".cmd"])
         self.assertEqual((self.target / "bin/other-tool.cmd").read_text(), "unrelated")
         self.assertEqual((self.target / "simplify-ass/user.mkv").read_text(), "user media")
@@ -104,7 +104,8 @@ class UpdaterChecks(unittest.TestCase):
     def check_rollback(self, interrupt):
         # Simulate upgrading an installation made before updater support existed.
         for path in (self.target / "simplify-ass/install.py", self.target / "simplify-ass/subtitle_tools_update.py",
-                     self.target / "bin/subtitle_tools_update.cmd"):
+                     self.target / "bin/subtitle_tools_update.cmd", self.target / "simplify-ass/subtitle_tools.py",
+                     self.target / "bin/subtitle_tools.cmd"):
             path.unlink()
         self.before = snapshot(self.target)
         original = Path.replace

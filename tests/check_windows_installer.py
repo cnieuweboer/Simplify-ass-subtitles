@@ -59,7 +59,7 @@ class InstallerChecks(unittest.TestCase):
             for name in TOOLS:
                 self.assertEqual((target / "bin" / (name + ".cmd")).read_bytes(),
                                  (repository / "installer/windows/bin" / (name + ".cmd")).read_bytes())
-            self.assertEqual(len(list(target.rglob("*.py"))), 7)
+            self.assertEqual(len(list(target.rglob("*.py"))), 8)
             (repository / "simplify_ass.py").write_text("# version two\n")
             result = self.run_installer(repository, "--target", str(target))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -137,7 +137,7 @@ class InstallerChecks(unittest.TestCase):
             result = subprocess.run([sys.executable, str(repository / "installer/windows/install.py"), str(target)],
                                     input="2\nn\n", capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn("Removed 12 installed file(s)", result.stdout)
+            self.assertIn("Removed 14 installed file(s)", result.stdout)
             self.assertEqual(other.read_text(), "other tool")
             self.assertEqual(media.read_text(), "user media")
             self.assertFalse(any(path.exists() for path in load_installer().installed_files(target)))
@@ -310,7 +310,7 @@ class MaintenanceChecks(unittest.TestCase):
             repository.rename(placed / "simplify-ass")
             with patch.object(installer, "unblock") as unblock:
                 installer.install(placed / "simplify-ass", placed)
-            self.assertEqual(unblock.call_count, 12)
+            self.assertEqual(unblock.call_count, 14)
 
     def test_prompt_only_accepts_listed_keys_and_defaults_to_no_or_cancel(self):
         installer = self.installer

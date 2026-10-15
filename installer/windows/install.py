@@ -13,13 +13,13 @@ import tempfile
 
 TOOLS = ("simplify_subtitles", "remove_subtitles", "subtitle_flags", "sync_fonts")
 WINDOWS = os.name == "nt"
-MAINTENANCE = ("install.py", "subtitle_tools_update.py")
+MAINTENANCE = ("install.py", "subtitle_tools_update.py", "subtitle_tools.py")
 
 
 def installed_files(target):
     return ([target / "simplify-ass" / (tool + ".py") for tool in (*TOOLS, "simplify_ass")]
             + [target / "simplify-ass" / name for name in MAINTENANCE]
-            + [target / "bin" / (tool + ".cmd") for tool in (*TOOLS, "subtitle_tools_update")])
+            + [target / "bin" / (tool + ".cmd") for tool in (*TOOLS, "subtitle_tools_update", "subtitle_tools")])
 
 
 def unblock(path):
@@ -155,7 +155,7 @@ def install(repository, target):
     files.append((repository / "simplify_ass.py", tool_dir / "simplify_ass.py"))
     files.extend((launchers.parent / name, tool_dir / name) for name in MAINTENANCE)
     files.extend((launchers / (tool + ".cmd"), bin_dir / (tool + ".cmd"))
-                 for tool in (*TOOLS, "subtitle_tools_update"))
+                 for tool in (*TOOLS, "subtitle_tools_update", "subtitle_tools"))
     # Check the complete source set before creating or updating anything.
     for source, destination in files:
         if not source.is_file():

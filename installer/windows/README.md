@@ -19,6 +19,7 @@ C:\Tools\
         subtitle_flags.cmd
         sync_fonts.cmd
         subtitle_tools_update.cmd
+        subtitle_tools.cmd
     simplify-ass\
         simplify_ass.py
         simplify_subtitles.py
@@ -27,6 +28,7 @@ C:\Tools\
         sync_fonts.py
         install.py
         subtitle_tools_update.py
+        subtitle_tools.py
 ```
 
 The installer unblocks the files it installs and asks whether to add your `bin`
@@ -57,6 +59,18 @@ subtitle_flags --input "D:\Media\episode.mkv"
 sync_fonts -i "D:\Media" -o "D:\Cleaned" -f "D:\Fonts"
 ```
 
+Or start the single-key tool menu:
+
+```cmd
+subtitle_tools
+subtitle_tools -i "D:\Media" -r
+```
+
+Press `1`–`5` to start a tool immediately, or `q` to cancel. Processing options
+pass unchanged to the selected tool; its own confirmation still applies.
+The flag tool edits in place and does not accept `-o`. Update always updates
+this installation and ignores media-processing options.
+
 Launchers default to the current folder. `-i` / `--input` overrides it; other
 options pass through unchanged. Use an input option rather than positional input.
 Folder scans remain nonrecursive unless `-r` / `--recursive` is supplied.
@@ -73,4 +87,5 @@ current folder. It downloads one fixed GitHub revision and verifies all files
 before replacing anything. Replacement failures roll back the changes; if a
 file cannot be restored, the error identifies the retained recovery folder.
 PATH, Python packages, MKVToolNix, and unrelated files are unchanged.
-Existing installations need one reinstall to add the updater command.
+Existing installations without the updater need one reinstall to add it.
+Otherwise, `subtitle_tools_update` also installs the new menu command.

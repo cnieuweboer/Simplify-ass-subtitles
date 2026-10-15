@@ -52,8 +52,8 @@ def fetch_checkout(directory):
              if entry.get("type") == "blob" and entry.get("mode") in ("100644", "100755")
              and selected_file(entry["path"])}
     required = ({tool + ".py" for tool in (*TOOLS, "simplify_ass")}
-                | {f"installer/windows/{name}.py" for name in ("install", "subtitle_tools_update")}
-                | {f"installer/windows/bin/{tool}.cmd" for tool in (*TOOLS, "subtitle_tools_update")})
+                | {f"installer/windows/{name}.py" for name in ("install", "subtitle_tools_update", "subtitle_tools")}
+                | {f"installer/windows/bin/{tool}.cmd" for tool in (*TOOLS, "subtitle_tools_update", "subtitle_tools")})
     if not required.issubset(files):
         raise RuntimeError("GitHub revision is missing required tool or launcher files")
     print(f"GitHub revision: {sha[:12]}", flush=True)
