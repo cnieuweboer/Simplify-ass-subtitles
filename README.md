@@ -28,12 +28,12 @@ subtitle_tools -i "D:\Media" -o "D:\Cleaned" -r
 - `-f` / `--fonts-dir`: loose-font folder for simplification or font sync.
 - `--help`: show options for the tool selected in the menu.
 
-Flag changes edit originals in place and do not require or accept `-o`.
+Property changes edit originals in place and do not require or accept `-o`.
 
 | Script | Task |
 | --- | --- |
 | `simplify_subtitles.py` | Simplify embedded ASS/SSA subtitles |
-| `subtitle_flags.py` | Set or clear default and forced flags **in place** |
+| `subtitle_properties.py` | Rename tracks or set/clear flags **in place** |
 | `subtitle_tracks.py` | Add or remove subtitle tracks |
 | `sync_fonts.py` | Remove unused fonts and optionally add missing fonts |
 
@@ -48,7 +48,7 @@ python -m pip install Pillow fonttools uharfbuzz
 ```
 
 `sync_fonts.py` needs fonttools; the simplifier also needs Pillow and uharfbuzz.
-The flag and removal tools use Python's standard library.
+The properties and track tools use Python's standard library.
 
 The end-user Python tools work on Windows, Linux, and macOS.
 Use `python3` instead of `python` where needed. Double-clicking a Python file
@@ -56,8 +56,8 @@ requires a Python file association.
 
 Without arguments, they scan beside the script without visiting subfolders.
 Use `-r` / `--recursive` to include subfolders; `output/` folders are excluded.
-Simplification, removal, and font sync write to `output/` beside each source MKV,
-preserving originals and skipping existing outputs. Flag changes edit the originals.
+Simplification, track additions/removals, and font sync write to `output/` beside each source MKV,
+preserving originals and skipping existing outputs. Property changes edit the originals.
 All four tools accept a folder or one MKV via `-i` / `--input` or positional input.
 For one MKV, output defaults to its parent folder's `output/`.
 
@@ -103,12 +103,20 @@ python simplify_ass.py input.ass --font-mkv episode.mkv
 
 Default output: `input.simple.ass`. Current converter version: **2026.10.14.190**.
 
-## Subtitle flags
+## Subtitle properties
 
 ```console
-python subtitle_flags.py
-python subtitle_flags.py media
+python subtitle_properties.py
+python subtitle_properties.py -i media --recursive
+python subtitle_properties.py -i media/episode.mkv
 ```
+
+Choose **1** for default/forced flags or **2** to rename tracks. Select groups by
+number, then accept or replace each suggested name; `-` clears a name. Review the
+changes before confirming. Both actions edit originals in place.
+
+Run directly for now; installed launchers still use `subtitle_flags.py` until
+the installer migration.
 
 ## Add or remove subtitle tracks
 
