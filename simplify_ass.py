@@ -40,8 +40,12 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.14.201"
+__version__ = "2026.10.14.202"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
+# Reconstructed source contours keep thinner/axis-specific widths, but cap each
+# axis in ASS script units. Ordinary retained events are not subject to this cap.
+# Coverage uses the emitted state; source grouping still uses original extents.
+MAX_PROVED_CAPTION_BORDER = 2.
 
 
 def mark_generated(lines: list[str]) -> list[str]:
@@ -1576,7 +1580,7 @@ def _source_caption_paint(state: dict, sources: Iterable[dict]) -> SourceCaption
             contours.add((color,round(alpha),widths))
     if len(contours)==1:
         color,alpha,widths = next(iter(contours))
-        return SourceCaptionPaint(fill,color,alpha,tuple(min(2.,w) for w in widths))
+        return SourceCaptionPaint(fill,color,alpha,tuple(min(MAX_PROVED_CAPTION_BORDER,w) for w in widths))
     if contours or any(source.get('1a',0) >= 255 or
                        str(source.get('1c','')).upper() != fill or
                        any(source.get(k,source.get('shad',0)) for k in ('xshad','yshad'))
@@ -9321,8 +9325,11 @@ def _shared_interval_bounds(context: SharedIntervalContext, e: Event) -> tuple |
                 state[k] = max(abs(p.get(k,p.get(k[1:],0))) for p in states)
             for k in ('blur','be'):
                 state[k] = max(abs(p.get(k,0)) for p in states)
-            probe = replace_event(e,state=state,
-                text=e.text[:prefix]+OVERRIDE_RE.sub('',suffix))
+            # Replacing text reparses its formatting. Install the accumulated
+            # source extents afterwards, or a narrow final span can erase the
+            # larger border/shadow/blur footprint needed for compositing proof.
+            probe = replace_event(e,text=e.text[:prefix]+OVERRIDE_RE.sub('',suffix))
+            probe = replace_event(probe,state=state)
         box = caption_bounds(probe,context.metric)
         if box is not None:
             pad = 2*abs(probe.state.get('blur',0))+abs(probe.state.get('be',0))

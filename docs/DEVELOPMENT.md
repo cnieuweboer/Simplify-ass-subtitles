@@ -60,7 +60,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 80 current scripts. The runner uses three workers for
+The suite inventory lists 81 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
@@ -264,3 +264,10 @@ See [INLINE_PAINT_OWNERSHIP.md](INLINE_PAINT_OWNERSHIP.md) for v201's correspond
 source spans, retained transparency and invisible spacing, and separate paint/
 geometry handoff. `python validation/run_inline_paint_corpus.py` compares fresh
 outputs against verified local v200 baselines and traces retained composites.
+
+See [THICK_OUTLINE_POLICY.md](THICK_OUTLINE_POLICY.md) for v202's retained
+reconstruction-only outline cap and corrected original inline extent handoff.
+`python validation/run_outline_policy_review.py --compare-authored` compares
+fresh capped and isolated authored-width conversions against verified v201
+baselines; `python validation/render_outline_policy_review.py` renders the
+resulting real/synthetic examples. The experimental engine remains local.

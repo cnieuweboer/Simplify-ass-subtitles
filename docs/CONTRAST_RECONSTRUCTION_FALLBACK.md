@@ -30,6 +30,10 @@ vertical widths. Thick contours keep the established two-script-unit cap. This
 preserves the simplification budget and prevents larger reconstructed stroke
 footprints from changing otherwise valid row grouping. The v197 backing and
 returning-glow approximations retain their two-unit measured contour and alpha.
+v202 retains this as an explicit reconstruction policy after real/synthetic
+rendering and full-corpus comparison; ordinary retained events are not globally
+capped. Source compositing proofs measure original extents and later coverage
+measures emitted extents. See [THICK_OUTLINE_POLICY.md](THICK_OUTLINE_POLICY.md).
 
 A coupled source fill/outline fade is normalized along with the renderer's
 existing opaque fill selection; independent contour transparency remains authored.

@@ -158,7 +158,21 @@ for i,text in enumerate((r'{\rOther\pos(100,100)}A{\bord2\xbord8}B{\shad2\xshad4
         check(str(i)+' bounds cache',out==again and len(captured)<=1)
         check(str(i)+' bounds input ownership',before==snapshot(e))
         outputs.append((out,captured,trace))
-    check(str(i)+' inline bounds parity',outputs[0]==outputs[1])
+    if i == 2:
+        check('inline geometry remains unknown',outputs[0]==outputs[1] and outputs[1][0] is None)
+    else:
+        # v202 corrects the old measurement handoff. Historical spelling/trace
+        # remains useful parser evidence; its lost stroke/blur extent is not the
+        # intended compositing behavior.
+        check(str(i)+' inline bounds parser continuation',outputs[0][2]==outputs[1][2])
+        old_state,new_state=outputs[0][1][0],outputs[1][1][0]
+        check(str(i)+' unchanged inline layout',all(old_state.get(k)==new_state.get(k)
+            for k in ('fn','fs','an','pos','frz','fscx','fscy')))
+        expected = ((8.,4.,4.,3.,0.,0.) if i == 0 else (4.,4.,3.,3.,4.,0.))
+        check(str(i)+' complete original inline extents',tuple(new_state[k]
+            for k in ('xbord','ybord','xshad','yshad','blur','be'))==expected)
+        check(str(i)+' inline soft-edge clearance',outputs[1][0]==
+            ((10.,20.,30.,40.) if i == 0 else (2.,12.,38.,48.)))
 
 # Held-glyph proof reads the emitted per-character paint without annotating rows
 # or events. Include accepted/rejected rows and a reset across literal glyphs.

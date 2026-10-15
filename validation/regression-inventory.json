@@ -400,6 +400,11 @@
       "script": "tests/check_inline_paint_ownership_render.py",
       "status": "current",
       "category": "native rendering"
+    },
+    {
+      "script": "tests/check_outline_policy_render.py",
+      "status": "current",
+      "category": "paint and geometry"
     }
   ],
   "historical": [

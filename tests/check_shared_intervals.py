@@ -76,6 +76,15 @@ for name,parts,font,animated in [
 # change. Equivalent layer spellings refer to the same rendering layer.
 parts=base[:1]+[event('X',515,1,3,layer='00').replace(',ED-R,,',',ED-R,other,')]+base[1:]
 a,b,rows,tails=merge(parts);ok('interleaved object rejected',rows==0);coverage(a,b,'interleaved')
+# A distant anchor can still paint across a row through a wide inline contour.
+# Narrow final spans must not erase that footprint before order is checked.
+for width,expected_rows in ((0,1),(100,1),(300,0)):
+ neighbor=event(r'X{\xbord'+str(width)+r'}X{\xbord0}X',800,1,3).replace(',ED-R,,',',ED-R,other,')
+ parts=base[:2]+[neighbor]+base[2:]
+ a,b,rows,tails=merge(parts)
+ ok('original inline contour order '+str(width),rows==expected_rows)
+ coverage(a,b,'inline contour '+str(width))
+ if not expected_rows:ok('occluding original spans remain intact',[e.fields() for e in a]==[e.fields() for e in b])
 # Paint-only equal-time rows are useful too; no tails or visibility expansion.
 parts=[event(c,x,1,2,extra+r'\1c&H'+colors[i]+'&') for i,(c,x) in enumerate(letters)]
 a,b,rows,tails=merge(parts);ok('equal-time gradient joins',rows==1 and tails==0);coverage(a,b,'equal-time')
