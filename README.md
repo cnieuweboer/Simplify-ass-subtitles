@@ -10,6 +10,7 @@ Simplify ASS/SSA subtitles and manage subtitle tracks and fonts in MKV files.
 | `sync_fonts.py` | Remove unused fonts and optionally add missing fonts |
 
 For file/folder drag-and-drop targets, see [dnd helper](dnd%20helper/README.md).
+For Windows PATH launchers, see [installer/windows](installer/windows/README.md).
 
 ## Setup
 
