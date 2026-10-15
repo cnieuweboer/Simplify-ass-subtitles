@@ -34,7 +34,7 @@ Flag changes edit originals in place and do not require or accept `-o`.
 | --- | --- |
 | `simplify_subtitles.py` | Simplify embedded ASS/SSA subtitles |
 | `subtitle_flags.py` | Set or clear default and forced flags **in place** |
-| `remove_subtitles.py` | Remove selected subtitles |
+| `subtitle_tracks.py` | Add or remove subtitle tracks |
 | `sync_fonts.py` | Remove unused fonts and optionally add missing fonts |
 
 For file/folder drag-and-drop targets, see [dnd helper](dnd%20helper/README.md).
@@ -110,14 +110,34 @@ python subtitle_flags.py
 python subtitle_flags.py media
 ```
 
-## Remove subtitles
+## Add or remove subtitle tracks
 
 ```console
-python remove_subtitles.py
-python remove_subtitles.py -i media -o cleaned --recursive
+python subtitle_tracks.py
+python subtitle_tracks.py -i media -o cleaned --recursive
+python subtitle_tracks.py -i media/episode.mkv
 ```
 
-At manual selection:
+Choose **1** to remove or **2** to add. Place external subtitles beside their MKVs:
+
+```text
+Episode 01.mkv
+Episode 01.en.1.srt
+Episode 01.en.2.ass
+Episode 02.mkv
+Episode 02.en.1.srt
+Episode 02.en.2.ass
+```
+
+Complete groups match by basename first, then by natural filename order within each
+folder. The preview shows every pairing; enter a group number to edit its language/name,
+`x NUMBER` to exclude/include it, or `y` to remux. New tracks have default/forced off.
+Single-file input matches its basename only. Incomplete or ambiguous groups are skipped.
+
+Run `subtitle_tracks.py` directly for now; installed launchers still use
+`remove_subtitles.py` until the installer migration.
+
+At manual removal selection:
 
 ```text
 1,3         Remove groups 1 and 3
