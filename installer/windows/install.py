@@ -106,6 +106,9 @@ def prompt_key(prompt, allowed):
                 continue
             if answer == "\x03":
                 raise KeyboardInterrupt
+            if answer in ("\r", "\n") and "n" in allowed:
+                print("n")
+                return "n"
             if answer.lower() in allowed:
                 print(answer.lower())
                 return answer.lower()

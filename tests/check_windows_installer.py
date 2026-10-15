@@ -395,6 +395,17 @@ class MaintenanceChecks(unittest.TestCase):
              patch("sys.stdout", new_callable=io.StringIO), self.assertRaisesRegex(RuntimeError, "installation failed"):
             installer.offer_dependencies()
 
+    def test_windows_confirmation_enter_selects_default_no(self):
+        installer = self.installer
+        for enter in ("\r", "\n"):
+            console = SimpleNamespace(getwch=MagicMock(side_effect=[enter, "y"]))
+            with self.subTest(enter=repr(enter)), patch.object(installer, "WINDOWS", True), \
+                 patch.object(sys.stdin, "isatty", return_value=True), \
+                 patch.dict(sys.modules, {"msvcrt": console}), \
+                 patch("sys.stdout", new_callable=io.StringIO):
+                self.assertEqual(installer.prompt_key("Install individual launchers? (y/N): ", ("y", "n")), "n")
+            self.assertEqual(console.getwch.call_count, 1)
+
     def test_windows_prompt_ignores_extended_and_unlisted_keys_without_enter(self):
         installer = self.installer
         console = SimpleNamespace(getwch=MagicMock(side_effect=["\xe0", "1", "9", "\r", "2"]))
