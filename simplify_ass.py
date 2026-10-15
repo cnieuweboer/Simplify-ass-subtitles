@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.15.206"
+__version__ = "2026.10.15.207"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 # Reconstructed source contours keep thinner/axis-specific widths, but cap each
 # axis in ASS script units. Ordinary retained events are not subject to this cap.
@@ -753,6 +753,7 @@ class TextEffectSequenceContext:
     source_events: dict[int,Event] | None
     font_metrics: FontMetrics | None
     font_report: FontProcessingReport | None = None
+    lyric_boundaries: LyricBoundaryIndex | None = None
 
 
 @dataclass(frozen=True)
@@ -2864,24 +2865,105 @@ def select_static_sign_paint(events: list[Event], visible_map: dict[int, str]) -
     return [e for e in events if e.source_index not in removed], len(removed)
 
 
-def coalesce_lyric_phases(events: list[Event], visible_map: dict[int, str], *,
-                          phase_groups: dict[int,int] | None = None) -> tuple[list[Event], int]:
-    """Join glyph phases with sustained colours, keeping lyric rows separate."""
-    groups: dict[tuple, list[Event]] = {}
+@dataclass(frozen=True)
+class LyricBoundaryIndex:
+    """Original surrounding-row signatures, borrowed through fragment reduction.
+
+    This pass-local evidence survives glyph joins without claiming a new source
+    lifetime. It expires after sequence merging and does not cross serialization.
+    """
+    starts: dict[tuple, set[tuple]]
+    ends: dict[tuple, set[tuple]]
+    touching: frozenset[tuple]
+    caption_handoffs: frozenset[tuple]
+
+
+def _index_lyric_boundaries(events: list[Event], visible_map: dict[int,str], *,
+                            phase_groups: dict[int,int] | None = None) -> LyricBoundaryIndex:
+    """Capture changes in the complete surrounding lyric before reducing pieces."""
     starts: dict[tuple, set[tuple]] = {}
     ends: dict[tuple, set[tuple]] = {}
+    caption_starts: dict[tuple,set[tuple]] = {}
+    caption_ends: dict[tuple,set[tuple]] = {}
+    intervals: dict[tuple,list[tuple[float,float]]] = {}
+    lyric_lanes = {(e.style,e.name,e.row) for e in events
+                  if e.kind == 'Dialogue' and get_pos(e.text) is not None and
+                  (e.lyric if phase_groups is None else e.source_index in phase_groups)}
+    for e in events:
+        pos = get_pos(e.text)
+        row = (e.style, e.name, e.layer, e.row)
+        lane = (e.style,e.name,e.row)
+        # Eligibility limits edits, not neighboring context. An ordinary
+        # single-plane next cue can still end an established lyric family.
+        if e.kind != 'Dialogue' or pos is None or lane not in lyric_lanes:
+            continue
+        intervals.setdefault(lane,[]).append((e.start_s,e.end_s))
+        glyph = (round(pos[0] / e.unit, 1) * e.unit, visible_map.get(e.source_index,''))
+        caption_starts.setdefault((*lane, round(e.start_s, 2)), set()).add(glyph)
+        caption_ends.setdefault((*lane, round(e.end_s, 2)), set()).add(glyph)
+        admitted = e.lyric if phase_groups is None else e.source_index in phase_groups
+        if admitted:
+            starts.setdefault((*row, round(e.start_s, 2)), set()).add(glyph)
+            ends.setdefault((*row, round(e.end_s, 2)), set()).add(glyph)
+    touching = frozenset(key for key in starts.keys() & ends.keys()
+                         if starts[key] != ends[key])
+    handoffs = set()
+    def literal(signature):
+        return ''.join(''.join(word.split()) for x,word in sorted(signature))
+    caption_changes = {key for key in caption_starts.keys() & caption_ends.keys()
+                       if literal(caption_starts[key]) != literal(caption_ends[key])}
+    for row,spans in intervals.items():
+        # A complete row changes together. An ongoing letter means that a
+        # touching subset may just be another staggered phase of the same cue.
+        # Prefix maxima answer this without rescanning the row per boundary.
+        ordered = sorted(spans)
+        times = [a for a,b in ordered]
+        maximum_ends = []
+        for a,b in ordered:
+            maximum_ends.append(max(b,maximum_ends[-1] if maximum_ends else b))
+        for key in caption_changes:
+            if key[:-1] != row or len(caption_starts[key])<2 or len(caption_ends[key])<2:
+                continue
+            at = key[-1]
+            previous = bisect_left(times,at-1e-6)-1
+            if previous>=0 and maximum_ends[previous]<=at+1e-6:
+                handoffs.add(key)
+    return LyricBoundaryIndex(starts,ends,touching,frozenset(handoffs))
+
+
+def _crosses_lyric_boundary(index: LyricBoundaryIndex, current: Event, e: Event, *,
+                             complete_only: bool = False) -> bool:
+    """Keep repeated letters separate at touching or briefly overlapping lyrics."""
+    row = (e.style,e.name,e.layer,e.row)
+    boundary = (*row,round(e.start_s,2))
+    if complete_only:
+        # Later mergers reduce styling/frame sequences, including legitimate
+        # staggered glyph changes. Only a complete caption handoff owns a veto.
+        return ((current.style,current.name,current.row)==(e.style,e.name,e.row) and
+                abs(e.start_s-current.end_s)<=.011 and
+                (e.style,e.name,e.row,round(e.start_s,2)) in index.caption_handoffs)
+    ending = index.ends.get((*row,round(current.end_s,2)),set())
+    beginning = index.starts.get(boundary,set())
+    changed_row = (e.start_s > current.start_s and e.end_s > current.end_s and
+                   len(ending)>1 and len(beginning)>1 and ending != beginning and
+                   current.end_s-e.start_s <= .2*min(current.duration,e.duration))
+    return changed_row or (abs(e.start_s-current.end_s)<=.011 and boundary in index.touching)
+
+
+def coalesce_lyric_phases(events: list[Event], visible_map: dict[int, str], *,
+                          phase_groups: dict[int,int] | None = None,
+                          lyric_boundaries: LyricBoundaryIndex | None = None) -> tuple[list[Event], int]:
+    """Join glyph phases with sustained colours, keeping lyric rows separate."""
+    boundaries = lyric_boundaries or _index_lyric_boundaries(events,visible_map,phase_groups=phase_groups)
+    groups: dict[tuple,list[Event]] = {}
     output = []
     for e in events:
         pos = get_pos(e.text)
-        visible = visible_map.get(e.source_index, "")
+        visible = visible_map.get(e.source_index,'')
         admitted = e.lyric if phase_groups is None else e.source_index in phase_groups
-        if (e.kind != "Dialogue" or not admitted or pos is None):
+        if e.kind != 'Dialogue' or not admitted or pos is None:
             output.append(e)
             continue
-        row = (e.style, e.name, e.layer, e.row)
-        glyph = (round(pos[0] / e.unit, 1) * e.unit, visible)
-        starts.setdefault((*row, round(e.start_s, 2)), set()).add(glyph)
-        ends.setdefault((*row, round(e.end_s, 2)), set()).add(glyph)
         if OVERRIDE_RE.search(e.text,re.match(r"(?:\{[^}]*\})*",e.text).end()):
             # A final state cannot describe differently painted inline spans.
             # Retain them, but still record their surrounding row boundaries.
@@ -2892,10 +2974,6 @@ def coalesce_lyric_phases(events: list[Event], visible_map: dict[int, str], *,
         if phase_groups is not None:
             key += (phase_groups[e.source_index],)
         groups.setdefault(key, []).append(e)
-    # Identical letters can occupy the same position in consecutive lyrics.
-    # A change in the surrounding glyphs marks a real lyric boundary.
-    boundaries = {key for key in starts.keys() & ends.keys()
-                  if starts[key] != ends[key]}
     removed = 0
     for group in groups.values():
         group.sort(key=lambda e: (e.start_s, e.end_s, e.source_index))
@@ -2903,18 +2981,8 @@ def coalesce_lyric_phases(events: list[Event], visible_map: dict[int, str], *,
         paint_events = [current]
         runs = []
         for e in group[1:]:
-            pos = get_pos(e.text)
-            boundary = (e.style, e.name, e.layer, e.row, round(e.start_s, 2))
-            # A small fade overlap between consecutive rows is not another
-            # phase of the same glyph. Compare the surrounding row at the old
-            # end and new start, including overlaps rather than just touching.
-            ending = ends.get((e.style,e.name,e.layer,e.row,round(current.end_s,2)),set())
-            beginning = starts.get(boundary,set())
-            changed_row = (e.start_s > current.start_s and e.end_s > current.end_s and
-                           len(ending) > 1 and len(beginning) > 1 and ending != beginning and
-                           current.end_s-e.start_s <= .2*min(current.duration,e.duration))
-            if (e.start_s <= current.end_s + 0.011 and not changed_row and
-                    not (abs(e.start_s - current.end_s) <= 0.011 and boundary in boundaries)):
+            if (e.start_s <= current.end_s + 0.011 and
+                    not _crosses_lyric_boundary(boundaries,current,e)):
                 end = max(current.end_s, e.end_s)
                 current = replace_event(current, end=format_time(end), end_s=end,
                                   source_index=min(current.source_index, e.source_index))
@@ -3425,8 +3493,10 @@ def merge_frame_animation(events: list[Event], visible_map: dict[int, str],
                           max_piece_duration: float = 0.16,
                           max_gap: float = 0.08,
                           min_pieces: int = 3,
-                          merge_near_static: bool = False) -> tuple[list[Event], int]:
+                          merge_near_static: bool = False, *,
+                          lyric_boundaries: LyricBoundaryIndex | None = None) -> tuple[list[Event], int]:
     # Group before joining: source-file event ordering is not rendering order.
+    boundaries = lyric_boundaries or _index_lyric_boundaries(events,visible_map)
     groups: dict[tuple,list[Event]] = {}
     output=[]
     for e in events:
@@ -3461,7 +3531,8 @@ def merge_frame_animation(events: list[Event], visible_map: dict[int, str],
                 group.extend(normalized if normalized is not None else family)
         frozen,count=freeze_vector_sequences(group,max_piece_duration,max_gap,
                                              near_static=merge_near_static,
-                                             inline_paint_sources=frozenset(inline_paint_sources))
+                                             inline_paint_sources=frozenset(inline_paint_sources),
+                                             lyric_boundaries=boundaries)
         output.extend(frozen)
         removed+=count
     return sorted(output,key=lambda e:e.source_index),removed
@@ -3470,7 +3541,8 @@ def merge_frame_animation(events: list[Event], visible_map: dict[int, str],
 def freeze_vector_sequences(events: list[Event], short_duration: float = 0.16,
                             max_gap: float = 0.011,
                             near_static: bool = False, *,
-                            inline_paint_sources: frozenset[int] = frozenset()) -> tuple[list[Event], int]:
+                            inline_paint_sources: frozenset[int] = frozenset(),
+                            lyric_boundaries: LyricBoundaryIndex | None = None) -> tuple[list[Event], int]:
     """Freeze frame-by-frame drawings, including their longer static hold.
 
     Match actual paths and static paint, not style names or colors specific
@@ -3484,7 +3556,8 @@ def freeze_vector_sequences(events: list[Event], short_duration: float = 0.16,
         # First retain the established treatment of actual moving frames.
         # Its frozen holds can then be joined when only tracking jitter differs.
         events,frame_removed=freeze_vector_sequences(events,short_duration,max_gap,
-                                                     inline_paint_sources=inline_paint_sources)
+                                                     inline_paint_sources=inline_paint_sources,
+                                                     lyric_boundaries=lyric_boundaries)
     changing = {"pos","fscx","fscy","frz","frx","fry","fax","fay",
                 "1a","2a","3a","4a"}
     groups: dict[tuple, list[Event]] = {}
@@ -3544,7 +3617,9 @@ def freeze_vector_sequences(events: list[Event], short_duration: float = 0.16,
         components: list[list[Event]] = []
         latest_end = -1.0
         for e in ordered:
-            if not components or e.start_s > latest_end + max_gap + 1e-6:
+            if (not components or e.start_s > latest_end + max_gap + 1e-6 or
+                    lyric_boundaries is not None and
+                    _crosses_lyric_boundary(lyric_boundaries,components[-1][-1],e,complete_only=True)):
                 components.append([])
                 latest_end = e.end_s
             components[-1].append(e)
@@ -7675,7 +7750,8 @@ def _prepare_text_effect_sequence_pass(events: list[Event], context: TextEffectS
     # not receive font metrics or repeat the wider animation pipeline.
     return flatten_text_effect_sequences(
         events,context.visible_map,context.styles,context.animated_sources,False,
-        source_events=context.source_events, font_report=context.font_report)
+        source_events=context.source_events, font_report=context.font_report,
+        lyric_boundaries=context.lyric_boundaries)
 
 
 def _group_text_effect_sequences(events: list[Event], context: TextEffectSequenceContext
@@ -7717,6 +7793,9 @@ def _text_effect_sequence_neighbor(context: TextEffectSequenceContext,
                                    component: list[Event], reference: Event) -> bool:
     """Check connected timing, fade handoffs, scale allowance and authored margins."""
     previous=component[-1]
+    if (context.lyric_boundaries is not None and
+            any(_crosses_lyric_boundary(context.lyric_boundaries,member,e,complete_only=True) for member in component)):
+        return False
     span_start = min(x.start_s for x in component)
     span_end = max(x.end_s for x in component)
     if e.start_s > span_end+1e-6:
@@ -7926,7 +8005,8 @@ def _finish_text_effect_sequences(context: TextEffectSequenceContext, output: li
         # original move/hold evidence and avoiding another animation pass.
         output,phase_removed = flatten_text_effect_sequences(
             output,context.visible_map,context.styles,context.animated_sources,False,
-            source_events=context.source_events, font_report=context.font_report)
+            source_events=context.source_events, font_report=context.font_report,
+            lyric_boundaries=context.lyric_boundaries)
         removed += phase_removed
     return sorted(output,key=lambda e:e.source_index),removed
 
@@ -7936,6 +8016,7 @@ def flatten_text_effect_sequences(
     animated_sources: set[int] | None=None, _scale_trails: bool=True, *,
     source_events: dict[int, Event] | None=None, font_metrics: FontMetrics | None=None,
     font_report: FontProcessingReport | None=None,
+    lyric_boundaries: LyricBoundaryIndex | None=None,
 ) -> tuple[list[Event], int]:
     """Freeze connected full-text styling phases as one static caption.
 
@@ -7943,7 +8024,9 @@ def flatten_text_effect_sequences(
     for clipped effects retain a plain readable caption. Gaps split runs.
     """
     context = TextEffectSequenceContext(
-        visible_map,styles,animated_sources or set(),_scale_trails,source_events,font_metrics, font_report=font_report)
+        visible_map,styles,animated_sources or set(),_scale_trails,source_events,font_metrics,
+        font_report=font_report,
+        lyric_boundaries=lyric_boundaries or _index_lyric_boundaries(events,visible_map))
     events,removed = _prepare_text_effect_sequence_pass(events,context)
     buckets,output = _group_text_effect_sequences(events,context)
     for key,bucket in buckets.items():
@@ -14554,7 +14637,72 @@ def reconstruct_glyph_lifecycles(parsed: dict[int,Event], metric: FontMetrics | 
                                {row.base.source_index:literal for ids,row,literal in accepted})
 
 
-def collect_source_text_rows(parsed: dict[int, Event], animated: set[int]) -> CollectedSourceText:
+def _source_fragment_opacity_is_coupled(e: Event) -> bool:
+    """A fill visibility profile owns only contours/shadows fading with it."""
+    # Fill-only visibility cannot stand for a still-visible outline
+    # or shadow. Require every painted plane to share the opacity
+    # progression; otherwise it remains independent source content.
+    tokens = event_override_tokens(e)
+    body = OVERRIDE_RE.sub(lambda m:'{'+''.join('\\'+k+v
+        for k,v in tokenize_override(m[1]) if k != 't')+'}',e.text)
+    base = evaluate_effective_state(body,e.defaults,e.styles)
+    states = [base.formatting]
+    continuation = base.continuation
+    for tag,value in tokens:
+        if tag != 't':
+            continue
+        transform = parse_effect_transform(value,e.duration,
+            set(CAPTION_PAINT_TAGS)|{'alpha','c'},allow_instant=True)
+        if transform is None:
+            return False
+        state = states[-1].copy()
+        for k,v in transform[2]:
+            continuation = apply_override(state,k,v,e.styles,e.defaults,continuation)
+        states.append(state)
+    for state in states:
+        for channel,widths,default in [(3,('xbord','ybord'),'bord'),(4,('xshad','yshad'),'shad')]:
+            if (max(abs(state.get(k,state.get(default,0))) for k in widths)>0 and
+                    state.get(f'{channel}a',0) != state.get('1a',0)):
+                return False
+    return True
+
+
+def _matching_source_row_fragmentations(rows: list[list[Event]], positions: dict,
+                                         metric: FontMetrics) -> bool:
+    """Compare literal glyph anchors independently of word/letter segmentation.
+
+    Expand each authored fragment with its exact font at its held size. This
+    compares real anchors, including spaces within complete captions, without
+    fitting a different size or inventing spacing for the fragmented version.
+    Contextual shaping and missing glyphs remain unproved.
+    """
+    reference = None
+    layout = text_layout_key(rows[0][0])
+    for row in rows:
+        glyphs = []
+        for e in row:
+            if (text_layout_key(e) != layout or
+                    OVERRIDE_RE.search(e.text,re.match(r'(?:\{[^}]*\})*',e.text).end())):
+                return False
+            # The visible-word map trims edge whitespace. ASS anchoring still
+            # includes that authored advance, so measure the literal itself.
+            literal = OVERRIDE_RE.sub('',e.text)
+            expanded = authored_glyph_positions(metric,e.state,literal,
+                                                 positions[e.source_index][0],e.unit)
+            if expanded is None:
+                return False
+            glyphs.extend(expanded)
+        if reference is None:
+            reference = glyphs
+        elif (len(glyphs) != len(reference) or
+                any(a != b or abs(x-y)>1.5*row[0].unit
+                    for (a,x),(b,y) in zip(reference,glyphs))):
+            return False
+    return True
+
+
+def collect_source_text_rows(parsed: dict[int, Event], animated: set[int], *,
+                              font_metrics: FontMetrics | None = None) -> CollectedSourceText:
     """Record duplicated layout-stable rows before transformations lose timing.
 
     This collector records text and geometry only. Effect membership belongs
@@ -14616,7 +14764,7 @@ def collect_source_text_rows(parsed: dict[int, Event], animated: set[int]) -> Co
     norm = lambda value: "".join(value.split())
     for key, group in groups.items():
         ordered = sorted(group,key=lambda e: positions[e.source_index][0])
-        if (len(ordered) < 4 or
+        if ((len(ordered) < 4 and (font_metrics is None or not font_metrics.available)) or
                 len({positions[e.source_index][0] for e in ordered}) != len(ordered)):
             continue
         text = norm("".join(words[e.source_index] for e in ordered))
@@ -14624,11 +14772,38 @@ def collect_source_text_rows(parsed: dict[int, Event], animated: set[int]) -> Co
 
     evidence = []
     for rows in families.values():
+        mixed = len({tuple(words[e.source_index] for e in row) for row in rows}) > 1
+        short_layout = any(len(row)<4 for row in rows)
+        profiles = {row[0].evidence.opaque_spans for row in rows}
+        measured_alternation = (mixed and len(profiles)>1 and
+                                font_metrics is not None and font_metrics.available)
+        if measured_alternation:
+            if (not _matching_source_row_fragmentations(rows,positions,font_metrics) or
+                    not all(_source_fragment_opacity_is_coupled(e) for row in rows for e in row)):
+                continue
+            members = {e.source_index for row in rows for e in row}
+            if any(not e.layer.lstrip('-').isdigit() for row in rows for e in row):
+                continue
+            low = min(int(e.layer) for row in rows for e in row)
+            high = max(int(e.layer) for row in rows for e in row)
+            # Reuse the source-row compositing proof. Holding a selected phase
+            # over the cue must not move it across independent intervening ink.
+            probes = min(rows,key=len)
+            poses = [e for row in rows for e in row]
+            if any(not _glyph_replacement_row_is_clear(
+                    dataclass_replace(e,layer=str(low)),(e.start_s,e.end_s),members,high,
+                    parsed,font_metrics,poses) for e in probes):
+                continue
+        elif short_layout:
+            # Complete/short layouts enter only the source alternation proof,
+            # never the dense-particle or ordinary stable-row heuristics.
+            continue
         chosen = max(rows,key=lambda row:(sum(b-a for a,b in row[0].evidence.opaque_spans),
+                                         -row[0].evidence.opaque_spans[0][0] if measured_alternation else 0,
                                          len(row),int(row[0].layer) if row[0].layer.lstrip('-').isdigit() else 0))
         first = chosen[0]
         height = text_height(first)
-        if any(abs(positions[row[0].source_index][0]-positions[first.source_index][0]) > .5*height or
+        if not measured_alternation and any(abs(positions[row[0].source_index][0]-positions[first.source_index][0]) > .5*height or
                abs(positions[row[-1].source_index][0]-positions[chosen[-1].source_index][0]) > .5*height
                for row in rows):
             continue
@@ -16010,7 +16185,7 @@ def _prepare_source_text(
         lifecycles = reconstruct_glyph_lifecycles(working_by_line,font_metrics,
             max_piece_duration=config.short_duration,font_report=font_report)
         working_by_line = {e.source_index:e for e in lifecycles.events}
-        source_data = collect_source_text_rows(working_by_line,animated_sources)
+        source_data = collect_source_text_rows(working_by_line,animated_sources,font_metrics=font_metrics)
         # Retain the pre-collapse timing snapshot, adopting resolved formatting
         # only where it still refers to the same authored working event.
         timing_sources = {index:source_data.events[index]
@@ -16182,8 +16357,9 @@ def _consolidate_text_events(
             simplified_events, visible_map)
 
     # Reconstruct each glyph's complete lifetime before trying to assemble rows.
+    lyric_boundaries = _index_lyric_boundaries(simplified_events,visible_map)
     simplified_events, phase_merged = coalesce_lyric_phases(
-        simplified_events, visible_map)
+        simplified_events, visible_map,lyric_boundaries=lyric_boundaries)
     phase_merged += glow_phases
     joined_blanks, _ = coalesce_lyric_phases(blank_events, visible_map)
     for e in joined_blanks:
@@ -16220,6 +16396,7 @@ def _consolidate_text_events(
         max_piece_duration=config.short_duration,
         max_gap=config.short_gap,
         merge_near_static=config.level == 1,
+        lyric_boundaries=lyric_boundaries,
     )
     text_effect_sequences_frozen = jitter_frames
     # Counter names remain compatible with older batch reports.
@@ -16229,7 +16406,8 @@ def _consolidate_text_events(
     if config.level == 1:
         simplified_events, sequence_frames = flatten_text_effect_sequences(
             simplified_events, visible_map, styles, animated_sources,
-            source_events=parsed_by_line,font_metrics=font_metrics, font_report=font_report)
+            source_events=parsed_by_line,font_metrics=font_metrics, font_report=font_report,
+            lyric_boundaries=lyric_boundaries)
         text_effect_sequences_frozen += sequence_frames
         full_lines = remove_letters_over_full_lines(
             simplified_events,visible_map,parsed_by_line,collect_rows=True,font_metrics=font_metrics)

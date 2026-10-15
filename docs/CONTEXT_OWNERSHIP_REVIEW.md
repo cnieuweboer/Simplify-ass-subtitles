@@ -233,3 +233,12 @@ blur/opacity can erase their meaning. Settled opacity-only source views and
 selected paints are private, temporary buffers; source events and parser caches
 remain unchanged. The existing stack producer owns emission and removal.
 See [ORDERED_STACK_CONTOURS.md](ORDERED_STACK_CONTOURS.md).
+
+The v207 source alternation collector borrows the font owner and original source
+records for literal glyph-anchor and compositing proofs. Its sampled visibility
+remains on private row successors. The text-stage owner creates one
+`LyricBoundaryIndex` before glyph reduction; frame and text-effect mergers borrow
+its complete-caption handoffs through recursion without changing the containers.
+Ordinary neighboring text supplies context without becoming eligible for edits.
+The proof expires before serialization, and reconstruction receives bounded
+fragment lifetimes. See [SOURCE_CAPTION_ALTERNATION.md](SOURCE_CAPTION_ALTERNATION.md).

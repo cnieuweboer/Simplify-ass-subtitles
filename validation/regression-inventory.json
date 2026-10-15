@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.15.206",
+  "version": "2026.10.15.207",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -435,6 +435,16 @@
       "script": "tests/check_stacked_contour_paint_render.py",
       "status": "current",
       "category": "paint source ownership"
+    },
+    {
+      "script": "tests/check_source_caption_alternation.py",
+      "status": "current",
+      "category": "source phases"
+    },
+    {
+      "script": "tests/check_source_caption_alternation_render.py",
+      "status": "current",
+      "category": "render"
     }
   ],
   "historical": [

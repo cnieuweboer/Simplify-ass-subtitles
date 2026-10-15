@@ -60,7 +60,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 87 current scripts. The runner uses three workers for
+The suite inventory lists 89 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
@@ -286,3 +286,7 @@ See [ORDERED_STACK_CONTOURS.md](ORDERED_STACK_CONTOURS.md) for v206's shared
 uniform/inline proof of the immediate supporting stroke and synchronized source
 opacity handoff. `python validation/run_ordered_contour_corpus.py` regenerates
 all eleven exact-font sources against the hash-bound v205 baseline.
+
+See [SOURCE_CAPTION_ALTERNATION.md](SOURCE_CAPTION_ALTERNATION.md) for complete
+source phases across different fragmentations and the shared lyric-boundary
+handoff through frame and text-effect merging (v207).
