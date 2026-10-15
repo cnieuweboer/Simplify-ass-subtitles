@@ -35,7 +35,7 @@ class UpdaterChecks(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.repository = checkout(self.root)
         self.target = self.root / "My relocated tools with spaces"
-        load_installer().install(self.repository, self.target)
+        load_installer().install(self.repository, self.target, individual_launchers=True)
         (self.target / "bin/other-tool.cmd").write_text("unrelated")
         (self.target / "simplify-ass/user.mkv").write_text("user media")
         self.before = snapshot(self.target)
@@ -101,16 +101,33 @@ class UpdaterChecks(unittest.TestCase):
                 self.assertEqual(snapshot(self.target), self.before)
                 self.files = saved
 
+    def test_update_respects_opted_out_and_manually_removed_launchers(self):
+        installer = load_installer()
+        for individual in (False, True):
+            with self.subTest(individual=individual):
+                installer.install(self.repository, self.target, individual_launchers=individual)
+                missing = self.target / "bin/remove_subtitles.cmd"
+                missing.unlink(missing_ok=True)
+                self.before = snapshot(self.target)
+                with patch.object(self.updater, "download", side_effect=self.fetch), patch("sys.stdout", new_callable=io.StringIO):
+                    self.updater.update(self.target)
+                self.assertFalse(missing.exists())
+                self.assertTrue((self.target / "bin/subtitle_tools.cmd").is_file())
+                if not individual:
+                    self.assertEqual({p.name for p in (self.target / "bin").iterdir()}, {"subtitle_tools.cmd", "other-tool.cmd"})
+                settings = json.loads((self.target / "simplify-ass/install_settings.json").read_text())
+                self.assertNotIn("remove_subtitles", settings["launchers"])
+
     def check_rollback(self, interrupt):
         # Simulate upgrading an installation made before updater support existed.
         for path in (self.target / "simplify-ass/install.py", self.target / "simplify-ass/subtitle_tools_update.py",
                      self.target / "bin/subtitle_tools_update.cmd", self.target / "simplify-ass/subtitle_tools.py",
-                     self.target / "bin/subtitle_tools.cmd"):
+                     self.target / "bin/subtitle_tools.cmd", self.target / "simplify-ass/install_settings.json"):
             path.unlink()
         self.before = snapshot(self.target)
         original = Path.replace
         def replace(source, destination):
-            if source.name.startswith("new-") and Path(destination).name == "subtitle_tools_update.cmd":
+            if source.name.startswith("new-") and Path(destination).name == "subtitle_tools.cmd":
                 if interrupt:
                     raise KeyboardInterrupt
                 raise PermissionError("locked launcher")

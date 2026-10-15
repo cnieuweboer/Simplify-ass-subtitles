@@ -3,10 +3,12 @@
 
 import argparse
 import ctypes
+import json
 import ntpath
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -14,12 +16,76 @@ import tempfile
 TOOLS = ("simplify_subtitles", "remove_subtitles", "subtitle_flags", "sync_fonts")
 WINDOWS = os.name == "nt"
 MAINTENANCE = ("install.py", "subtitle_tools_update.py", "subtitle_tools.py")
+OPTIONAL_LAUNCHERS = (*TOOLS, "subtitle_tools_update")
+SETTINGS = "install_settings.json"
+REQUIREMENTS = {"Pillow": "PIL.ImageFont", "fonttools": "fontTools.ttLib", "uharfbuzz": "uharfbuzz"}
 
 
 def installed_files(target):
     return ([target / "simplify-ass" / (tool + ".py") for tool in (*TOOLS, "simplify_ass")]
             + [target / "simplify-ass" / name for name in MAINTENANCE]
-            + [target / "bin" / (tool + ".cmd") for tool in (*TOOLS, "subtitle_tools_update", "subtitle_tools")])
+            + [target / "bin" / (tool + ".cmd") for tool in (*OPTIONAL_LAUNCHERS, "subtitle_tools")]
+            + [target / "simplify-ass" / SETTINGS])
+
+
+def selected_launchers(target, individual):
+    if individual is not None:
+        return {"subtitle_tools", *OPTIONAL_LAUNCHERS} if individual else {"subtitle_tools"}
+    settings = target / "simplify-ass" / SETTINGS
+    present = {tool for tool in OPTIONAL_LAUNCHERS if (target / "bin" / (tool + ".cmd")).is_file()}
+    if settings.is_file():
+        try:
+            data = json.loads(settings.read_text(encoding="utf-8"))
+            names = data["launchers"]
+            if data.get("version") != 1 or not isinstance(names, list) or any(
+                    not isinstance(name, str) or name not in (*OPTIONAL_LAUNCHERS, "subtitle_tools") for name in names):
+                raise ValueError("invalid launcher preferences")
+            present.intersection_update(names)
+        except (ValueError, KeyError, TypeError) as error:
+            raise RuntimeError("Cannot read launcher preferences; reinstall to select them again.") from error
+    return {"subtitle_tools", *present}
+
+
+def missing_packages():
+    code = ("import importlib,json\nmissing=[]\n"
+            f"for package,module in {REQUIREMENTS!r}.items():\n"
+            " try: importlib.import_module(module)\n"
+            " except Exception: missing.append(package)\n"
+            "print(json.dumps(missing))")
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError("Could not check Python package requirements: " + result.stderr.strip())
+    try:
+        missing = json.loads(result.stdout.strip().splitlines()[-1])
+        if not isinstance(missing, list) or any(package not in REQUIREMENTS for package in missing):
+            raise ValueError("invalid package list")
+        return missing
+    except (ValueError, IndexError, TypeError) as error:
+        raise RuntimeError("Could not read Python package check results.") from error
+
+
+def offer_dependencies():
+    missing = missing_packages()
+    if not missing:
+        print("Required Python packages are available.")
+        return
+    print("Missing or unavailable Python packages: " + ", ".join(missing))
+    if prompt_key("Install missing Python packages? (y/N): ", ("y", "n")) != "y":
+        print("Skipped package installation. Install later with:")
+        print(f'  "{sys.executable}" -m pip install ' + " ".join(missing))
+        return
+    command = [sys.executable, "-m", "pip", "install"]
+    if sys.prefix == sys.base_prefix:
+        command.append("--user")
+    command.extend(missing)
+    try:
+        subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(f"Python package installation failed (exit {error.returncode}).") from error
+    remaining = missing_packages()
+    if remaining:
+        raise RuntimeError("Python packages are still unavailable: " + ", ".join(remaining))
+    print("Required Python packages are available.")
 
 
 def unblock(path):
@@ -147,15 +213,16 @@ def remove(target):
     print(f"Removed {removed} installed file(s). Unrelated files were preserved.")
 
 
-def install(repository, target):
+def install(repository, target, individual_launchers=None):
     launchers = repository / "installer" / "windows" / "bin"
     tool_dir = target / "simplify-ass"
     bin_dir = target / "bin"
+    selected = selected_launchers(target, individual_launchers)
     files = [(repository / (tool + ".py"), tool_dir / (tool + ".py")) for tool in TOOLS]
     files.append((repository / "simplify_ass.py", tool_dir / "simplify_ass.py"))
     files.extend((launchers.parent / name, tool_dir / name) for name in MAINTENANCE)
     files.extend((launchers / (tool + ".cmd"), bin_dir / (tool + ".cmd"))
-                 for tool in (*TOOLS, "subtitle_tools_update", "subtitle_tools"))
+                 for tool in sorted(selected))
     # Check the complete source set before creating or updating anything.
     for source, destination in files:
         if not source.is_file():
@@ -168,6 +235,11 @@ def install(repository, target):
     preserve_staging = False
     try:
         pending = []
+        settings = staging / SETTINGS
+        settings.write_text(json.dumps({"version": 1, "launchers": sorted(selected)}, indent=2) + "\n", encoding="utf-8")
+        files.append((settings, tool_dir / SETTINGS))
+        if (tool_dir / SETTINGS).is_dir():
+            raise RuntimeError("A folder occupies the install settings path.")
         # Stage all replacements and backups before touching installed files.
         for index, (source, destination) in enumerate(files):
             if source.resolve() == destination.resolve():
@@ -179,15 +251,25 @@ def install(repository, target):
                 backup = staging / ("old-" + destination.name)
                 shutil.copy2(destination, backup)
             pending.append((replacement, destination, backup))
+        # An explicit reinstall can remove our optional launchers; never other tools.
+        for tool in OPTIONAL_LAUNCHERS:
+            destination = bin_dir / (tool + ".cmd")
+            if tool not in selected and destination.is_file():
+                backup = staging / ("old-" + destination.name)
+                shutil.copy2(destination, backup)
+                pending.append((None, destination, backup))
         try:
             for replacement, destination, backup in pending:
-                replacement.replace(destination)
+                if replacement is None:
+                    destination.unlink()
+                else:
+                    replacement.replace(destination)
             for _, destination in files:
                 unblock(destination)
         except BaseException:
             failed = []
             for replacement, destination, backup in reversed(pending):
-                if replacement.exists():
+                if (replacement is not None and replacement.exists()) or (replacement is None and destination.exists()):
                     continue
                 try:
                     if backup is None:
@@ -228,12 +310,14 @@ def main(argv=None):
                 remove(target)
                 offer_path_change(target / "bin", adding=False)
                 return 0
-        bin_dir, tool_dir = install(repository, target)
+        individual = prompt_key("Install individual launchers? (y/N): ", ("y", "n")) == "y"
+        bin_dir, tool_dir = install(repository, target, individual_launchers=individual)
         print(f"Installed Python tools: {tool_dir}")
         print(f"Installed CMD launchers: {bin_dir}")
         if WINDOWS:
             print("Installed files unblocked.")
         offer_path_change(bin_dir, adding=True)
+        offer_dependencies()
     except KeyboardInterrupt:
         print("\nCancelled.")
         return 0
@@ -241,9 +325,6 @@ def main(argv=None):
         print(f"Installer failed: {error}")
         return 1
     print("\nRequired: Python 3.10+ and MKVToolNix on PATH.")
-    print("Install Python dependencies with your chosen interpreter:")
-    print("  py -3 -m pip install Pillow fonttools uharfbuzz")
-    print("Use python instead of py -3 if that is your Python command.")
     print("\nCommands default to the current folder. Override it with -i / --input.")
     return 0
 

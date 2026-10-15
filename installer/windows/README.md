@@ -14,11 +14,6 @@ Default layout:
 ```text
 C:\Tools\
     bin\
-        simplify_subtitles.cmd
-        remove_subtitles.cmd
-        subtitle_flags.cmd
-        sync_fonts.cmd
-        subtitle_tools_update.cmd
         subtitle_tools.cmd
     simplify-ass\
         simplify_ass.py
@@ -29,7 +24,12 @@ C:\Tools\
         install.py
         subtitle_tools_update.py
         subtitle_tools.py
+        install_settings.json
 ```
+
+`Install individual launchers? (y/N)` defaults to No. Choosing Yes also installs
+the four tool launchers and `subtitle_tools_update.cmd`. Reinstalling with No
+removes those optional project launchers; unrelated files are preserved.
 
 The installer unblocks the files it installs and asks whether to add your `bin`
 folder to your **user PATH**. It preserves existing PATH entries and avoids
@@ -44,22 +44,16 @@ When removing, the installer offers to remove `bin` from your user PATH if it
 is present. If other files remain in `bin`, it warns that removing that PATH
 entry may stop those tools working by command name. PATH changes default to No.
 
-Python, MKVToolNix, and Python dependencies are installed separately:
+Python and MKVToolNix must be installed separately. The installer checks Pillow,
+fonttools, and uharfbuzz in its Python interpreter and offers to install missing
+packages (default No). It uses a user install outside virtual environments;
+inside a virtual environment it installs there. Manual alternative:
 
 ```cmd
 py -3 -m pip install Pillow fonttools uharfbuzz
 ```
 
-From a media folder:
-
-```cmd
-simplify_subtitles
-remove_subtitles -r
-subtitle_flags --input "D:\Media\episode.mkv"
-sync_fonts -i "D:\Media" -o "D:\Cleaned" -f "D:\Fonts"
-```
-
-Or start the single-key tool menu:
+From a media folder, start the single-key tool menu:
 
 ```cmd
 subtitle_tools
@@ -75,7 +69,8 @@ Launchers default to the current folder. `-i` / `--input` overrides it; other
 options pass through unchanged. Use an input option rather than positional input.
 Folder scans remain nonrecursive unless `-r` / `--recursive` is supplied.
 
-Update the installed tools, launchers, and updater from GitHub `main`:
+Choose **5. Update** in the menu to update from GitHub `main`. With optional
+individual launchers enabled, you can also use:
 
 ```cmd
 subtitle_tools_update
@@ -87,5 +82,7 @@ current folder. It downloads one fixed GitHub revision and verifies all files
 before replacing anything. Replacement failures roll back the changes; if a
 file cannot be restored, the error identifies the retained recovery folder.
 PATH, Python packages, MKVToolNix, and unrelated files are unchanged.
-Existing installations without the updater need one reinstall to add it.
-Otherwise, `subtitle_tools_update` also installs the new menu command.
+Updates preserve the saved launcher selection and do not recreate manually
+removed optional launchers. Older installations without saved preferences keep
+their existing launchers until you choose differently during reinstall.
+Rerun the installer and answer No to remove existing individual launchers.

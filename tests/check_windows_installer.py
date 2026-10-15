@@ -39,7 +39,7 @@ def load_installer():
 class InstallerChecks(unittest.TestCase):
     def run_installer(self, repository, *args):
         return subprocess.run([sys.executable, str(repository / "installer/windows/install.py"), *args],
-                              input="1\nn\n", capture_output=True, text=True)
+                              input="1\ny\nn\nn\n", capture_output=True, text=True)
 
     def test_custom_target_layout_updates_and_preserves_unrelated_tools(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -88,7 +88,7 @@ class InstallerChecks(unittest.TestCase):
             repository = checkout(root)
             target = root / "tools"
             installer = load_installer()
-            installer.install(repository, target)
+            installer.install(repository, target, individual_launchers=True)
             previous = (target / "simplify-ass/simplify_subtitles.py").read_bytes()
             (repository / "simplify_subtitles.py").write_text("# updated\n")
             original = Path.replace
@@ -97,7 +97,7 @@ class InstallerChecks(unittest.TestCase):
                     raise PermissionError("locked file")
                 return original(source, destination)
             with patch.object(Path, "replace", replace), self.assertRaisesRegex(RuntimeError, "Recovery copies were kept"):
-                installer.install(repository, target)
+                installer.install(repository, target, individual_launchers=True)
             recovery = list(target.glob(".subtitle-tools-install-*"))
             self.assertEqual(len(recovery), 1)
             self.assertEqual((recovery[0] / "old-simplify_subtitles.py").read_bytes(), previous)
@@ -137,7 +137,7 @@ class InstallerChecks(unittest.TestCase):
             result = subprocess.run([sys.executable, str(repository / "installer/windows/install.py"), str(target)],
                                     input="2\nn\n", capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn("Removed 14 installed file(s)", result.stdout)
+            self.assertIn("Removed 15 installed file(s)", result.stdout)
             self.assertEqual(other.read_text(), "other tool")
             self.assertEqual(media.read_text(), "user media")
             self.assertFalse(any(path.exists() for path in load_installer().installed_files(target)))
@@ -153,6 +153,42 @@ class InstallerChecks(unittest.TestCase):
             self.assertFalse((target / "bin").exists())
             self.assertFalse((target / "simplify-ass").exists())
 
+    def test_default_install_only_creates_menu_launcher(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            repository = checkout(root)
+            target = root / "tools"
+            result = subprocess.run([sys.executable, str(repository / "installer/windows/install.py"), str(target)],
+                                    input="\nn\nn\n", capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual([path.name for path in (target / "bin").iterdir()], ["subtitle_tools.cmd"])
+            settings = json.loads((target / "simplify-ass/install_settings.json").read_text())
+            self.assertEqual(settings["launchers"], ["subtitle_tools"])
+            self.assertEqual(len(list((target / "simplify-ass").glob("*.py"))), 8)
+
+    def test_reinstall_removes_only_our_optional_launchers_and_rolls_back_deletions(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            repository = checkout(root)
+            target = root / "tools"
+            installer = load_installer()
+            installer.install(repository, target, individual_launchers=True)
+            other = target / "bin/other-tool.cmd"
+            other.write_text("keep")
+            before = {str(path.relative_to(target)): path.read_bytes() for path in target.rglob("*") if path.is_file()}
+            original = Path.unlink
+            def unlink(path, *args, **kwargs):
+                if path == target / "bin/remove_subtitles.cmd":
+                    raise PermissionError("locked launcher")
+                return original(path, *args, **kwargs)
+            with patch.object(Path, "unlink", unlink), self.assertRaises(PermissionError):
+                installer.install(repository, target, individual_launchers=False)
+            after = {str(path.relative_to(target)): path.read_bytes() for path in target.rglob("*") if path.is_file()}
+            self.assertEqual(after, before)
+            installer.install(repository, target, individual_launchers=False)
+            self.assertEqual({path.name for path in (target / "bin").iterdir()}, {"subtitle_tools.cmd", "other-tool.cmd"})
+            self.assertEqual(other.read_text(), "keep")
+
     def test_default_target_and_conflicting_target_options(self):
         spec = importlib.util.spec_from_file_location("windows_install", INSTALLER / "install.py")
         installer = importlib.util.module_from_spec(spec)
@@ -160,6 +196,7 @@ class InstallerChecks(unittest.TestCase):
         with patch.object(installer, "install", return_value=(Path("bin"), Path("simplify-ass"))) as copy, \
              patch.object(installer, "installed_files", return_value=[]), \
              patch.object(installer, "offer_path_change"), \
+             patch.object(installer, "offer_dependencies"), \
              patch("sys.stdout", new_callable=io.StringIO):
             self.assertEqual(installer.main([]), 0)
         self.assertEqual(copy.call_args.args[1], Path(r"C:\Tools").resolve())
@@ -303,14 +340,14 @@ class MaintenanceChecks(unittest.TestCase):
             repository = checkout(root)
             target = root / "tools"
             with patch.object(installer, "unblock") as unblock:
-                installer.install(repository, target)
+                installer.install(repository, target, individual_launchers=True)
             self.assertEqual(set(call.args[0] for call in unblock.call_args_list), set(installer.installed_files(target)))
             placed = root / "placed"
             placed.mkdir()
             repository.rename(placed / "simplify-ass")
             with patch.object(installer, "unblock") as unblock:
-                installer.install(placed / "simplify-ass", placed)
-            self.assertEqual(unblock.call_count, 14)
+                installer.install(placed / "simplify-ass", placed, individual_launchers=True)
+            self.assertEqual(unblock.call_count, 15)
 
     def test_prompt_only_accepts_listed_keys_and_defaults_to_no_or_cancel(self):
         installer = self.installer
@@ -319,6 +356,44 @@ class MaintenanceChecks(unittest.TestCase):
         with patch.object(installer, "WINDOWS", False), patch("builtins.input", side_effect=EOFError):
             self.assertEqual(installer.prompt_key("Confirm: ", ("y", "n")), "n")
             self.assertEqual(installer.prompt_key("Choose: ", ("1", "2", "q")), "q")
+
+    def test_dependency_check_uses_the_installers_python(self):
+        installer = self.installer
+        result = subprocess.CompletedProcess([], 0, '["fonttools"]\n', '')
+        with patch.object(installer.subprocess, "run", return_value=result) as run:
+            self.assertEqual(installer.missing_packages(), ["fonttools"])
+        self.assertEqual(run.call_args.args[0][:2], [sys.executable, "-c"])
+
+    def test_dependency_install_is_optional_and_installs_only_missing_packages(self):
+        installer = self.installer
+        with patch.object(installer, "missing_packages", return_value=[]), \
+             patch.object(installer, "prompt_key") as prompt, patch("sys.stdout", new_callable=io.StringIO):
+            installer.offer_dependencies()
+        prompt.assert_not_called()
+        with patch.object(installer, "missing_packages", return_value=["Pillow"]), \
+             patch.object(installer, "prompt_key", return_value="n"), \
+             patch.object(installer.subprocess, "run") as run, patch("sys.stdout", new_callable=io.StringIO):
+            installer.offer_dependencies()
+        run.assert_not_called()
+        for venv in (False, True):
+            with patch.object(installer, "missing_packages", side_effect=[["Pillow", "uharfbuzz"], []]), \
+                 patch.object(installer, "prompt_key", return_value="y"), \
+                 patch.object(installer.subprocess, "run") as run, \
+                 patch.object(sys, "prefix", "venv" if venv else sys.base_prefix), \
+                 patch("sys.stdout", new_callable=io.StringIO):
+                installer.offer_dependencies()
+            command = run.call_args.args[0]
+            self.assertEqual(command[:4], [sys.executable, "-m", "pip", "install"])
+            self.assertEqual(command[-2:], ["Pillow", "uharfbuzz"])
+            self.assertEqual("--user" in command, not venv)
+
+    def test_dependency_install_failures_are_reported(self):
+        installer = self.installer
+        with patch.object(installer, "missing_packages", return_value=["fonttools"]), \
+             patch.object(installer, "prompt_key", return_value="y"), \
+             patch.object(installer.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "pip")), \
+             patch("sys.stdout", new_callable=io.StringIO), self.assertRaisesRegex(RuntimeError, "installation failed"):
+            installer.offer_dependencies()
 
     def test_windows_prompt_ignores_extended_and_unlisted_keys_without_enter(self):
         installer = self.installer
