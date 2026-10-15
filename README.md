@@ -12,7 +12,7 @@ installer\windows\install.cmd
 ```
 
 The default location is `C:\Tools`; append `"D:\My Tools"` to choose another.
-The installer offers to install missing Python packages and add `bin` to your
+The installer offers to install missing Python packages and add `<installation folder>/bin` to your
 user PATH. Restart your terminal afterward.
 
 Run `subtitle_tools` (`subtitle_tools.cmd`) from a media folder. Press a single
