@@ -13,11 +13,13 @@ import tempfile
 
 TOOLS = ("simplify_subtitles", "remove_subtitles", "subtitle_flags", "sync_fonts")
 WINDOWS = os.name == "nt"
+MAINTENANCE = ("install.py", "subtitle_tools_update.py")
 
 
 def installed_files(target):
     return ([target / "simplify-ass" / (tool + ".py") for tool in (*TOOLS, "simplify_ass")]
-            + [target / "bin" / (tool + ".cmd") for tool in TOOLS])
+            + [target / "simplify-ass" / name for name in MAINTENANCE]
+            + [target / "bin" / (tool + ".cmd") for tool in (*TOOLS, "subtitle_tools_update")])
 
 
 def unblock(path):
@@ -151,7 +153,9 @@ def install(repository, target):
     bin_dir = target / "bin"
     files = [(repository / (tool + ".py"), tool_dir / (tool + ".py")) for tool in TOOLS]
     files.append((repository / "simplify_ass.py", tool_dir / "simplify_ass.py"))
-    files.extend((launchers / (tool + ".cmd"), bin_dir / (tool + ".cmd")) for tool in TOOLS)
+    files.extend((launchers.parent / name, tool_dir / name) for name in MAINTENANCE)
+    files.extend((launchers / (tool + ".cmd"), bin_dir / (tool + ".cmd"))
+                 for tool in (*TOOLS, "subtitle_tools_update"))
     # Check the complete source set before creating or updating anything.
     for source, destination in files:
         if not source.is_file():
@@ -160,19 +164,46 @@ def install(repository, target):
             raise RuntimeError(f"A folder occupies an installed file's path: {destination}")
     bin_dir.mkdir(parents=True, exist_ok=True)
     tool_dir.mkdir(parents=True, exist_ok=True)
-    for source, destination in files:
-        if source.resolve() == destination.resolve():
-            unblock(destination)
-            continue
-        # Replace individual files only after their copies are complete.
-        with tempfile.NamedTemporaryFile(prefix=".install-", dir=destination.parent, delete=False) as stream:
-            temporary = Path(stream.name)
+    staging = Path(tempfile.mkdtemp(prefix=".subtitle-tools-install-", dir=target))
+    preserve_staging = False
+    try:
+        pending = []
+        # Stage all replacements and backups before touching installed files.
+        for index, (source, destination) in enumerate(files):
+            if source.resolve() == destination.resolve():
+                continue
+            replacement = staging / f"new-{index}"
+            shutil.copy2(source, replacement)
+            backup = None
+            if destination.exists():
+                backup = staging / ("old-" + destination.name)
+                shutil.copy2(destination, backup)
+            pending.append((replacement, destination, backup))
         try:
-            shutil.copy2(source, temporary)
-            temporary.replace(destination)
-        finally:
-            temporary.unlink(missing_ok=True)
-        unblock(destination)
+            for replacement, destination, backup in pending:
+                replacement.replace(destination)
+            for _, destination in files:
+                unblock(destination)
+        except BaseException:
+            failed = []
+            for replacement, destination, backup in reversed(pending):
+                if replacement.exists():
+                    continue
+                try:
+                    if backup is None:
+                        destination.unlink(missing_ok=True)
+                    else:
+                        backup.replace(destination)
+                except OSError:
+                    failed.append(str(destination))
+            if failed:
+                preserve_staging = True
+                raise RuntimeError("Could not restore these files after installation failed: " + ", ".join(failed)
+                                   + f". Recovery copies were kept in {staging}")
+            raise
+    finally:
+        if not preserve_staging:
+            shutil.rmtree(staging)
     return bin_dir, tool_dir
 
 

@@ -18,12 +18,15 @@ C:\Tools\
         remove_subtitles.cmd
         subtitle_flags.cmd
         sync_fonts.cmd
+        subtitle_tools_update.cmd
     simplify-ass\
         simplify_ass.py
         simplify_subtitles.py
         remove_subtitles.py
         subtitle_flags.py
         sync_fonts.py
+        install.py
+        subtitle_tools_update.py
 ```
 
 The installer unblocks the files it installs and asks whether to add your `bin`
@@ -32,7 +35,7 @@ duplicates. Restart your terminal after a PATH change. These steps normally
 need no administrator rights; the install destination must be writable.
 
 If files are already installed, choose **Reinstall / update**, **Remove**, or
-**Cancel**. Removal deletes only this project's nine files and removes `bin`
+**Cancel**. Removal deletes only this project's installed files and removes `bin`
 and `simplify-ass` only when empty. Other files and tools are preserved.
 
 When removing, the installer offers to remove `bin` from your user PATH if it
@@ -57,3 +60,17 @@ sync_fonts -i "D:\Media" -o "D:\Cleaned" -f "D:\Fonts"
 Launchers default to the current folder. `-i` / `--input` overrides it; other
 options pass through unchanged. Use an input option rather than positional input.
 Folder scans remain nonrecursive unless `-r` / `--recursive` is supplied.
+
+Update the installed tools, launchers, and updater from GitHub `main`:
+
+```cmd
+subtitle_tools_update
+subtitle_tools_update --target "D:\My Tools"
+```
+
+The update command finds its own installation by default, regardless of the
+current folder. It downloads one fixed GitHub revision and verifies all files
+before replacing anything. Replacement failures roll back the changes; if a
+file cannot be restored, the error identifies the retained recovery folder.
+PATH, Python packages, MKVToolNix, and unrelated files are unchanged.
+Existing installations need one reinstall to add the updater command.
