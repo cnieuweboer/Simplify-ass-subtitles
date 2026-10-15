@@ -220,6 +220,27 @@ class WrapperChecks(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             wrapper.verify_output(before, after, [(before["tracks"][0], True)])
 
+    def test_legacy_languages_accept_added_ietf_but_reject_actual_changes(self):
+        for legacy, ietf in (("jpn", "ja"), ("eng", "en"), ("ger", "de"), ("und", "und")):
+            before = {"tracks": [{"type": "audio", "properties": {
+                "codec_id": "A_AAC", "language": legacy, "uid": 7}}]}
+            expected = [(before["tracks"][0], True)]
+            after = deepcopy(before)
+            after["tracks"][0]["properties"]["language_ietf"] = ietf
+            wrapper.verify_output(before, after, expected)
+            for field, value in (("language", "fra"), ("uid", 8), ("forced_track", True)):
+                changed = deepcopy(after)
+                changed["tracks"][0]["properties"][field] = value
+                with self.assertRaisesRegex(RuntimeError, field + ": expected"):
+                    wrapper.verify_output(before, changed, expected)
+        before = {"tracks": [{"type": "audio", "properties": {
+            "codec_id": "A_AAC", "language": "eng", "language_ietf": "en-US", "uid": 7}}]}
+        for field, value in (("language_ietf", "en-GB"), ("language", "ger")):
+            after = deepcopy(before)
+            after["tracks"][0]["properties"][field] = value
+            with self.assertRaisesRegex(RuntimeError, field + ": expected"):
+                wrapper.verify_output(before, after, [(before["tracks"][0], True)])
+
 
 @unittest.skipUnless(shutil.which("mkvmerge") and shutil.which("mkvextract"), "MKVToolNix required")
 class RealBatchChecks(unittest.TestCase):
@@ -335,6 +356,25 @@ class RealBatchChecks(unittest.TestCase):
                 self.assertEqual(wrapper.main(base_args + ["-o", str(root / "bad"), "--process-all-tracks"]), 1)
             self.assertEqual(list((root / "bad").iterdir()), [])
             self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), before_hash)
+            # Older MKVs lack IETF tags; remuxing adds equivalent tags to AV/subs.
+            legacy = root / "legacy.mkv"
+            result = subprocess.run([merge, "--disable-language-ietf", "-o", str(legacy), str(source)],
+                                    capture_output=True, text=True)
+            self.assertIn(result.returncode, (0, 1), result.stdout + result.stderr)
+            legacy_before = wrapper.identify(merge, legacy)
+            self.assertTrue(all(not t["properties"].get("language_ietf") for t in legacy_before["tracks"]))
+            legacy_hash = hashlib.sha256(legacy.read_bytes()).hexdigest()
+            for mode in ("add", "replace"):
+                output = root / ("legacy-" + mode)
+                options = ["--replace-originals"] if mode == "replace" else ["--keep-originals"]
+                with patch("sys.stdout", new_callable=io.StringIO) as console:
+                    status = wrapper.main(["-i", str(legacy), "-o", str(output), "--simplifier", str(engine),
+                                           "--process-all-tracks", "--yes", *options])
+                self.assertEqual(status, 0, console.getvalue())
+                after = wrapper.identify(merge, output / legacy.name)
+                self.assertEqual(len(after["tracks"]), len(legacy_before["tracks"]) + (2 if mode == "add" else 0))
+                self.assertTrue(any(t["properties"].get("language_ietf") == "en" for t in after["tracks"]))
+            self.assertEqual(hashlib.sha256(legacy.read_bytes()).hexdigest(), legacy_hash)
 
 
 if __name__ == "__main__":

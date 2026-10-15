@@ -263,13 +263,18 @@ def converted_codec(path):
     raise RuntimeError("Converted subtitle has no supported ASS/SSA ScriptType")
 
 
-def signature(track, include_uid=False):
+def signature(track, include_uid=False, include_ietf=True):
     properties = track.get("properties", {})
-    return (track["type"], properties.get("codec_id", track.get("codec")),
-            properties.get("track_name") or "",
-            (properties.get("language_ietf") or properties.get("language") or "und").casefold(),
-            tuple(bool(properties.get(key, key in ("default_track", "enabled_track")))
-                  for key in FLAG_OPTIONS), properties.get("uid") if include_uid else None)
+    result = {"type": track["type"], "codec_id": properties.get("codec_id", track.get("codec")),
+              "track_name": properties.get("track_name") or "",
+              "language": (properties.get("language") or "und").casefold()}
+    result.update({key: bool(properties.get(key, key in ("default_track", "enabled_track")))
+                   for key in FLAG_OPTIONS})
+    if include_ietf:
+        result["language_ietf"] = (properties.get("language_ietf") or "").casefold()
+    if include_uid:
+        result["uid"] = properties.get("uid")
+    return result
 
 
 def verify_output(before, after, expected):
@@ -277,8 +282,15 @@ def verify_output(before, after, expected):
     if len(tracks) != len(expected):
         raise RuntimeError("Output verification failed: track count differs")
     for index, (actual, (wanted, retained)) in enumerate(zip(tracks, expected)):
-        if signature(actual, retained) != signature(wanted, retained):
-            raise RuntimeError(f"Output verification failed: track {index} order, metadata, or flags differ")
+        # Older MKVs have only ISO 639-2 language codes. mkvmerge adds IETF tags
+        # on remux (jpn -> ja, eng -> en); preserve existing tags when present.
+        include_ietf = bool(wanted.get("properties", {}).get("language_ietf"))
+        expected_values = signature(wanted, retained, include_ietf)
+        actual_values = signature(actual, retained, include_ietf)
+        differences = [f"{key}: expected {value!r}, got {actual_values[key]!r}"
+                       for key, value in expected_values.items() if value != actual_values[key]]
+        if differences:
+            raise RuntimeError(f"Output verification failed: track {index} ({actual['type']}): " + "; ".join(differences))
     def attachments(info):
         # mkvmerge strips embedded directory components from attachment names.
         return Counter((a.get("file_name", "").replace("\\", "/").rsplit("/", 1)[-1],
