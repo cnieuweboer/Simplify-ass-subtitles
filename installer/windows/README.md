@@ -26,9 +26,18 @@ C:\Tools\
         sync_fonts.py
 ```
 
-Add **`C:\Tools\bin`** (or your chosen root's `bin` folder) to your user PATH,
-then open a new terminal. The installer prints the exact folder; it does not
-modify PATH. Rerunning it updates these files and leaves other tools alone.
+The installer unblocks the files it installs and asks whether to add your `bin`
+folder to your **user PATH**. It preserves existing PATH entries and avoids
+duplicates. Restart your terminal after a PATH change. These steps normally
+need no administrator rights; the install destination must be writable.
+
+If files are already installed, choose **Reinstall / update**, **Remove**, or
+**Cancel**. Removal deletes only this project's nine files and removes `bin`
+and `simplify-ass` only when empty. Other files and tools are preserved.
+
+When removing, the installer offers to remove `bin` from your user PATH if it
+is present. If other files remain in `bin`, it warns that removing that PATH
+entry may stop those tools working by command name. PATH changes default to No.
 
 Python, MKVToolNix, and Python dependencies are installed separately:
 
