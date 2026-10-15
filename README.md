@@ -36,7 +36,7 @@ Flag changes edit originals in place and do not require or accept `-o`.
 | --- | --- |
 | `simplify_subtitles.py` | Simplify embedded ASS/SSA subtitles |
 | `subtitle_flags.py` | Set or clear default and forced flags **in place** |
-| `remove_subtitles.py` | Remove selected or added simplified subtitles |
+| `remove_subtitles.py` | Remove selected subtitles |
 | `sync_fonts.py` | Remove unused fonts and optionally add missing fonts |
 
 For file/folder drag-and-drop targets, see [dnd helper](dnd%20helper/README.md).
