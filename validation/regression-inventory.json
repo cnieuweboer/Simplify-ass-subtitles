@@ -405,6 +405,16 @@
       "script": "tests/check_outline_policy_render.py",
       "status": "current",
       "category": "paint and geometry"
+    },
+    {
+      "script": "tests/check_matched_backing_fades.py",
+      "status": "current",
+      "category": "paint and geometry"
+    },
+    {
+      "script": "tests/check_matched_backing_fades_render.py",
+      "status": "current",
+      "category": "native rendering"
     }
   ],
   "historical": [

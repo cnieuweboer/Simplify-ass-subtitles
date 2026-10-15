@@ -198,6 +198,14 @@ the owned background and an independent card. Rebuilt support associations do
 not authorize new ownership. These proofs live only in the support result;
 serialization does not persist them or add role flags to Event/font resources.
 
+The v203 stack handoff owns immutable `BackingFadePhase` candidate evidence and
+`MatchedBackingFade` paint tuples in its existing pass-local context. The phase
+events and original-source map remain borrowed read-only. Only a complete temporal
+family with opaque support and compatible compositing authorizes emission.
+Source masks, including animated masks removed upstream, remain a veto. The
+successor retains the foreground's source pose support; no proof survives
+serialization. See MATCHED_BACKING_FADES.md.
+
 The v197 backing-paint handoff borrows the existing font owner and original
 backing/foreground states. `SourceCaptionPaint` contains only immutable scalar
 paint values; renderer consumers borrow it. Samples are pass-local, replacements

@@ -60,7 +60,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 81 current scripts. The runner uses three workers for
+The suite inventory lists 83 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
@@ -271,3 +271,9 @@ reconstruction-only outline cap and corrected original inline extent handoff.
 fresh capped and isolated authored-width conversions against verified v201
 baselines; `python validation/render_outline_policy_review.py` renders the
 resulting real/synthetic examples. The experimental engine remains local.
+
+See [MATCHED_BACKING_FADES.md](MATCHED_BACKING_FADES.md) for v203's producer-owned
+paint handoff through shared foreground/backing fades. The optional scrolling
+cap and motion policy are unchanged. Its corpus runner regenerates v202 with the
+current fonts before comparing; the native probe verifies the MKV's actual
+Uniform Bold face and checks actual viewport pixels separately from paint crops.

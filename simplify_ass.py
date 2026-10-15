@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.14.202"
+__version__ = "2026.10.15.203"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 # Reconstructed source contours keep thinner/axis-specific widths, but cap each
 # axis in ASS script units. Ordinary retained events are not subject to this cap.
@@ -662,6 +662,7 @@ class StackedTextContext:
     owned_glow_fragments: set[int] = field(default_factory=set)
     glow_captions: dict[int,Event] = field(default_factory=dict)
     glow_collapsed: dict[int,list[int]] = field(default_factory=dict)
+    matched_backing_fades: dict[frozenset[int],MatchedBackingFade] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -679,6 +680,26 @@ class SourceCaptionPaint:
     outline: str
     outline_alpha: int
     border: tuple[float,float] = (2.,2.)
+
+
+@dataclass(frozen=True)
+class BackingFadePhase:
+    """Candidate paint planes; the family must still prove a readable fade."""
+    foreground: Event
+    backing: Event
+    alpha: int
+    paint: tuple[SourceCaptionPaint,...]
+    surface: tuple[tuple[float,...],...]
+
+
+@dataclass(frozen=True)
+class MatchedBackingFade:
+    """Owned immutable span paint; borrowed planes retain each phase's geometry."""
+    foreground: Event
+    backing: Event
+    literal: str
+    paint: tuple[SourceCaptionPaint,...]
+    alpha: int
 
 
 @dataclass(frozen=True)
@@ -4671,8 +4692,136 @@ def _prepare_stacked_text_copies(events: list[Event], visible_map: dict[int,str]
                e.margin_v, pos, visible)
         groups.setdefault(key, []).append(e)
     context = StackedTextContext(groups,kept,collision_peers,paint,animated_sources,source_events,font_metrics)
+    context.matched_backing_fades.update(_index_matched_backing_fades(context,events))
     context.glow_paint.update(_index_glow_pulse_paint(context))
     return context,echo_removed
+
+
+def _matched_backing_fade_phase(context: StackedTextContext, peers: list[Event]) -> BackingFadePhase | None:
+    """Prove coincident borderless fill over a same-glyph stroked backing.
+
+    This is a paint-plane relationship, including projective/inline geometry,
+    not an axis-aligned coverage estimate. Temporal fade ownership is separate.
+    """
+    if (len(peers)!=2 or any(get_pos(e.text) is None or e.effect or
+            not e.layer.lstrip('-').isdigit() for e in peers)):
+        return None
+    backing,foreground=sorted(peers,key=lambda e:(int(e.layer),e.source_index))
+    profiles=[static_text_paint_geometry(e,context.paint) for e in (foreground,backing)]
+    if any(p is None for p in profiles) or profiles[0][0]!=profiles[1][0]:
+        return None
+    for e in peers:
+        original=(context.source_events or {}).get(e.source_index,e)
+        if any(re.search(r'\\i?clip\s*\(',block,re.I) for block in OVERRIDE_RE.findall(original.text)):
+            return None
+    ranges=_literal_paint_ranges([foreground,backing])
+    if ranges is None:return None
+    paints=[];alphas=set();surface=[]
+    for fragment,states in ranges:
+        front,back=states
+        alpha=front.get('1a',0)
+        if (not isinstance(alpha,(int,float)) or not math.isfinite(alpha) or
+                not 0<=alpha<=255 or back.get('1a',0)!=alpha or back.get('3a',0)!=alpha or
+                any(s.get('borderstyle',1)!=1 or any(k in s for k in ('clip','iclip')) or
+                    s.get('4a',0)<255 and any(s.get(k,s.get('shad',0)) for k in ('xshad','yshad'))
+                    for s in states) or
+                any(front.get(k,front.get('bord',0))!=0 for k in ('xbord','ybord')) or
+                max(back.get(k,back.get('bord',0)) for k in ('xbord','ybord'))<=0 or
+                back.get('1c')!=back.get('3c')):
+            return None
+        # Establish a candidate resting contour; the family must still supply
+        # an actual opaque hold before this can authorize any replacement.
+        front={**front,'1a':0,'3a':0};back={**back,'1a':0,'3a':0}
+        proof=_source_caption_paint(front,[front,back])
+        if proof is None:return None
+        paints.extend([proof]*len(fragment));alphas.add(alpha)
+        surface.extend([tuple(s.get(k,0) for s in states for k in ('blur','be'))]*len(fragment))
+    if len(alphas)!=1:return None  # Independent letter fades are not a caption fade.
+    return BackingFadePhase(foreground,backing,next(iter(alphas)),tuple(paints),tuple(surface))
+
+
+def _index_matched_backing_fades(context: StackedTextContext, events: list[Event]) -> dict[frozenset[int],MatchedBackingFade]:
+    """Carry opaque stack paint through its continuous shared entrance/exit fades.
+
+    Evidence is pass-local. No pose is selected, no time is extended and no
+    scrolling budget changes. Ambiguous, overlapping or flashing families retain
+    their ordinary stack rules, including the translucent-composite guard.
+    """
+    families={}
+    for key,peers in context.groups.items():
+        families.setdefault(key[2:7]+(key[-1],),[]).append((key,peers))
+    order=sorted((e for e in events if e.kind=='Dialogue' and e.layer.lstrip('-').isdigit()),
+                 key=lambda e:(int(e.layer),e.source_index))
+    ranks={e.source_index:i for i,e in enumerate(order)}
+    unranked=[e for e in events if e.kind=='Dialogue' and not e.layer.lstrip('-').isdigit()]
+    proved={}
+    for family in families.values():
+        if not any(len(peers)==2 and any(e.state.get('1a',0)>0 for e in peers)
+                   for key,peers in family):
+            continue
+        components=[];end=-math.inf
+        for key,peers in sorted(family,key=lambda p:(p[1][0].start_s,p[1][0].end_s)):
+            if not components or peers[0].start_s>end+.011:
+                components.append([])
+            components[-1].append(peers);end=max(end,peers[0].end_s)
+        for groups in components:
+            if (len(groups)<2 or any(b[0].start_s<a[0].end_s-1e-6 for a,b in zip(groups,groups[1:]))):
+                continue
+            phases=[_matched_backing_fade_phase(context,peers) for peers in groups]
+            if any(p is None for p in phases):continue
+            opaque=[i for i,p in enumerate(phases) if p.alpha==0]
+            if not opaque or len(opaque)==len(phases):continue
+            first,last=opaque[0],opaque[-1]
+            if (sum(groups[i][0].duration for i in opaque)<.02-1e-6 or
+                    any(phases[i].alpha for i in range(first,last+1)) or
+                    any(a.alpha<b.alpha for a,b in zip(phases[:first],phases[1:first+1])) or
+                    any(a.alpha>b.alpha for a,b in zip(phases[last:],phases[last+1:]))):
+                continue
+            # Different opacity/paint legs cannot borrow a neighbouring hold.
+            base=phases[first]
+            if any(p.surface!=base.surface or tuple(v.border for v in p.paint)!=tuple(v.border for v in base.paint)
+                   for p in phases):continue
+            selected=[]
+            for offset in range(len(base.paint)):
+                colors=[]
+                for channel in ('fill','outline'):
+                    votes={}
+                    for peers,p in zip(groups,phases):
+                        color=getattr(p.paint[offset],channel)
+                        votes[color]=votes.get(color,0)+round(peers[0].duration,6)
+                    colors.append(next(iter(votes)) if len(votes)==1 else _bounded_text_color(votes))
+                if None in colors:break
+                selected.append(SourceCaptionPaint(*colors,0,base.paint[offset].border))
+            if len(selected)!=len(base.paint):continue
+            # Removing the backing's fill changes interaction with a plane
+            # painted between it and the foreground. Without an occlusion proof,
+            # even a geometrically distant intervening object keeps the stack.
+            if any(any(other.start_s<p.foreground.end_s and other.end_s>p.foreground.start_s
+                       for other in unranked+order[ranks[p.backing.source_index]+1:ranks[p.foreground.source_index]])
+                   for p in phases):continue
+            for phase in phases:
+                if phase.alpha==0:continue  # The existing opaque producer owns the hold.
+                fg,bg=phase.foreground,phase.backing
+                proved[frozenset((fg.source_index,bg.source_index))]=MatchedBackingFade(
+                    fg,bg,OVERRIDE_RE.sub('',fg.text),tuple(selected),round(phase.alpha))
+    return proved
+
+
+def _render_matched_backing_fade(proof: MatchedBackingFade, paint_tags: set[str]) -> Event:
+    """Emit one caption fading as a unit, retaining this source phase's layout."""
+    fg=proof.foreground
+    paints=[];palette={}
+    for source in proof.paint:
+        if source not in palette:
+            body=render_simplified_caption(fg.state,'',source_paint=source,measurement=fg.measurement)
+            state=effective_state(body,fg.defaults,fg.styles)
+            state.update({'1a':proof.alpha,'3a':proof.alpha})
+            palette[source]=state
+        paints.append(palette[source])
+    ranges=[(char,()) for char in proof.literal]
+    text=_render_literal_paint(fg,ranges,paints,paint_tags)
+    caption=replace_event(fg,text=text,effect='',source_index=min(fg.source_index,proof.backing.source_index))
+    return _preserve_frame_pose_support(fg,caption)
 
 
 def _partition_stacked_text_paint(context: StackedTextContext) -> list[tuple[tuple,list[Event]]]:
@@ -5187,6 +5336,9 @@ def _flatten_stacked_text_group(context: StackedTextContext, key: tuple,
     """Route literal-span layouts and proved uniform stacks through their existing rules."""
     if len(group) < 2:
         return group,0,None
+    fade=context.matched_backing_fades.get(frozenset(e.source_index for e in group))
+    if fade is not None:
+        return compact_static_overrides([_render_matched_backing_fade(fade,context.paint)],0),1,None
     if key[-2] is None or any(inline_layout_key(e) for e in group):
         captions,count = _flatten_inline_stacked_text(context,key,group)
         return captions,count,None
