@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compare explicit lyric/source/row updates with immutable v162 semantics."""
-import test_paths  # Resolve the repository for direct test execution.
+import test_paths
+from event_evidence_test_helpers import without_inactive_color_phase_reporting  # Resolve the repository for direct test execution.
 from event_evidence_test_helpers import contour_independent_contract as contract
 from collections.abc import Mapping
 from contextlib import contextmanager, redirect_stdout
@@ -271,6 +272,7 @@ for name in ('Full-line-scaffold-source.ass','Full-line-shadow-source.ass','Full
             out = Path(directory)/'out.ass'
             with redirect_stdout(None):
                 statistics = module.simplify_ass(ROOT/'test-data'/name,out,module.SimplifyConfig(),font_metrics=metrics[module], font_report=font_test_report(metrics[module]))
+            statistics=without_inactive_color_phase_reporting(statistics)
             assert statistics.pop('shadow_lettering_normalized', 0)==0  # This fixture must remain unaffected by final paint normalization.
             compared.append((out.read_bytes(),statistics))
     check('complete focused conversion '+name,contract(compared[0]) == contract(compared[1]))

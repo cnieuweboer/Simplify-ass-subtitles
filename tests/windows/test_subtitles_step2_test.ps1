@@ -10,7 +10,11 @@ param(
     [ValidateRange(1, 128)] [int] $MaxParallel = [Math]::Min(4, [Environment]::ProcessorCount),
     [switch] $NoFontSpacing,
     [string] $Encoding,
-    [ValidateRange(0, 2147483647)] [int] $ScrollConcurrencyLimit = 32
+    [ValidateRange(0, 2147483647)] [int] $ScrollConcurrencyLimit = 32,
+    [ValidateScript({ $_ -ge 0 -and -not [double]::IsNaN($_) -and -not [double]::IsInfinity($_) })]
+    [double] $ColorPhaseMinHold = 1,
+    [ValidateScript({ $_ -ge 0 -and -not [double]::IsNaN($_) -and -not [double]::IsInfinity($_) })]
+    [double] $ColorPhaseChangeInterval = 2
 )
 
 . (Join-Path $PSScriptRoot 'subtitle_report_helpers.ps1')
@@ -134,6 +138,10 @@ if (-not $pythonCommand) { throw "Cannot find Python command: $Python" }
 $pythonPath = $pythonCommand.Source
 $simplifierHelp = Get-SimplifierHelp $pythonPath $simplifierPath
 $simplifierVersion = Get-SubtitleSimplifierVersion $pythonPath $simplifierPath
+$supportsColorPhases = $simplifierHelp.Contains('--color-phase-min-hold') -and $simplifierHelp.Contains('--color-phase-change-interval')
+if (($PSBoundParameters.ContainsKey('ColorPhaseMinHold') -or $PSBoundParameters.ContainsKey('ColorPhaseChangeInterval')) -and -not $supportsColorPhases) {
+    throw 'This simplifier does not support color phase settings. Use v209 or newer.'
+}
 $supportsScrollLimit = $simplifierHelp -match '(?m)(?:^|\s)--scroll-concurrency-limit(?:\s|=|$)'
 if ($PSBoundParameters.ContainsKey('ScrollConcurrencyLimit') -and -not $supportsScrollLimit) {
     throw 'This simplifier does not support -ScrollConcurrencyLimit. Select simplify_ass.py version 101 or newer with -Simplifier.'
@@ -179,7 +187,7 @@ $labels = $counterCatalog.Labels
 # Workers never write the aggregate report. All files and fonts are isolated.
 $worker = {
     param($FilePath, $Relative, $ArchivePath, $SimplifierPath, $Level,
-          $PythonPath, $DisableSpacing, $InputEncoding, $ScrollLimit, $SupportsScrollLimit)
+          $PythonPath, $DisableSpacing, $InputEncoding, $ScrollLimit, $SupportsScrollLimit, $PhaseHold, $PhaseInterval, $SupportsColorPhases)
     $ErrorActionPreference = 'Stop'
     $timer = [Diagnostics.Stopwatch]::StartNew()
     $tracks = [System.Collections.Generic.List[object]]::new()
@@ -312,6 +320,10 @@ $worker = {
                 $statsPath = Join-Path $Destination 'stats.json'
                 $arguments = @($SimplifierPath, '--level', [string]$Level, '--stats-json', $statsPath, '--suffix', '.simple')
                 if ($SupportsScrollLimit) { $arguments += @('--scroll-concurrency-limit', [string]$ScrollLimit) }
+                if ($SupportsColorPhases) {
+                    $arguments += @('--color-phase-min-hold', $PhaseHold.ToString([Globalization.CultureInfo]::InvariantCulture),
+                                    '--color-phase-change-interval', $PhaseInterval.ToString([Globalization.CultureInfo]::InvariantCulture))
+                }
                 if ($Level -eq 1 -and -not $DisableSpacing) { $arguments += @('--fonts-dir', $fontsFolder) }
                 if ($DisableSpacing) { $arguments += '--no-font-spacing' }
                 if ($InputEncoding) { $arguments += @('--encoding', $InputEncoding) }
@@ -440,6 +452,7 @@ $topConcurrentTracks = [System.Collections.Generic.List[object]]::new()
 $topTimedTracks = [System.Collections.Generic.List[object]]::new()
 $errorFiles = [System.Collections.Generic.List[object]]::new()
 $droppedTextTracks = [System.Collections.Generic.List[object]]::new()
+$colorPhaseWarnings = [System.Collections.Generic.List[object]]::new()
 
 function Add-ResultToSummary($Item) {
     $summary.OtherTracksSkipped += [int]$Item.OtherTracks
@@ -481,6 +494,13 @@ function Add-ResultToSummary($Item) {
         $summary.Original += [long]$stats.original
         $summary.Remaining += [long]$stats.output
         Add-SubtitleCounterStats $stats $totals $counterCoverage $simplifierVersion
+        $phaseWarning = Get-ColorPhaseLimitWarning $stats
+        if ($phaseWarning) {
+            Write-Warning ("$($Item.File) - track $($entry.Track): $phaseWarning")
+            $colorPhaseWarnings.Add([pscustomobject]@{ File=$Item.File; Track=$entry.Track; Message=$phaseWarning;
+                Captions=$stats.color_phase_captions_limited; Changes=$stats.color_phase_changes_removed;
+                RateLimited=$stats.color_phase_rate_limited; HoldLimited=$stats.color_phase_hold_limited })
+        }
         # Older simplifiers omit concurrency; do not rank missing data as zero.
         if ($null -ne $stats.max_concurrent_out) {
             $topConcurrentTracks.Add([pscustomobject]@{
@@ -516,6 +536,8 @@ function Save-Report {
     $lines.Add("Simplification mode: $(if ($SimplificationLevel -eq 1) { 'standard' } else { 'legacy' })")
     $limitText = if ($supportsScrollLimit) { [string]$ScrollConcurrencyLimit } else { 'unavailable in this simplifier' }
     $lines.Add("Scrolling-text concurrent event limit: $limitText (0 disables dropping)")
+    $phaseSettings = if ($supportsColorPhases) { "hold=$ColorPhaseMinHold s; seconds per change=$ColorPhaseChangeInterval (0 disables each limit)" } else { 'unavailable in this simplifier' }
+    $lines.Add("Color phase limits: $phaseSettings")
     $lines.Add("Concurrent MKV jobs: $workerCount")
     $lines.Add("Font spacing disabled: $([bool]$NoFontSpacing)")
     if ($Encoding) { $lines.Add("Input encoding override: $Encoding") }
@@ -532,6 +554,10 @@ function Save-Report {
         $lines.Add("WARNING: $($item.Message) - $($item.File) - track $($item.Track) - $($item.Name)")
     }
     if (-not $droppedTextTracks.Count) { $lines.Add('(no scrolling-text drops reported)') }
+    $lines.Add('')
+    $lines.Add('COLOR PHASE LIMIT WARNINGS')
+    foreach ($item in $colorPhaseWarnings) { $lines.Add("WARNING: $($item.Message) - $($item.File) - track $($item.Track)") }
+    if (-not $colorPhaseWarnings.Count) { $lines.Add('(no color phase reductions reported)') }
     $lines.Add('')
     $lines.Add('SUMMARY')
     $lines.Add("MKV files found: $($files.Count)")
@@ -591,6 +617,9 @@ function Save-Report {
         Status = $runState; Started = $startedAt.ToString('o'); Updated = (Get-Date).ToString('o')
         Input = $inputRoot; Simplifier = $simplifierPath; SimplifierSHA256 = $simplifierHash; Level = $SimplificationLevel
         ScrollConcurrencyLimit = if ($supportsScrollLimit) { $ScrollConcurrencyLimit } else { $null }
+        ColorPhaseWarnings = @($colorPhaseWarnings.ToArray())
+        ColorPhaseMinHold = if ($supportsColorPhases) { $ColorPhaseMinHold } else { $null }
+        ColorPhaseChangeInterval = if ($supportsColorPhases) { $ColorPhaseChangeInterval } else { $null }
         ScrollingDropWarnings = @($droppedTextTracks.ToArray() | Sort-Object File, Track)
         MaxParallel = $workerCount; FontSpacingDisabled = [bool]$NoFontSpacing; Encoding = $Encoding
         FilesFound = $files.Count; FilesCompleted = $completed.Count; FilesWithErrors = $summary.FilesWithErrors
@@ -614,7 +643,7 @@ try {
             $destination = Join-Path $runRoot ($relative + '.zip')
             $job = Start-Job -ScriptBlock $worker -ArgumentList @(
                 $file.FullName, $relative, $destination, $simplifierPath, $SimplificationLevel,
-                $pythonPath, [bool]$NoFontSpacing, $Encoding, $ScrollConcurrencyLimit, $supportsScrollLimit)
+                $pythonPath, [bool]$NoFontSpacing, $Encoding, $ScrollConcurrencyLimit, $supportsScrollLimit, $ColorPhaseMinHold, $ColorPhaseChangeInterval, $supportsColorPhases)
             $active.Add([pscustomobject]@{ Job = $job; File = $relative; Destination = $destination })
             $next++
             Write-Host "Started [$next/$($files.Count)]: $relative"
@@ -649,6 +678,11 @@ try {
     if ($runState -ne 'Complete') { $runState = 'Interrupted' }
     # One final write on completion, or best-effort when unwinding an interruption.
     Show-ScrollingDropSummary $droppedTextTracks.ToArray()
+    if ($colorPhaseWarnings.Count) {
+        $changes = ($colorPhaseWarnings | Measure-Object -Property Changes -Sum).Sum
+        $captions = ($colorPhaseWarnings | Measure-Object -Property Captions -Sum).Sum
+        Write-Warning "RUN SUMMARY: Removed $changes whole-caption color changes in $captions captions by color phase limits."
+    }
     Save-Report
 }
 $fileFailures = $summary.FilesWithErrors

@@ -1,5 +1,6 @@
 """Row geometry parity, explicit diagnostics, batch lifetime and bounded rewiring."""
-import test_paths  # Resolve the repository for direct test execution.
+import test_paths
+from event_evidence_test_helpers import without_inactive_color_phase_reporting  # Resolve the repository for direct test execution.
 from event_evidence_test_helpers import contour_independent_contract as contract
 from pathlib import Path
 from copy import deepcopy
@@ -119,6 +120,7 @@ with tempfile.TemporaryDirectory() as directory, patch.object(
             with contextlib.redirect_stdout(None):
                 actual=current.simplify_ass(source,new_output,current.SimplifyConfig(),font_metrics=fonts,font_report=batch,outline_matcher=matcher)
                 expected=previous.simplify_ass(source,old_output,previous.SimplifyConfig(),font_spacing=old_batch)
+            actual=without_inactive_color_phase_reporting(actual)
             assert actual.pop('shadow_lettering_normalized',0)==0  # These row fixtures are outside the new normalization.
             check('complete focused subtitle unchanged',actual==expected and contract(new_output.read_bytes())==contract(old_output.read_bytes()))
             check('batch accepted joins unchanged',batch.rows_joined==old_batch.merged)

@@ -1,4 +1,5 @@
-import test_paths  # Resolve the repository for direct test execution.
+import test_paths
+from event_evidence_test_helpers import without_inactive_color_phase_reporting  # Resolve the repository for direct test execution.
 from event_evidence_test_helpers import contour_independent_contract as contract
 from event_evidence_test_helpers import event_comparison_fields
 #!/usr/bin/env python3
@@ -263,6 +264,7 @@ for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass')
                 with contextlib.redirect_stdout(None):
                     stats=module.simplify_ass(ROOT/'test-data'/fixture,output,
                         module.SimplifyConfig(),font_metrics=metric, font_report=font_test_report(metric))
+                stats=without_inactive_color_phase_reporting(stats)
                 assert stats.pop('shadow_lettering_normalized', 0)==0  # This fixture must remain unaffected by final paint normalization.
                 compared.append((snapshot(captured),output.read_bytes(),stats,font_test_report(metric).rows_joined))
         finally:module.remove_masked_glyph_effects=original

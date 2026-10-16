@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compare document boundaries and both modes with immutable v166."""
-import test_paths  # Resolve the repository for direct test execution.
+import test_paths
+from event_evidence_test_helpers import without_inactive_color_phase_reporting  # Resolve the repository for direct test execution.
 from pathlib import Path
 import contextlib
 import hashlib
@@ -114,6 +115,7 @@ with tempfile.TemporaryDirectory() as directory:
                     with contextlib.redirect_stdout(console), historical_final_tag_policy(module):
                         stats = module.simplify_ass(source,output,module.SimplifyConfig(level=level),
                             font_metrics=metrics[module] if measured else None, font_report=font_test_report(metrics[module] if measured else None))
+                    stats=without_inactive_color_phase_reporting(stats)
                     assert stats.pop('shadow_lettering_normalized', 0)==0  # This fixture must remain unaffected by final paint normalization.
                     results.append((output.read_bytes(),stats,console.getvalue()))
                 assert results[0] == results[1],(name,level,measured)

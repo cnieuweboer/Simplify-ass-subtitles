@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory() as directory:
         else:
             body+=rf'{{\1c&H{40+index*8:02X}C080&\3c&H{40+index*8:02X}8040&}}'+c
             index+=1
-    expected.write_text(cases.HEADER+cases.record(body)+cases.record(cases.next_text,x=cases.next_anchor,
+    expected.write_text(cases.HEADER+cases.record(cases.TEXT,start=1,end=2,tags=r'\1c&H0000FF&\3c&H000000&')+cases.record(body,start=2,end=5)+cases.record(cases.next_text,x=cases.next_anchor,
         start=5,end=9,tags=r'\1c&H60C080&\3c&H608040&'))
     report=s.FontProcessingReport()
     with contextlib.redirect_stdout(None):

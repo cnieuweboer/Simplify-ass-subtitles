@@ -199,9 +199,9 @@ for source_variant in (source, ''.join(line for line in source.splitlines(keepen
         check('pipeline uses exact fonts',not report.missing_families)
         check('pipeline preserves original',source_path.read_bytes()==before)
         out=[e for e in s.load_subtitle_events(output)[1] if e.kind=='Dialogue']
-        check('pipeline reconstructs two complete captions',len(out)==2 and [s.OVERRIDE_RE.sub('',e.text) for e in out]==[TEXT,next_text])
-        check('pipeline retains lyric handoff',[(e.start_s,e.end_s) for e in out]==[(1,5),(5,9)])
-        check('pipeline retains gradient',len({span[0].formatting for span in s.static_object_key(out[0],out[0].styles)[-1]})>1)
+        check('pipeline reconstructs both complete paint phases and next caption',len(out)==3 and [s.OVERRIDE_RE.sub('',e.text) for e in out]==[TEXT,TEXT,next_text])
+        check('pipeline retains lyric handoff',[(e.start_s,e.end_s) for e in out]==[(1,2),(2,5),(5,9)])
+        check('pipeline retains gradient',len({span[0].formatting for span in s.static_object_key(out[1],out[1].styles)[-1]})>1)
         check('pipeline repeat stable',output.read_bytes()==repeat.read_bytes())
 
 # The same surrounding-row evidence is used in glyph coalescing and sequence

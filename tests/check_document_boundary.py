@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verify decoding compatibility, normalization and document state ownership."""
-import test_paths  # Resolve the repository for direct test execution.
+import test_paths
+from event_evidence_test_helpers import without_inactive_color_phase_reporting  # Resolve the repository for direct test execution.
 from pathlib import Path
 from dataclasses import replace
 import contextlib
@@ -68,6 +69,7 @@ with tempfile.TemporaryDirectory() as directory:
                 with contextlib.redirect_stdout(console):
                     stats = module.simplify_ass(source,output,
                         module.SimplifyConfig(level=level,encoding=override))
+                stats=without_inactive_color_phase_reporting(stats)
                 assert stats.pop('shadow_lettering_normalized', 0)==0  # This fixture must remain unaffected by final paint normalization.
                 results.append((output.read_bytes(),stats,console.getvalue()))
             check(name+f' mode {level} conversion parity',results[0]==results[1])

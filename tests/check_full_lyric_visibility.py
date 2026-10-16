@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compare copy clustering, caption selection and applied visibility with immutable v165."""
-import test_paths  # Resolve the repository for direct test execution.
+import test_paths
+from event_evidence_test_helpers import without_inactive_color_phase_reporting  # Resolve the repository for direct test execution.
 from event_evidence_test_helpers import contour_independent_contract as contract
 from contextlib import contextmanager,redirect_stdout
 from pathlib import Path
@@ -135,6 +136,7 @@ for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass')
             with tempfile.TemporaryDirectory() as directory:
                 out=Path(directory)/'output.ass';metric=module.FontMetrics([ROOT/'fonts'])
                 with redirect_stdout(None):stats=module.simplify_ass(ROOT/'test-data'/fixture,out,module.SimplifyConfig(),font_metrics=metric, font_report=font_test_report(metric))
+                stats=without_inactive_color_phase_reporting(stats)
                 assert stats.pop('shadow_lettering_normalized', 0)==0  # This fixture must remain unaffected by final paint normalization.
                 compared.append((captured,out.read_bytes(),stats,font_test_report(metric).rows_joined,sorted(font_test_report(metric).missing_families)))
         finally:module.collapse_full_lyric_copies=original

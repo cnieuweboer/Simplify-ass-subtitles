@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Simplify embedded ASS/SSA subtitles and write verified MKVs into output/."""
 
+import math
 import argparse
 import codecs
 from collections import Counter
@@ -116,8 +117,9 @@ def command_result(result, context, *, capture=False, warnings_ok=True):
     if result.returncode == 1:
         print(f"  WARNING: MKVToolNix warning during {context}; checking the result.")
     for line in diagnostics:
-        # The wrapper prints structured scrolling warnings once, with track IDs.
-        if context == "subtitle simplification" and "for scrolling text blocks." in line:
+        # The wrapper prints structured limit warnings once, with track IDs.
+        if context == "subtitle simplification" and ("for scrolling text blocks." in line or
+                                                    "by color phase limits" in line):
             continue
         print("  " + (line if re.match(r"(?i)^(warning|error|fatal)\b", line) else "WARNING: " + line))
     return result.stdout if capture else None
@@ -544,7 +546,9 @@ def convert_candidates(job, eligible, args, merge, extract, engine, report, *, b
             stage("Embedded fonts: [0/0]; using supplied or installed fonts.")
     job["fonts_ready"] = True
     command = [sys.executable, str(engine), "--level", str(args.level), "--suffix", ".simple",
-               "--scroll-concurrency-limit", str(args.scroll_concurrency_limit)]
+               "--scroll-concurrency-limit", str(args.scroll_concurrency_limit),
+               "--color-phase-min-hold", str(args.color_phase_min_hold),
+               "--color-phase-change-interval", str(args.color_phase_change_interval)]
     if args.level == 1:
         for folder in [fonts, *args.fonts_dir]:
             command.extend(["--fonts-dir", str(folder)])
@@ -562,6 +566,17 @@ def convert_candidates(job, eligible, args, merge, extract, engine, report, *, b
                         "Name": candidate["track"].get("properties", {}).get("track_name"),
                         "Stats": stats, "Warnings": record.get("warnings", []), "SelectedForRemux": False}
         report["Tracks"].append(track_report)
+        removed=stats.get("color_phase_changes_removed",0)
+        if removed:
+            warning={"File":str(source),"Track":candidate["track"]["id"],
+                     "Captions":stats["color_phase_captions_limited"],"Changes":removed,
+                     "MinimumHold":stats["color_phase_min_hold"],"ChangeInterval":stats["color_phase_change_interval"],
+                     "RateLimited":stats["color_phase_rate_limited"],"HoldLimited":stats["color_phase_hold_limited"]}
+            report["ColorPhaseWarnings"].append(warning)
+            print(f"  WARNING: {source.name}, track {candidate['track']['id']}: Removed {removed} whole-caption color changes "
+                  f"in {warning['Captions']} captions by color phase limits "
+                  f"(hold {warning['MinimumHold']:g}s, seconds per change {warning['ChangeInterval']:g}; "
+                  f"rate {warning['RateLimited']}, hold {warning['HoldLimited']}).")
         dropped = stats.get("scrolling_events_dropped")
         if dropped is not None and dropped > 0:
             message = (f"Dropped {dropped} events due to exceeding concurrent event limit "
@@ -820,6 +835,8 @@ def parser():
     result.add_argument("--minimum-subtitle-bytes", type=int, default=50000)
     result.add_argument("--minimum-event-reduction-percent", type=float, default=10)
     result.add_argument("--scroll-concurrency-limit", type=int, default=0, help="0 disables text dropping (default)")
+    result.add_argument("--color-phase-min-hold",type=float,default=1.,help="minimum color hold seconds; 0 disables hold limit")
+    result.add_argument("--color-phase-change-interval",type=float,default=2.,help="seconds per color change; 0 is unlimited")
     result.add_argument("--level", "--simplification-level", type=int, choices=(1, 2), default=1, help="2 is deprecated legacy mode")
     result.add_argument("--simplifier", type=Path, help="engine path (default: simplify_ass.py beside this script)")
     result.add_argument("--mkvtoolnix-dir", "--mkvtoolnix-folder", type=Path)
@@ -833,6 +850,8 @@ def main(argv=None):
     args = argument_parser.parse_args(argv)
     if args.folder is not None and args.input is not None:
         argument_parser.error("Specify input positionally or with -i, not both.")
+    if any(not math.isfinite(v) or v<0 for v in (args.color_phase_min_hold,args.color_phase_change_interval)):
+        argument_parser.error("Color phase settings must be finite and nonnegative")
     if (args.workers < 1 or args.minimum_subtitle_bytes < 0 or args.scroll_concurrency_limit < 0 or
             not math.isfinite(args.minimum_event_reduction_percent) or
             not 0 <= args.minimum_event_reduction_percent <= 100):
@@ -849,7 +868,8 @@ def main(argv=None):
     if args.temp_dir:
         args.temp_dir = args.temp_dir.resolve()
     report = {"Simplifier": str(engine), "Level": args.level, "Failures": 0,
-              "ScrollConcurrencyLimit": args.scroll_concurrency_limit, "ScrollingDropWarnings": [], "Tracks": [], "Files": []}
+              "ScrollConcurrencyLimit": args.scroll_concurrency_limit, "ColorPhaseMinHold":args.color_phase_min_hold,
+              "ColorPhaseChangeInterval":args.color_phase_change_interval, "ScrollingDropWarnings": [], "ColorPhaseWarnings": [], "Tracks": [], "Files": []}
     try:
         if args.temp_dir and not args.temp_dir.is_dir():
             raise RuntimeError("Temporary storage folder must exist")
@@ -874,7 +894,7 @@ def main(argv=None):
         merge = find_tool("mkvmerge", args.mkvtoolnix_dir)
         extract = find_tool("mkvextract", args.mkvtoolnix_dir)
         help_text = run([sys.executable, str(engine), "--help"], "engine options", capture=True, warnings_ok=False)
-        for option in ("--stats-json", "--suffix", "--scroll-concurrency-limit"):
+        for option in ("--stats-json", "--suffix", "--scroll-concurrency-limit", "--color-phase-min-hold", "--color-phase-change-interval"):
             if option not in help_text:
                 raise RuntimeError(f"The simplifier must support {option}; use the current simplify_ass.py")
         if args.mode is None:
@@ -934,6 +954,12 @@ def main(argv=None):
         print("\nStopped. Completed outputs remain; the current partial output was discarded.")
         report["Failures"] += 1
     finally:
+        phase_warnings=report["ColorPhaseWarnings"]
+        report["ColorPhaseTotals"]={key:sum(item[key] for item in phase_warnings)
+            for key in ("Captions","Changes","RateLimited","HoldLimited")}
+        if phase_warnings:
+            print(f"WARNING: RUN SUMMARY: Removed {report['ColorPhaseTotals']['Changes']} whole-caption color changes "
+                  f"in {report['ColorPhaseTotals']['Captions']} captions by color phase limits.")
         for limit in sorted({item["Limit"] for item in report["ScrollingDropWarnings"]}, key=str):
             warnings = [item for item in report["ScrollingDropWarnings"] if item["Limit"] == limit]
             print(f"WARNING: RUN SUMMARY: {sum(item['Events'] for item in warnings)} scrolling events dropped "

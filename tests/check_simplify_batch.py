@@ -44,7 +44,7 @@ class BatchPolicyChecks(unittest.TestCase):
             infos = [{"tracks": [track("A"), track("B")]}, {"tracks": [track("B")]}]
             with patch.object(wrapper, "find_tool", side_effect=lambda name, _: name), \
                  patch.object(wrapper, "identify", side_effect=infos), \
-                 patch.object(wrapper, "run", return_value="--stats-json --suffix --scroll-concurrency-limit"), \
+                 patch.object(wrapper, "run", return_value="--stats-json --suffix --scroll-concurrency-limit --color-phase-min-hold --color-phase-change-interval"), \
                  patch.object(wrapper, "extract_items") as extract, \
                  patch("sys.stdout", new_callable=io.StringIO) as console:
                 def confirm(prompt):
@@ -80,7 +80,7 @@ class BatchPolicyChecks(unittest.TestCase):
 TEST_ENGINE = r'''import json,sys
 from pathlib import Path
 if '--help' in sys.argv:
-    print('--stats-json --suffix --scroll-concurrency-limit --level --fonts-dir')
+    print('--stats-json --suffix --scroll-concurrency-limit --color-phase-min-hold --color-phase-change-interval --level --fonts-dir')
     raise SystemExit(0)
 stats_path=Path(sys.argv[sys.argv.index('--stats-json')+1])
 limit=int(sys.argv[sys.argv.index('--scroll-concurrency-limit')+1])
@@ -103,7 +103,11 @@ for source in inputs:
     count=sum(line.startswith('Dialogue:') for line in result)
     records.append({'input':str(source.resolve()),'stats':{'original':len(rows),'output':count,
                     'max_concurrent_in':len(rows),'max_concurrent_out':count,
-                    'scrolling_concurrency_limit':limit,'scrolling_events_dropped':0},'warnings':[]})
+                    'scrolling_concurrency_limit':limit,'scrolling_events_dropped':0,
+                    'color_phase_captions_limited':1,'color_phase_changes_removed':2,
+                    'color_phase_rate_limited':1,'color_phase_hold_limited':1,
+                    'color_phase_min_hold':float(sys.argv[sys.argv.index('--color-phase-min-hold')+1]),
+                    'color_phase_change_interval':float(sys.argv[sys.argv.index('--color-phase-change-interval')+1])},'warnings':[]})
     with Path(__file__).with_suffix('.jsonl').open('a') as log:
         log.write(json.dumps([source.parent.name,source.name])+'\n')
 stats_path.write_text(json.dumps({'tracks':records}))
@@ -165,6 +169,12 @@ class RealSeriesChecks(unittest.TestCase):
             self.assertEqual(len([call for call in extraction.call_args_list if call.args[2] == "attachments"]), 3)
             self.assertEqual(list(scratch.iterdir()), [])
             data = json.loads(report_path.read_text())
+            self.assertEqual(data["ColorPhaseTotals"]["Captions"],len(data["ColorPhaseWarnings"]))
+            self.assertEqual(data["ColorPhaseTotals"]["Changes"],2*len(data["ColorPhaseWarnings"]))
+            self.assertTrue(data["ColorPhaseWarnings"])
+            self.assertIn("whole-caption color changes",console.getvalue())
+            self.assertTrue(all(t["Stats"]["color_phase_min_hold"]==1 for t in data["Tracks"]))
+
             self.assertTrue(data["GroupConsistency"])
             groups = {item["Name"]: item for item in data["Groups"]}
             self.assertEqual((groups["A"]["QualifyingFiles"], groups["A"]["PresentFiles"]), (1, 2))

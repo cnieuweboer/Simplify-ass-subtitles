@@ -79,8 +79,14 @@ function Get-SubtitleCounterCatalog([int] $Level = 1) {
             font_textures_removed = 'font textures removed'
             shadow_lettering_normalized = 'shadow lettering normalized'
             text_colors_normalized = 'text events with normalized fill/outline colors'
+            color_phase_captions_limited = 'captions with color changes removed by limits'
+            color_phase_changes_removed = 'whole-caption color changes removed by limits'
         }
         $output = [ordered]@{
+            color_phase_captions_preserved = 'captions retaining color phases'
+            color_phase_changes_preserved = 'whole-caption color changes retained'
+            color_phase_rate_limited = 'captions exceeding color change rate'
+            color_phase_hold_limited = 'captions below minimum color hold'
             shared_interval_tails = 'shared-interval tails retained'
             drawing_candidates = 'supporting drawing candidates'
             backdrops_retained = 'caption backdrops retained'
@@ -158,4 +164,9 @@ function Get-SubtitleCounterReportLines($Catalog, $Totals, $Coverage, [int] $Tra
         }
         ''
     }
+}
+
+function Get-ColorPhaseLimitWarning([object] $Stats) {
+    if ($null -eq $Stats -or $null -eq $Stats.color_phase_changes_removed -or $Stats.color_phase_changes_removed -le 0) { return $null }
+    return "Removed $($Stats.color_phase_changes_removed) whole-caption color changes in $($Stats.color_phase_captions_limited) captions by color phase limits (hold $($Stats.color_phase_min_hold)s; seconds per change $($Stats.color_phase_change_interval); rate: $($Stats.color_phase_rate_limited), hold: $($Stats.color_phase_hold_limited))."
 }

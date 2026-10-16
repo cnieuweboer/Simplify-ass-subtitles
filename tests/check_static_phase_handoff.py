@@ -1,5 +1,6 @@
 """Shared static phase proofs and the row/support ownership boundaries."""
 import test_paths
+from event_evidence_test_helpers import without_inactive_color_phase_reporting
 from event_evidence_test_helpers import contour_independent_contract as contract
 from pathlib import Path
 from copy import deepcopy
@@ -104,7 +105,7 @@ for engine in (reference,s):
  with patch.object(engine,'merge_shared_interval_rows',capture),patch.object(engine,'merge_static_timed_copies',track),contextlib.redirect_stdout(io.StringIO()),historical_final_tag_policy(engine):
   stats=engine.simplify_ass(source,output,engine.SimplifyConfig(),font_metrics=engine.FontMetrics([ROOT/'fonts']),font_report=report)
  check(engine.__version__+': exact fonts available',not report.missing_families)
- recorded.append((captured,output.read_bytes(),stats))
+ recorded.append((captured,output.read_bytes(),without_inactive_color_phase_reporting(stats)))
  if engine is s:current_trace=trace
 check('actual consumer receives same source roles visibility and intervals',contract(recorded[0][0])==contract(recorded[1][0]))
 from event_evidence_test_helpers import contour_independent_timeline

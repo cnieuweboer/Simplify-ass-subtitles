@@ -172,3 +172,9 @@ The source-row/stack ownership and representative-palette work is implemented
 in v208. See [REPRESENTATIVE_SOURCE_PAINT.md](REPRESENTATIVE_SOURCE_PAINT.md) for
 the producer/consumer contracts and validation entry points. v209's configurable
 multi-phase emission remains the next planned step.
+
+## v209 implementation
+
+The phase feature, settings and contribution reporting are implemented together
+in v209. See [CAPTION_COLOR_PHASES.md](CAPTION_COLOR_PHASES.md) for defaults,
+independent disable semantics, ownership flow, counters and validation commands.

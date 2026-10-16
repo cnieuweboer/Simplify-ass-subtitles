@@ -7,7 +7,7 @@ function Write-Host {
     param($Object, $ForegroundColor)
     $script:captured.Add([pscustomobject]@{ Text = [string]$Object; Color = $ForegroundColor })
 }
-foreach ($name in @('test_mkv_subtitles.ps1', 'test_subtitles_step2_test.ps1', '../../simplify_ass.ps1')) {
+foreach ($name in @('test_mkv_subtitles.ps1', 'test_subtitles_step2_test.ps1')) {
     $tokens = $null; $parseErrors = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseFile(
         (Join-Path $PSScriptRoot $name), [ref]$tokens, [ref]$parseErrors)
@@ -114,12 +114,12 @@ try {
             foreach ($key in $labels.Keys) { $totals[$key] = $null; $counterCoverage[$key] = 0 }
             $summary = [pscustomobject]@{ FilesWithErrors=0; FilesWithoutAss=0; OtherTracksSkipped=0
                 TracksProcessed=0; TracksFailed=0; TracksSkipped=0; Original=[long]0; Remaining=[long]0 }
-            foreach ($variable in @('topTracks','topConcurrentTracks','topTimedTracks','errorFiles','droppedTextTracks','completed')) {
+            foreach ($variable in @('topTracks','topConcurrentTracks','topTimedTracks','errorFiles','droppedTextTracks','colorPhaseWarnings','completed')) {
                 Set-Variable $variable ([System.Collections.Generic.List[object]]::new())
             }
             $simplifierVersion = [version]'2026.10.12.181'
             $sample = @(
-                [pscustomobject]@{original=100;output=80;max_concurrent_in=10;max_concurrent_out=2;phase_merged=0;deduped=3;text_colors_normalized=2;text_copies_removed=999;staggered_rows=999;future_counter=9},
+                [pscustomobject]@{original=100;output=80;max_concurrent_in=10;max_concurrent_out=2;phase_merged=0;deduped=3;text_colors_normalized=2;color_phase_captions_limited=2;color_phase_changes_removed=5;color_phase_rate_limited=1;color_phase_hold_limited=2;color_phase_min_hold=1;color_phase_change_interval=2;text_copies_removed=999;staggered_rows=999;future_counter=9},
                 [pscustomobject]@{original=10;output=8;max_concurrent_in=4;max_concurrent_out=3;phase_merged=0;deduped=0},
                 [pscustomobject]@{original=2;output=1;max_concurrent_in=2;max_concurrent_out=1;phase_merged=0;deduped=$null}
             )
@@ -142,7 +142,7 @@ try {
             $reportPath=Join-Path $testFolder ($name+$SimplificationLevel+'.txt')
             $jsonReportPath=Join-Path $testFolder ($name+$SimplificationLevel+'.json')
             $inputRoot=$testFolder; $simplifierPath='simplify_ass.py'; $simplifierHash='test'
-            $supportsScrollLimit=$true; $ScrollConcurrencyLimit=32; $workerCount=1; $NoFontSpacing=$false
+            $supportsScrollLimit=$true; $ScrollConcurrencyLimit=32; $supportsColorPhases=$true; $ColorPhaseMinHold=1; $ColorPhaseChangeInterval=2; $workerCount=1; $NoFontSpacing=$false
             $Encoding=$null; $runState='completed'; $startedAt=Get-Date; $files=@('example.mkv'); $runRoot=$testFolder
             Save-Report
             $text=Get-Content -LiteralPath $reportPath -Raw
@@ -191,3 +191,12 @@ try {
 } finally { Remove-Item -LiteralPath $testFolder -Recurse -Force }
 
 Microsoft.PowerShell.Utility\Write-Host "$checks PowerShell reporting checks passed."
+
+if ($null -ne (Get-ColorPhaseLimitWarning ([pscustomobject]@{}))) { throw 'Older engine must not report a genuine zero or warning.' }
+$checks++
+if ($null -ne (Get-ColorPhaseLimitWarning ([pscustomobject]@{color_phase_changes_removed=0}))) { throw 'Zero color removals must not warn.' }
+$checks++
+$warning=Get-ColorPhaseLimitWarning ([pscustomobject]@{color_phase_changes_removed=5;color_phase_captions_limited=2;color_phase_min_hold=1;color_phase_change_interval=2;color_phase_rate_limited=1;color_phase_hold_limited=2})
+if ($warning -notmatch '5 whole-caption color changes in 2 captions' -or $warning -notmatch 'rate: 1, hold: 2') { throw 'Color warning lost counters/reasons.' }
+$checks++
+[Console]::WriteLine("Color phase reporting checks included: $checks total.")

@@ -168,7 +168,7 @@ class WrapperChecks(unittest.TestCase):
                 (root / "simplify_ass.py").touch()
                 with patch.object(wrapper, "__file__", str(root / "simplify_subtitles.py")), \
                      patch.object(wrapper, "find_tool", side_effect=lambda name, _: name), \
-                     patch.object(wrapper, "run", return_value="--stats-json --suffix --scroll-concurrency-limit"), \
+                     patch.object(wrapper, "run", return_value="--stats-json --suffix --scroll-concurrency-limit --color-phase-min-hold --color-phase-change-interval"), \
                      patch.object(wrapper, "scan_batch", return_value={}), \
                      patch.object(wrapper, "process_batch") as batch, \
                      patch.object(wrapper, "process_file", return_value="copied unchanged") as process, \
@@ -298,12 +298,19 @@ class RealBatchChecks(unittest.TestCase):
                                  ("reduction-copy", ["--minimum-subtitle-bytes", "0",
                                                       "--minimum-event-reduction-percent", "100"]),
                                  ("filtered", ["--minimum-subtitle-bytes", "0"]),
-                                 ("explicit-limit", ["--process-all-tracks", "--scroll-concurrency-limit", "32"])):
+                                 ("explicit-limit", ["--process-all-tracks", "--scroll-concurrency-limit", "32", "--color-phase-min-hold", "1.25", "--color-phase-change-interval", "0"])):
                 report = root / (label + ".json")
                 with patch("sys.stdout", new_callable=io.StringIO) as console:
                     status = wrapper.main(base_args + ["-o", str(root / label), "--report", str(report)] + extra)
                 self.assertEqual(status, 0, console.getvalue())
                 reports[label] = json.loads(report.read_text())
+                if label=="explicit-limit":
+                    self.assertEqual(reports[label]["ColorPhaseMinHold"],1.25)
+                    self.assertEqual(reports[label]["ColorPhaseChangeInterval"],0)
+                    for track in reports[label]["Tracks"]:
+                        self.assertEqual(track["Stats"]["color_phase_min_hold"],1.25)
+                        self.assertEqual(track["Stats"]["color_phase_change_interval"],0)
+
                 if label == "size-copy":
                     self.assertIn("Skipped 2 subtitle track(s): size threshold.", console.getvalue())
                     self.assertNotIn("event-reduction threshold.", console.getvalue())

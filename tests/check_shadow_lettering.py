@@ -1,5 +1,6 @@
 """Final shadow lettering admission, exact paint transfer and real-source checks."""
-import test_paths  # Resolve the repository for direct test execution.
+import test_paths
+from event_evidence_test_helpers import without_inactive_color_phase_reporting  # Resolve the repository for direct test execution.
 from pathlib import Path
 from unittest.mock import patch
 import ast, contextlib, copy, hashlib, importlib.util, io, json, subprocess, sys, tempfile
@@ -107,7 +108,7 @@ with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.S
         outputs.append(s.load_subtitle_events(output)[1])
         paths.append(output)
     check('real scene converts eight shadow labels',stats[1]['shadow_lettering_normalized']==8)
-    check('existing conversion statistics identical',{k:v for k,v in stats[1].items() if k!='shadow_lettering_normalized'}==stats[0])
+    check('existing conversion statistics identical',without_inactive_color_phase_reporting({k:v for k,v in stats[1].items() if k!='shadow_lettering_normalized'})==stats[0])
     check('all text/events/timing/layers retained',len(outputs[0])==len(outputs[1]) and all(a.fields()[:-1]==b.fields()[:-1] and s.OVERRIDE_RE.sub('',a.text)==s.OVERRIDE_RE.sub('',b.text) for a,b in zip(*outputs)))
     check('all eight rectangle events byte identical',[e.text for e in outputs[0] if e.state.get('p')]==[e.text for e in outputs[1] if e.state.get('p')])
     for a,b in zip(*outputs):

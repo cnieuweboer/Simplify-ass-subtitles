@@ -60,7 +60,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 89 current scripts. The runner uses three workers for
+The suite inventory lists 90 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
@@ -113,7 +113,7 @@ known engine/baseline. Keep original archive evidence outside fresh report paths
 
 ## Batch testing on Windows
 
-Run `simplify_ass.bat` beside MKV inputs for the production batch workflow.
+Run `simplify_subtitles.py` beside MKV inputs for the production batch workflow.
 `tests/windows/test_mkv_subtitles.ps1` scans MKVs recursively, extracts ASS/SSA and fonts,
 converts them and writes per-MKV ZIPs and reports without remuxing the originals.
 Use explicit input/output paths and a suitable `-MaxParallel` value.
@@ -300,3 +300,6 @@ See [REPRESENTATIVE_SOURCE_PAINT.md](REPRESENTATIVE_SOURCE_PAINT.md) for v208's
 shared source-row/stack contour proof, coherent representative palettes and
 containing backing-interval handoff. Source paint/timing records remain borrowed
 original evidence; confirmed row assembly retains normalized fragment paint.
+
+See [CAPTION_COLOR_PHASES.md](CAPTION_COLOR_PHASES.md) for v209's source timelines,
+bounded sequential emission, engine/batch controls and shared wrapper reporting.

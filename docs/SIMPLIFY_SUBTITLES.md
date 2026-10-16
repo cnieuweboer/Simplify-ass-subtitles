@@ -122,3 +122,9 @@ A/B/C episode scenario, smaller forced members, absent groups, unchanged replace
 and all-tracks policies, extraction/conversion reuse, advisories before confirmation,
 and temporary-file cleanup after verification failures. The original focused
 suite separately exercises the production simplification engine.
+
+Whole-caption color phases use `--color-phase-min-hold` (default 1 second) and
+`--color-phase-change-interval` (default 2 seconds of caption duration per allowed
+change). Zero disables the corresponding restriction; both zero allow all
+structurally proved phases. Reports identify affected captions, removed changes
+and the limiting reason. See [CAPTION_COLOR_PHASES.md](CAPTION_COLOR_PHASES.md).

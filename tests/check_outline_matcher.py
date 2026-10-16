@@ -1,5 +1,6 @@
 """Decoder decision parity, bounded search, profile ownership and vector integration."""
-import test_paths  # Resolve the repository for direct test execution.
+import test_paths
+from event_evidence_test_helpers import without_inactive_color_phase_reporting  # Resolve the repository for direct test execution.
 from pathlib import Path
 from copy import deepcopy
 from types import SimpleNamespace
@@ -189,6 +190,7 @@ with tempfile.TemporaryDirectory() as directory:
   for module in (previous,current):
    target=Path(directory)/(module.__version__+'-'+name)
    with contextlib.redirect_stdout(None):stats=module.simplify_ass(ROOT/'test-data'/name,target,module.SimplifyConfig(),font_metrics=engines[module],font_report=font_test_report(engines[module]),outline_matcher=shared_matcher if module is current else None)
+   stats=without_inactive_color_phase_reporting(stats)
    assert stats.pop('shadow_lettering_normalized', 0)==0  # This fixture must remain unaffected by final paint normalization.
    compared.append((target.read_bytes(),stats,font_test_report(engines[module]).rows_joined,sorted(font_test_report(engines[module]).missing_families)))
   check('focused conversion '+name,compared[0]==compared[1]);conversions.append(name)

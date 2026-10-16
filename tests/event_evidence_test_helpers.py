@@ -175,3 +175,19 @@ def contour_independent_timeline(events):
         if not timeline or live != timeline[-1][1]:
             timeline.append((at,live.copy()))
     return timeline
+
+
+def without_inactive_color_phase_reporting(stats):
+    """Historical conversion contracts still run current paint policy.
+
+    Assert that the newly reported limiter/emitter did nothing in these old
+    fixtures, then compare their existing statistics independently of new
+    effective-setting/report fields. Do not substitute any runtime behavior.
+    """
+    counters=('color_phase_captions_limited','color_phase_changes_removed',
+              'color_phase_rate_limited','color_phase_hold_limited',
+              'color_phase_captions_preserved','color_phase_changes_preserved')
+    assert all(stats.get(key,0)==0 for key in counters),stats
+    assert not stats.get('color_phase_limits'),stats
+    reporting=set(counters)|{'color_phase_min_hold','color_phase_change_interval','color_phase_limits'}
+    return {key:value for key,value in stats.items() if key not in reporting}

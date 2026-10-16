@@ -1,5 +1,6 @@
 """Complete staggered source fades and the AoT translation overlap regression."""
 import test_paths
+from event_evidence_test_helpers import without_inactive_color_phase_reporting
 from event_evidence_test_helpers import contour_independent_contract as contract
 from pathlib import Path
 from copy import deepcopy
@@ -164,8 +165,8 @@ with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.Stri
     check('other rows including romanized lyrics unchanged',
           contract([e.fields() for e in prior if e.style!='OP-E'])==contract([e.fields() for e in current if e.style!='OP-E']))
     check('only overlap and concurrency statistics change',
-          {k:v for k,v in statistics[0].items() if k not in {'cue_overlaps_trimmed','max_concurrent_out'}}==
-          {k:v for k,v in statistics[1].items() if k not in {'cue_overlaps_trimmed','max_concurrent_out'}})
+          {k:v for k,v in without_inactive_color_phase_reporting(statistics[0]).items() if k not in {'cue_overlaps_trimmed','max_concurrent_out'}}==
+          {k:v for k,v in without_inactive_color_phase_reporting(statistics[1]).items() if k not in {'cue_overlaps_trimmed','max_concurrent_out'}})
     check('intro peak concurrency drops from three to two',
           (statistics[0]['max_concurrent_out'],statistics[1]['max_concurrent_out'])==(3,2))
     check('twenty additional handoffs reported',statistics[1]['cue_overlaps_trimmed']==statistics[0]['cue_overlaps_trimmed']+20)
@@ -215,8 +216,8 @@ with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.Stri
     check('Overlord two clean handoffs',all(a.end_s==b.start_s for a,b in zip(changed,changed[1:])))
     check('Overlord only additional trims reported',statistics[1]['cue_overlaps_trimmed']==
           statistics[0]['cue_overlaps_trimmed']+2 and
-          {k:v for k,v in statistics[0].items() if k!='cue_overlaps_trimmed'}==
-          {k:v for k,v in statistics[1].items() if k!='cue_overlaps_trimmed'})
+          {k:v for k,v in without_inactive_color_phase_reporting(statistics[0]).items() if k!='cue_overlaps_trimmed'}==
+          {k:v for k,v in without_inactive_color_phase_reporting(statistics[1]).items() if k!='cue_overlaps_trimmed'})
     again = Path(folder)/'again.ass'
     s.simplify_ass(paths[1],again,s.SimplifyConfig(),font_metrics=s.FontMetrics([ROOT/'fonts']))
     repeated = s.load_subtitle_events(again)[1]

@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.16.208"
+__version__ = "2026.10.16.209"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 # Reconstructed source contours keep thinner/axis-specific widths, but cap each
 # axis in ASS script units. Ordinary retained events are not subject to this cap.
@@ -107,6 +107,14 @@ class SimplifyConfig:
     max_vectors_per_cue: int = 0
     encoding: str | None = None
     scroll_concurrency_limit: int = 32
+    color_phase_min_hold: float = 1.0
+    color_phase_change_interval: float = 2.0
+
+    def __post_init__(self):
+        for name in ('color_phase_min_hold','color_phase_change_interval'):
+            value=getattr(self,name)
+            if not math.isfinite(value) or value<0:
+                raise ValueError(name+' must be finite and nonnegative.')
 
 
 @dataclass(frozen=True)
@@ -1014,6 +1022,7 @@ class SourceFragmentRemoval:
     events: list[Event]
     rows: list[TextRow]
     removed_effects: int
+    paint_families: list[TextRow] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -1133,7 +1142,7 @@ class SubtitleDocument:
 class TextProcessingResult:
     """Finished text/vector events and counters, before backdrop reconstruction."""
     events: list[Event]
-    statistics: dict[str,int]
+    statistics: dict[str,object]
 
 
 @dataclass
@@ -1158,6 +1167,7 @@ class PreparedSourceText:
     rows: list[TextRow]
     effects_removed: int
     vector_captions: int
+    paint_timelines: tuple = ()
 
 
 @dataclass
@@ -10924,9 +10934,263 @@ def collapse_fragment_phase_rows(
 _ROW_TIME_QUANTUM = .011  # ASS row timings have centisecond precision.
 
 
+@dataclass(frozen=True)
+class CaptionPaintTimeline:
+    """Producer-proved source paint, independent of later layout reconstruction.
+
+    Phases contain one SourceCaptionPaint per non-space literal character.
+    Sources retain original timing/paint; no rendered tag is used as authority.
+    """
+    owner: Event
+    members: frozenset[int]
+    literal: str
+    phases: tuple[tuple[float,float,tuple[SourceCaptionPaint,...]],...]
+
+
+def _near_caption_palette(a: tuple, b: tuple) -> bool:
+    """Use the existing two-level, non-chaining RGB bound on corresponding paint."""
+    return len(a)==len(b) and all(x.border==y.border and x.outline_alpha==y.outline_alpha and
+        all(abs(int(c[i:i+2],16)-int(d[i:i+2],16))<=2
+            for c,d in ((x.fill,y.fill),(x.outline,y.outline)) for i in (0,2,4)) for x,y in zip(a,b))
+
+
+def _source_row_palette(row: TextRow, at: float) -> tuple | None:
+    # Settling opacity proves a readable representative contour, but temporal
+    # intent also needs source exposure at this phase. Decorative blurred planes
+    # do not own the retained glyph/stroke; their opacity cannot veto that ink.
+    sources={e.source_index:e for peers in row.paint_rows for e in peers}
+    sources.update((e.source_index,e) for e in row.foreground)
+    for source in sources.values():
+        sampled=_source_palette_at(source,at)
+        if sampled is None or not sampled[1] or source.state.get('blur',0) or source.state.get('be',0):continue
+        evaluated,transforms,_,_=_freeze_inputs(''.join(OVERRIDE_RE.findall(source.text)),
+            source.duration,source.defaults,source.defaults,source.styles)
+        live=sample_transform_state(evaluated.formatting,transforms,(at-source.start_s)*1000,
+            source.styles,source.defaults,continuation=evaluated.continuation).formatting
+        if live.get('1a',0)!=0 or live.get('3a',0)!=0:return None
+    result=_normalize_source_row_paint([e for e,_,_ in row.pieces],[row],
+                                      palette_time=at,proof_required=True)
+    if result is None:
+        return None
+    palette=[]
+    for e,_,_ in sorted(result.rows[0].pieces,key=lambda item:item[2][0] if item[2] is not None else 0):
+        ranges=_literal_paint_ranges([dataclass_replace(e,effect='')])
+        if ranges is None:
+            return None
+        for literal,states in ranges:
+            state=states[0]
+            proof=_source_caption_paint(state,[state])
+            if proof is None:return None
+            palette.extend((char,proof) for char in literal if not char.isspace())
+    return tuple(palette)
+
+
+def _caption_paint_timeline(row: TextRow) -> CaptionPaintTimeline | None:
+    sources={e.source_index:e for peers in row.paint_rows for e in peers}
+    sources.update((e.source_index,e) for e in row.foreground)
+    if not sources or row.base.duration<=0:
+        return None
+    visibility=_index_source_fragment_visibility(row)
+    alternate=len(visibility)>1
+    if alternate:
+        # Only families accepted by the existing visibility/compositing producer
+        # arrive here. Each phase may use a different complete fragmentation.
+        intervals=sorted((a,b,peers) for profile,peers in visibility.items() for a,b in profile)
+    else:
+        points={row.base.start_s,row.base.end_s}
+        for e in sources.values():
+            points.update(parse_time(format_time(t)) for t in (_source_palette_boundaries(e) or ())
+                          if row.base.start_s<t<row.base.end_s)
+        if len(points)<3:return None
+        points=sorted(points);intervals=[(a,b,row.paint_rows) for a,b in zip(points,points[1:])]
+    phases=[];literal=None
+    for a,b,peers in intervals:
+        chosen=max(peers,key=lambda rr:(int(rr[0].layer) if rr[0].layer.lstrip('-').isdigit() else 0,len(rr)))
+        phase_row=(dataclass_replace(row,base=chosen[0],pieces=[(e,OVERRIDE_RE.sub('',e.text),get_pos(e.text)) for e in chosen],
+            paint_rows=peers,foreground=[e for rr in peers for e in rr]) if alternate else
+            dataclass_replace(row,foreground=row.foreground or [e for rr in peers for e in rr]))
+        sample=_source_row_palette(phase_row,(a+b)/2)
+        if sample is None:return None
+        text=''.join(char for char,paint in sample)
+        if '\\' in text or literal is not None and text!=literal:return None
+        literal=text;palette=tuple(paint for char,paint in sample)
+        phases.append((a,b,palette))
+    return _join_source_paint_phases(row.base,frozenset(sources),literal,phases)
+
+
+def _join_source_paint_phases(owner: Event, members: frozenset[int], literal: str,
+                              samples: list[tuple]) -> CaptionPaintTimeline | None:
+    """Canonical complete palettes share synchronization and tiny-color policy."""
+    phases=[]
+    for a,b,palette in samples:
+        if phases and _near_caption_palette(phases[-1][2],palette):
+            phases[-1]=(phases[-1][0],b,phases[-1][2]);continue
+        if phases:
+            changed=sum(not _near_caption_palette((x,),(y,)) for x,y in zip(phases[-1][2],palette))
+            if changed<math.ceil(.8*len(palette)):return None
+        phases.append((a,b,palette))
+    return CaptionPaintTimeline(owner,members,literal,tuple(phases)) if len(phases)>1 else None
+
+
+def _collect_caption_paint_timelines(data: CollectedSourceText, families: list[TextRow],
+                                     retained: list[Event], metric: FontMetrics | None) -> tuple:
+    """Capture before representative row paint and alternating-source removal."""
+    timelines=[];claimed=set()
+    retained_by_id={e.source_index:e for e in retained}
+    def clear(row):
+        sources=[e for peers in row.paint_rows for e in peers]+row.foreground
+        if any(not e.layer.lstrip('-').isdigit() for e in sources):return False
+        low=min(int(e.layer) for e in sources);high=max(int(e.layer) for e in sources)
+        members={e.source_index for e in sources}
+        foreign=any(e.kind=='Dialogue' and e.source_index not in members and
+            e.start_s<row.base.end_s and e.end_s>row.base.start_s and
+            (not e.layer.lstrip('-').isdigit() or low<=int(e.layer)<=high)
+            for e in retained)
+        if not foreign or low==high:return True
+        if metric is None or get_pos(row.base.text) is None:return False
+        return all(_glyph_replacement_row_is_clear(dataclass_replace(e,layer=str(low)),
+            (row.base.start_s,row.base.end_s),members,high,retained_by_id,metric,sources)
+            for e,_,_ in row.pieces)
+    accepted={row.base.source_index:row for row in families}
+    for collected in data.rows:
+        row=accepted.get(collected.base.source_index,collected)
+        # A stable single-plane row can own an authored stroke too. Mixed
+        # visibility still requires the existing complete alternation proof.
+        alternate=len(_index_source_fragment_visibility(row))>1
+        members={e.source_index for peers in row.paint_rows for e in peers}
+        members.update(e.source_index for e in row.foreground)
+        claimed.update(members)
+        if alternate and row.base.source_index not in accepted:continue
+        timeline=_caption_paint_timeline(row)
+        if timeline is not None and clear(row):timelines.append(timeline)
+    groups={}
+    for e in data.events.values():
+        if e.kind!='Dialogue' or e.source_index in claimed:
+            continue
+        if not _source_palette_boundaries(e):continue
+        key=(e.start,e.end,e.style,e.name,e.margin_l,e.margin_r,e.margin_v,get_pos(e.text),data.words.get(e.source_index))
+        groups.setdefault(key,[]).append(e)
+    # Include static companion planes as well: a fill-only or outline-only step
+    # still needs the same ownership proof on both sides of the transition.
+    for e in data.events.values():
+        if e.kind!='Dialogue' or e.source_index in claimed:continue
+        key=(e.start,e.end,e.style,e.name,e.margin_l,e.margin_r,e.margin_v,get_pos(e.text),data.words.get(e.source_index))
+        if key in groups and all(e.source_index!=p.source_index for p in groups[key]):groups[key].append(e)
+    for group in groups.values():
+        if any(e.source_index in claimed for e in group):continue
+        top=max(group,key=lambda e:(int(e.layer) if e.layer.lstrip('-').isdigit() else 0,e.source_index))
+        row=TextRow(top,[(top,OVERRIDE_RE.sub('',top.text),get_pos(top.text))],
+                    paint_rows=[[e] for e in group],foreground=group)
+        timeline=_caption_paint_timeline(row)
+        if timeline is not None and clear(row):timelines.append(timeline)
+    # Ordinary sequential static source captions are the serialized form of
+    # the same whole-caption intent. Capture their existing disjoint intervals
+    # before effect-sequence merging, so repeat conversion needs no marker/tag.
+    static={};paint_tags=set(CAPTION_PAINT_TAGS)|{'alpha','c'}
+    claimed.update(index for t in timelines for index in t.members)
+    for e in data.events.values():
+        if e.kind!='Dialogue' or e.source_index in claimed or e.duration<=0:continue
+        profile=static_text_paint_geometry(dataclass_replace(e,effect=''),paint_tags)
+        if profile is None:continue
+        key=(e.style,e.name,e.margin_l,e.margin_r,e.margin_v,profile[0])
+        static.setdefault(key,{}).setdefault((e.start_s,e.end_s),[]).append(e)
+    for intervals in static.values():
+        family=sorted(intervals.values(),key=lambda peers:(peers[0].start_s,peers[0].end_s))
+        runs=[];run=[]
+        for peers in family:
+            if run and abs(peers[0].start_s-run[-1][0].end_s)>.001:
+                runs.append(run);run=[]
+            run.append(peers)
+        runs.append(run)
+        for run in runs:
+            if len(run)<2:continue
+            samples=[];literal=None;members=set();first=None
+            for peers in run:
+                e=max(peers,key=lambda p:(int(p.layer) if p.layer.lstrip('-').isdigit() else 0,p.source_index))
+                row=TextRow(e,[(e,OVERRIDE_RE.sub('',e.text),get_pos(e.text))],paint_rows=[[p] for p in peers],foreground=peers)
+                if not clear(row):break
+                sample=_source_row_palette(row,(e.start_s+e.end_s)/2)
+                if sample is None:break
+                first=first or e;members.update(p.source_index for p in peers)
+                literal=''.join(c for c,p in sample)
+                samples.append((e.start_s,e.end_s,tuple(p for c,p in sample)))
+            if len(samples)!=len(run) or not literal or '\\' in literal:continue
+            owner=replace_event(first,end=run[-1][0].end,end_s=run[-1][0].end_s)
+            timeline=_join_source_paint_phases(owner,frozenset(members),literal,samples)
+            if timeline is not None:timelines.append(timeline)
+    return tuple(timelines)
+
+
+def _emit_caption_paint_timelines(events: list[Event], timelines: tuple,
+                                   config: SimplifyConfig) -> tuple[list[Event],dict]:
+    """Materialize producer-owned paint after layout, without rediscovering intent.
+
+    No timing/geometry is inferred here. A complete retained caption must match
+    its original owner and interval. Consumers already settled layout and lyric
+    boundaries; only source-proved temporal paint is serialized now.
+    """
+    counts={k:0 for k in ('color_phase_captions_limited','color_phase_changes_removed',
+        'color_phase_rate_limited','color_phase_hold_limited',
+        'color_phase_captions_preserved','color_phase_changes_preserved')}
+    counts.update(color_phase_min_hold=config.color_phase_min_hold,
+                  color_phase_change_interval=config.color_phase_change_interval,color_phase_limits=[])
+    replacements={}
+    for timeline in timelines:
+        owner=timeline.owner
+        matches=sorted([e for e in events if e.kind=='Dialogue' and e.source_index in timeline.members and
+                 e.style==owner.style and e.name==owner.name and
+                 e.start_s>=owner.start_s-1e-6 and e.end_s<=owner.end_s+1e-6 and
+                 ''.join(OVERRIDE_RE.sub('',e.text).split())==timeline.literal],key=lambda e:e.start_s)
+        if (not matches or abs(matches[0].start_s-owner.start_s)>1e-6 or
+                abs(matches[-1].end_s-owner.end_s)>1e-6 or
+                any(abs(a.end_s-b.start_s)>1e-6 for a,b in zip(matches,matches[1:]))):continue
+        paint_tags=set(CAPTION_PAINT_TAGS)|{'alpha','c'}
+        layouts=[static_text_paint_geometry(e,paint_tags) for e in matches]
+        if any(p is None or p[0]!=layouts[0][0] for p in layouts):continue
+        event=max(matches,key=lambda e:e.duration)
+        if any(id(e) in replacements for e in matches):continue
+        phases=timeline.phases;changes=len(phases)-1
+        rate=(config.color_phase_change_interval>0 and
+              changes*config.color_phase_change_interval>owner.duration+1e-6)
+        hold=config.color_phase_min_hold>0 and any(b-a+1e-6<config.color_phase_min_hold for a,b,p in phases)
+        if rate or hold:
+            counts['color_phase_captions_limited']+=1;counts['color_phase_changes_removed']+=changes
+            counts['color_phase_rate_limited']+=int(rate);counts['color_phase_hold_limited']+=int(hold)
+            counts['color_phase_limits'].append(dict(style=owner.style,text=OVERRIDE_RE.sub('',event.text),
+                start=owner.start_s,end=owner.end_s,changes_removed=changes,reason='both' if rate and hold else 'rate' if rate else 'hold'))
+            votes={}
+            for a,b,palette in phases:
+                votes[palette]=votes.get(palette,0)+b-a
+            selected=max(votes,key=votes.get)
+            phases=((owner.start_s,owner.end_s,selected),)
+        ranges=_literal_paint_ranges([event])
+        if ranges is None:continue
+        output=[]
+        for a,b,palette in phases:
+            fragments=[];paints=[];cursor=0
+            for literal,states in ranges:
+                for char in literal:
+                    proof=palette[min(cursor,len(palette)-1)]
+                    if not char.isspace():cursor+=1
+                    fragments.append((char,states))
+                    paints.append({**states[0],'1c':proof.fill,'3c':proof.outline,'3a':proof.outline_alpha,
+                                   'bord':proof.border[0],'xbord':proof.border[0],'ybord':proof.border[1]})
+            body=_render_literal_paint(event,fragments,paints,set(CAPTION_PAINT_TAGS)|{'alpha','c'})
+            start,end=format_time(a),format_time(b)
+            if start==end:output=[];break
+            output.append(replace_event(event,text=body,start=start,end=end,start_s=parse_time(start),end_s=parse_time(end)))
+        if not output:continue
+        for e in matches:replacements[id(e)]=[]
+        replacements[id(matches[0])]=output
+        if not (rate or hold):
+            counts['color_phase_captions_preserved']+=1;counts['color_phase_changes_preserved']+=changes
+    return [piece for e in events for piece in replacements.get(id(e),[e])],counts
+
+
 def _normalize_source_row_paint(
-    events: list[Event], source_rows: list[TextRow],
-) -> RowReconstructionResult:
+    events: list[Event], source_rows: list[TextRow], *,
+    palette_time: float | None = None, proof_required: bool = False,
+) -> RowReconstructionResult | None:
     """Return independent paint-normalized rows without assembling or retiming them."""
     # The normal reconstruction stage owns paint for both positioned
     # fragments and assembled lines. Source cues retain their exact timing.
@@ -10937,7 +11201,8 @@ def _normalize_source_row_paint(
         state = paint.state or effective_state(paint.text,paint.defaults,paint.styles)
         originals={p.source_index:p for peers in row.paint_rows for p in peers}
         originals.update((p.source_index,p) for p in row.foreground)
-        at=_representative_source_palette_time(originals.values(),row.base.start_s,row.base.end_s)
+        at=(palette_time if palette_time is not None else
+            _representative_source_palette_time(originals.values(),row.base.start_s,row.base.end_s))
         completed=_source_palette_at(paint,at)
         completed_fill=completed[0].state.get('1c') if completed else state.get('1c','FFFFFF')
         paint_tags=set(CAPTION_PAINT_TAGS)|{'alpha','c'}
@@ -10967,7 +11232,7 @@ def _normalize_source_row_paint(
                         not any(states[0].get(k,states[0].get('shad',0)) for k in ('xshad','yshad'))
                         for _,states in ranges):
                     proofs=[_source_caption_paint(states[0],[states[0]]) for _,states in ranges]
-                    if all(proof is not None for proof in proofs) and any(max(proof.border)>0 for proof in proofs):
+                    if all(proof is not None for proof in proofs) and (len(family)==1 or any(max(proof.border)>0 for proof in proofs)):
                         contour=(ranges,proofs)
                 if contour is None:
                     contour=_stacked_source_contour_paint(context,chosen,family,at=at)
@@ -10981,6 +11246,8 @@ def _normalize_source_row_paint(
                 # Preserve the confirmed fragment's geometry and lifetime.
                 body=_render_source_contour_paint(sampled[0],contour,paint_tags)
             else:
+                if proof_required:
+                    return None
                 selected={**e.state,'1c':state.get('1c','FFFFFF')}
                 outlines=[p.state for p in row.foreground if p.state]
                 body=render_simplified_caption(selected,text,outline_states=outlines,
@@ -13042,6 +13309,7 @@ def remove_source_fragment_effects(
     indexed = _index_source_fragment_events(events,words,positions)
     removed = match_translucent_glyph_particles(events,rows,words,animated_sources)
     removed.update(match_repeated_glyph_flashes(events,words,positions,font_metrics, font_report=font_report))
+    paint_families=[]
     for index,row in enumerate(rows):
         alternating = _prove_source_fragment_visibility(row,removed)
         if alternating is None:
@@ -13053,10 +13321,11 @@ def remove_source_fragment_effects(
             row,context,matched,alternating,animated_sources,removed)
         if foreground is not None:
             rows[index] = dataclass_replace(row,foreground=foreground,confirmed=True)
+        paint_families.append(rows[index])
     output,pulses = collapse_backed_glyph_pulses(
         [e for e in events if e.source_index not in removed],words,positions,font_metrics)
     output,slices = collapse_sliced_text_sequences(output)
-    return SourceFragmentRemoval(output,rows,len(removed)+pulses+slices)
+    return SourceFragmentRemoval(output,rows,len(removed)+pulses+slices,paint_families)
 
 
 def nearby_boundary_groups(index: dict, key: tuple, boundary: float) -> list[tuple[float,list]]:
@@ -16374,6 +16643,7 @@ def _prepare_source_text(
     """Recover source rows and geometry before freezing their effects."""
     parsed_by_line = source.events
     source_rows = []
+    paint_timelines=()
     source_effects = 0
     vector_text_recovered = 0
     working_by_line = parsed_by_line
@@ -16401,13 +16671,14 @@ def _prepare_source_text(
             list(working_by_line.values()),source_data.rows,source_data.words,source_data.positions,animated_sources,
             font_metrics=font_metrics, font_report=font_report)
         source_effects = removal.removed_effects
+        paint_timelines=_collect_caption_paint_timelines(source_data,removal.paint_families,removal.events,font_metrics)
         reconstruction = reconstruct_text_rows(
             removal.events,source_data.words,{},None,animated_sources,
             source_rows=removal.rows,source_only=True, font_report=font_report)
         source_events,source_rows = reconstruction.events,reconstruction.rows+lifecycles.rows
         source_effects += shrinking_effects+lifecycles.removed_count
         working_by_line = {e.source_index:e for e in source_events}
-    return PreparedSourceText(working_by_line,timing_sources,source_rows,source_effects,vector_text_recovered)
+    return PreparedSourceText(working_by_line,timing_sources,source_rows,source_effects,vector_text_recovered,paint_timelines)
 
 
 def _freeze_event_effects(
@@ -16875,14 +17146,16 @@ def _process_text_and_vectors(
         source,prepared,frozen,animated_sources,config,font_metrics, font_report=font_report)
     events,statistics = _finalize_text_layout(
         source,frozen,events,vectors,statistics,animated_sources,config,font_metrics, font_report=font_report)
-    return TextProcessingResult(events,
-        _summarize_text_processing(source,prepared,events,vectors,statistics))
+    events,phase_counts=_emit_caption_paint_timelines(events,prepared.paint_timelines,config)
+    counts=_summarize_text_processing(source,prepared,events,vectors,statistics)
+    counts.update(phase_counts)
+    return TextProcessingResult(events,counts)
 
 
 def _simplify_text_and_vectors(
     path: Path, output: Path, config: SimplifyConfig, *, font_metrics: FontMetrics | None=None,
     font_report: FontProcessingReport | None=None, outline_matcher: FontOutlineMatcher | None=None,
-) -> dict[str, int]:
+) -> dict[str, object]:
     """Compatibility entry point for text output and deprecated legacy mode."""
     if outline_matcher is None and font_metrics is not None:
         outline_matcher = FontOutlineMatcher(font_metrics)
@@ -17082,16 +17355,25 @@ def canonicalize_statistics(stats: dict) -> dict:
 def text_drop_warnings(stats):
     """Stable per-track warning records; ordinary effect merging is not a loss."""
     stats = canonicalize_statistics(stats)
-    count = stats.get('scrolling_events_dropped', 0)
-    if not count:
-        return []
-    limit = stats['scrolling_concurrency_limit']
-    return [{'code': 'scrolling_text_dropped', 'severity': 'warning',
-             'events': count, 'concurrency_limit': limit,
-             'blocks': stats['scrolling_blocks_dropped'],
-             'peak_concurrent': stats['scrolling_peak_after_reduction'],
-             'message': f'Dropped {count} events due to exceeding concurrent event limit '
-                        f'{limit} for scrolling text blocks.'}]
+    warnings=[]
+    count=stats.get('scrolling_events_dropped',0)
+    if count:
+        limit=stats['scrolling_concurrency_limit']
+        warnings.append({'code':'scrolling_text_dropped','severity':'warning','events':count,
+            'concurrency_limit':limit,'blocks':stats['scrolling_blocks_dropped'],
+            'peak_concurrent':stats['scrolling_peak_after_reduction'],
+            'message':f'Dropped {count} events due to exceeding concurrent event limit {limit} for scrolling text blocks.'})
+    removed=stats.get('color_phase_changes_removed',0)
+    if removed:
+        warnings.append({'code':'caption_color_changes_removed','severity':'warning',
+            'captions':stats['color_phase_captions_limited'],'changes':removed,
+            'minimum_hold':stats['color_phase_min_hold'],'change_interval':stats['color_phase_change_interval'],
+            'rate_limited':stats['color_phase_rate_limited'],'hold_limited':stats['color_phase_hold_limited'],
+            'message':f"Removed {removed} whole-caption color changes in {stats['color_phase_captions_limited']} captions "
+                      f"by color phase limits (minimum hold {stats['color_phase_min_hold']:g}s; "
+                      f"seconds per change {stats['color_phase_change_interval']:g}; "
+                      f"rate: {stats['color_phase_rate_limited']}, hold: {stats['color_phase_hold_limited']})."})
+    return warnings
 
 
 def print_text_drop_warning(warning, context, stream=None):
@@ -17149,6 +17431,10 @@ def main() -> int:
                     help="standard simplification scrolling-text fallback: drop a proved block only when its "
                     "remaining peak exceeds this count after ordinary reduction "
                     "(default 32; 0 disables text dropping)")
+    ap.add_argument("--color-phase-min-hold",type=float,default=1.,
+                    help="minimum whole-caption color phase in seconds (default 1; 0 disables hold limit)")
+    ap.add_argument("--color-phase-change-interval",type=float,default=2.,
+                    help="seconds of caption duration per permitted color change (default 2; 0 is unlimited)")
     ap.add_argument("--fonts-dir", action="append", default=[], metavar="FOLDER",
                     help="extra font folder (repeatable); exact fonts enable measured word spacing")
     ap.add_argument("--font-mkv", type=Path, metavar="FILE",
@@ -17163,6 +17449,8 @@ def main() -> int:
     if args.scroll_concurrency_limit < 0:
         ap.error("--scroll-concurrency-limit must be nonnegative")
 
+    if any(not math.isfinite(v) or v<0 for v in (args.color_phase_min_hold,args.color_phase_change_interval)):
+        ap.error("Color phase settings must be finite and nonnegative")
     if not args.suffix.strip() or any(c in args.suffix for c in '/\\:*?"<>|'):
         ap.error("--suffix must be nonempty and contain no filename separators or reserved characters")
     if args.encoding:
@@ -17189,7 +17477,8 @@ def main() -> int:
         short_duration=args.short_duration, short_gap=args.short_gap,
         max_drawing_chars=args.max_drawing_chars,
         max_vectors_per_cue=args.max_vectors_per_cue, encoding=args.encoding,
-        scroll_concurrency_limit=args.scroll_concurrency_limit)
+        scroll_concurrency_limit=args.scroll_concurrency_limit,
+        color_phase_min_hold=args.color_phase_min_hold,color_phase_change_interval=args.color_phase_change_interval)
     font_temp = None
     try:
         metric = None
@@ -19069,10 +19358,10 @@ def settle_caption_backdrop_layers(
 
 
 def _summarize_caption_supports(
-    stats: dict[str,int],
+    stats: dict[str,object],
     supports: CaptionSupportResult,
     font_metrics: FontMetrics | None,
-) -> dict[str,int]:
+) -> dict[str,object]:
     """Update output counts and distinguish enclosing, fullscreen and adjacent supports."""
     combined = supports.events
     kept = supports.kept
@@ -19372,7 +19661,7 @@ def remove_redundant_text_copies(events: list[Event], *, pending_lyrics: bool = 
 def simplify_ass(
     path: Path, output: Path, config: SimplifyConfig, *, font_metrics: FontMetrics | None=None,
     font_report: FontProcessingReport | None=None, outline_matcher: FontOutlineMatcher | None=None,
-) -> dict[str, int]:
+) -> dict[str, object]:
     """Read once, reduce text, normalize its result, then reconstruct backdrops.
 
     Borrow font_metrics for reusable measurements. A supplied outline matcher
