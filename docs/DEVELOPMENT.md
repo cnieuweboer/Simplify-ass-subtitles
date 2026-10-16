@@ -11,6 +11,11 @@ at the repository root; Python checks/helpers are in `tests/`, Windows test
 wrappers in `tests/windows/`, runner tools in `validation/`, and notes in `docs/`.
 All commands below run from the repository root.
 
+The first proposed implementation-module boundary and its distribution/test
+requirements are documented in
+[FONT_MEASUREMENT_EXTRACTION_ASSESSMENT.md](FONT_MEASUREMENT_EXTRACTION_ASSESSMENT.md).
+The assessment does not move production scripts or change reconstruction policy.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
