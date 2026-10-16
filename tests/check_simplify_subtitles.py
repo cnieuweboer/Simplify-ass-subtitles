@@ -298,7 +298,7 @@ class RealBatchChecks(unittest.TestCase):
                                  ("reduction-copy", ["--minimum-subtitle-bytes", "0",
                                                       "--minimum-event-reduction-percent", "100"]),
                                  ("filtered", ["--minimum-subtitle-bytes", "0"]),
-                                 ("explicit-limit", ["--process-all-tracks", "--scroll-concurrency-limit", "32", "--color-phase-min-hold", "1.25", "--color-phase-change-interval", "0"])):
+                                 ("explicit-limit", ["--process-all-tracks", "--scroll-concurrency-limit", "32", "--color-phase-min-hold", "1.25", "--color-phase-change-interval", "2"])):
                 report = root / (label + ".json")
                 with patch("sys.stdout", new_callable=io.StringIO) as console:
                     status = wrapper.main(base_args + ["-o", str(root / label), "--report", str(report)] + extra)
@@ -306,10 +306,14 @@ class RealBatchChecks(unittest.TestCase):
                 reports[label] = json.loads(report.read_text())
                 if label=="explicit-limit":
                     self.assertEqual(reports[label]["ColorPhaseMinHold"],1.25)
-                    self.assertEqual(reports[label]["ColorPhaseChangeInterval"],0)
+                    self.assertEqual(reports[label]["ColorPhaseChangeInterval"],2)
                     for track in reports[label]["Tracks"]:
                         self.assertEqual(track["Stats"]["color_phase_min_hold"],1.25)
-                        self.assertEqual(track["Stats"]["color_phase_change_interval"],0)
+                        self.assertEqual(track["Stats"]["color_phase_change_interval"],2)
+                else:
+                    self.assertEqual(reports[label]["ColorPhaseChangeInterval"], 0)
+                    for track in reports[label]["Tracks"]:
+                        self.assertEqual(track["Stats"]["color_phase_change_interval"], 0)
 
                 if label == "size-copy":
                     self.assertIn("Skipped 2 subtitle track(s): size threshold.", console.getvalue())
@@ -391,8 +395,8 @@ class SettingsMenuChecks(unittest.TestCase):
     def test_explicit_values_are_tracked_by_argparse_even_when_equal_to_defaults(self):
         parser = wrapper.parser()
         args = parser.parse_args(["--scroll-concurrency-limit=0", "--color-phase-min-hold", "1",
-                                  "--color-phase-change-interval=2"])
-        self.assertEqual(self.values(args), (0, 1, 2))
+                                  "--color-phase-change-interval=0"])
+        self.assertEqual(self.values(args), (0, 1, 0))
         self.assertEqual(args.explicit_settings, {setting[0] for setting in wrapper.SIMPLIFICATION_SETTINGS})
         self.assertFalse(getattr(parser.parse_args([]), "explicit_settings", ()))
 
@@ -400,8 +404,8 @@ class SettingsMenuChecks(unittest.TestCase):
         args = wrapper.parser().parse_args([])
         with patch("builtins.input", return_value="1"), patch("sys.stdout", new_callable=io.StringIO):
             wrapper.choose_simplification_settings(args)
-        self.assertEqual(self.values(args), (0, 1, 2))
-        answers = ["2", "3", "bad", "1.5", "-1", "32", "4", "nan", "inf", "-0.5", "0.25", "5", "0", "0"]
+        self.assertEqual(self.values(args), (0, 1, 0))
+        answers = ["2", "3", "bad", "1.5", "-1", "32", "4", "nan", "inf", "-0.5", "0.25", "0"]
         with patch("builtins.input", side_effect=answers), patch("sys.stdout", new_callable=io.StringIO) as console:
             wrapper.choose_simplification_settings(args)
         self.assertEqual(self.values(args), (32, 0.25, 0))
@@ -410,11 +414,11 @@ class SettingsMenuChecks(unittest.TestCase):
         self.assertIn("Minimum caption color hold: 0.25 s", console.getvalue())
 
     def test_partial_command_line_values_stay_fixed_and_ignore_their_menu_keys(self):
-        args = wrapper.parser().parse_args(["--scroll-concurrency-limit=0", "--color-phase-min-hold", "1"])
-        with patch("builtins.input", side_effect=["2", "3", "4", "5", "4.5", "0"]), \
+        args = wrapper.parser().parse_args(["--scroll-concurrency-limit=0"])
+        with patch("builtins.input", side_effect=["2", "3", "4", "4.5", "0"]), \
              patch("sys.stdout", new_callable=io.StringIO) as console:
             wrapper.choose_simplification_settings(args)
-        self.assertEqual(self.values(args), (0, 1, 4.5))
+        self.assertEqual(self.values(args), (0, 4.5, 0))
         self.assertIn("[command line; fixed]", console.getvalue())
 
     def test_blank_keeps_value_and_cancellation_is_supported_at_every_stage(self):
@@ -422,7 +426,7 @@ class SettingsMenuChecks(unittest.TestCase):
         with patch("builtins.input", side_effect=["2", "4", "", "0"]), \
              patch("sys.stdout", new_callable=io.StringIO):
             wrapper.choose_simplification_settings(args)
-        self.assertEqual(self.values(args), (0, 1, 2))
+        self.assertEqual(self.values(args), (0, 1, 0))
         for answers in (["q"], ["2", "q"], ["2", "4", "q"]):
             with patch("builtins.input", side_effect=answers), \
                  patch("sys.stdout", new_callable=io.StringIO), self.assertRaises(EOFError):
@@ -430,8 +434,7 @@ class SettingsMenuChecks(unittest.TestCase):
 
     def test_yes_and_all_explicit_options_never_prompt_for_settings(self):
         for options in (["--yes"], ["--yes", "--scroll-concurrency-limit=8"],
-                        ["--keep-originals", "--filtered", "--scroll-concurrency-limit", "8", "--color-phase-min-hold", "0",
-                         "--color-phase-change-interval", "0"]):
+                        ["--keep-originals", "--filtered", "--scroll-concurrency-limit", "8", "--color-phase-min-hold", "0"]):
             args = wrapper.parser().parse_args(options)
             before = self.values(args)
             with patch("builtins.input") as read:
@@ -466,7 +469,7 @@ class SettingsMenuChecks(unittest.TestCase):
             self.assertEqual(read.call_args.args[0], "Proceed? (y/N): ")
             args = process.call_args.args[3]
             self.assertEqual((args.mode, args.process_all_tracks), ("add", False))
-            self.assertEqual(self.values(args), (0, 1, 2))
+            self.assertEqual(self.values(args), (0, 1, 0))
             self.assertTrue(process.call_args.args[7]["GroupConsistency"])
 
     def test_workflow_command_line_values_are_fixed_and_policy_label_follows_mode(self):
@@ -491,7 +494,7 @@ class SettingsMenuChecks(unittest.TestCase):
     def test_effective_settings_reach_processing_final_summary_and_json_report(self):
         with tempfile.TemporaryDirectory() as folder:
             report = Path(folder) / "report.json"
-            process, _, console = self.run_menu(folder, ["2", "4", "0.5", "5", "0", "0", "y"],
+            process, _, console = self.run_menu(folder, ["2", "4", "0.5", "0", "y"],
                                                ["--scroll-concurrency-limit", "32", "--report", str(report)])
             args = process.call_args.args[3]
             self.assertEqual(self.values(args), (32, 0.5, 0))
@@ -500,7 +503,19 @@ class SettingsMenuChecks(unittest.TestCase):
                               data["ColorPhaseChangeInterval"]), (32, 0.5, 0))
             self.assertIn("Scrolling concurrency limit: 32", console)
             self.assertIn("Minimum caption color hold: 0.5 s", console)
-            self.assertIn("Seconds per caption color change: 0 s", console)
+            self.assertNotIn("Seconds per caption color change", console)
+
+    def test_change_interval_is_cli_only_and_survives_interactive_edits(self):
+        with tempfile.TemporaryDirectory() as folder:
+            report = Path(folder) / "report.json"
+            process, _, console = self.run_menu(folder, ["2", "5", "4", "0.25", "0", "y"],
+                                               ["--color-phase-change-interval", "2", "--report", str(report)])
+            self.assertEqual(self.values(process.call_args.args[3]), (0, 0.25, 2))
+            self.assertEqual(json.loads(report.read_text())["ColorPhaseChangeInterval"], 2)
+            editor = console.split("\nInput:")[0]
+            self.assertNotIn("Seconds per caption color change", editor)
+            self.assertNotIn("  5.", editor)
+            self.assertIn("Seconds per caption color change: 2 s (command line)", console)
 
     def test_cancel_before_processing_never_extracts_or_changes_media(self):
         for answers in (["q"], ["2", "q"], ["2", "4", "q"], ["2", "4", "0.5", "0", "n"]):
@@ -509,8 +524,7 @@ class SettingsMenuChecks(unittest.TestCase):
                 process.assert_not_called()
 
     def test_explicit_settings_skip_menu_but_keep_final_confirmation(self):
-        options = ["--keep-originals", "--filtered", "--scroll-concurrency-limit", "32", "--color-phase-min-hold", "0",
-                   "--color-phase-change-interval", "0"]
+        options = ["--keep-originals", "--filtered", "--scroll-concurrency-limit", "32", "--color-phase-min-hold", "0"]
         with tempfile.TemporaryDirectory() as folder:
             process, read, _ = self.run_menu(folder, ["y"], options)
             self.assertEqual([call.args[0] for call in read.call_args_list], ["Proceed? (y/N): "])

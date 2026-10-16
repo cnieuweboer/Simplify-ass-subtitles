@@ -41,11 +41,13 @@ is still one batch; cancel and split unrelated shows when necessary. `--yes`
 prints the checks but bypasses the confirmation. `--yes` uses add/filtered defaults unless options override them.
 One settings menu offers **Use default settings** or **Adjust settings** for
 original-track handling, ASS/SSA processing policy, scrolling concurrency, and
-caption color hold/change limits. Defaults keep originals and use filtered tracks:
+minimum caption color hold. Defaults keep originals and use filtered tracks:
 press `1`, then `y` at confirmation to start. The editor lists all current values;
 select a setting to change it or `0` to finish. Numeric input accepts Enter to keep
-the current value. Command-line values are fixed; supplying all five skips the menu.
+the current value. Command-line values are fixed; supplying all four skips the menu.
 `--yes` uses defaults or supplied values without prompting.
+The optional color-change rate cap is CLI-only: `--color-phase-change-interval`
+defaults to `0` (unlimited); use a positive value to enable it.
 A settings summary and confirmation precede writing outputs. Menu choices accept
 single keypresses; new numeric values require Enter. `q` cancels, and confirmation
 accepts `y` or `n`. Redirected input requires Enter after each answer.

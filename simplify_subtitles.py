@@ -819,7 +819,6 @@ def choice(prompt, options):
 SIMPLIFICATION_SETTINGS = (
     ("scroll_concurrency_limit", "Scrolling concurrency limit", int, "", "0 disables text dropping"),
     ("color_phase_min_hold", "Minimum caption color hold", float, " s", "0 disables hold limit"),
-    ("color_phase_change_interval", "Seconds per caption color change", float, " s", "0 is unlimited"),
 )
 
 
@@ -915,7 +914,8 @@ def parser():
     result.add_argument("--minimum-event-reduction-percent", type=float, default=10)
     result.add_argument("--scroll-concurrency-limit", type=int, default=0, action=ExplicitSetting, help="0 disables text dropping (default)")
     result.add_argument("--color-phase-min-hold",type=float,default=1.,action=ExplicitSetting,help="minimum color hold seconds; 0 disables hold limit")
-    result.add_argument("--color-phase-change-interval",type=float,default=2.,action=ExplicitSetting,help="seconds per color change; 0 is unlimited")
+    result.add_argument("--color-phase-change-interval", type=float, default=0.,
+                        help="CLI-only seconds per color change (default: 0, unlimited)")
     result.add_argument("--level", "--simplification-level", type=int, choices=(1, 2), default=1, help="2 is deprecated legacy mode")
     result.add_argument("--simplifier", type=Path, help="engine path (default: simplify_ass.py beside this script)")
     result.add_argument("--mkvtoolnix-dir", "--mkvtoolnix-folder", type=Path)
@@ -992,6 +992,8 @@ def main(argv=None):
             batch_warnings(scans)
         for name, label, _, unit, note in SIMPLIFICATION_SETTINGS:
             print(f"{label}: {getattr(args, name):g}{unit} ({note})")
+        if args.color_phase_change_interval:
+            print(f"Seconds per caption color change: {args.color_phase_change_interval:g} s (command line)")
         if not args.yes and single_key("Proceed? (y/N): ", ("y", "n")) != "y":
             print("Cancelled. No files changed.")
             return 0

@@ -95,8 +95,10 @@ with `--scroll-concurrency-limit`. `-f` adds fonts alongside embedded fonts.
 `--temp-dir scratch` can choose temporary storage; video is never cached there.
 
 Press **1** to use all defaults, then **y** to start. Choose **2** to adjust
-original-track handling, which ASS/SSA tracks to process, scrolling, or caption
-color limits. Command-line values stay fixed; `--yes` skips the menus.
+original-track handling, which ASS/SSA tracks to process, scrolling, or minimum
+caption color hold. Command-line values stay fixed; `--yes` skips the menus.
+
+`--color-phase-change-interval` is CLI-only and defaults to `0` (unlimited).
 
 Use `--yes` to run without prompts (default: keep originals, filtered tracks)
 and `--report run.json` for a JSON report.
