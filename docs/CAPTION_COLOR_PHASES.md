@@ -7,21 +7,26 @@ reconstructed outlines remains unchanged. No hidden/protective tags are written.
 
 ## Controls
 
-Both `simplify_ass.py` and `simplify_subtitles.py` accept:
+The engine `simplify_ass.py` accepts:
 
 | Option | Default | Meaning of zero |
 | --- | --- | --- |
 | `--color-phase-min-hold SECONDS` | `1.0` | Disable the minimum hold restriction |
-| `--color-phase-change-interval SECONDS` | `2.0` | Unlimited number of proved changes |
+| `--color-phase-change-interval SECONDS` | `0.0` | Unlimited number of proved changes |
 
 The immutable engine `SimplifyConfig` exposes the corresponding
 `color_phase_min_hold` and `color_phase_change_interval` fields. Values must be
 finite and nonnegative. The batch script passes the effective values to the
-engine. Both maintained PowerShell test wrappers expose `-ColorPhaseMinHold`
-and `-ColorPhaseChangeInterval`, with the same defaults and zero semantics.
+engine. Wrapper defaults are configured separately. Both maintained PowerShell
+test wrappers expose `-ColorPhaseMinHold` and `-ColorPhaseChangeInterval`, with
+the same zero semantics.
 Native argument formatting uses invariant culture.
 
-For a caption lasting D seconds, the change budget is
+Since v212, the engine defaults to the one-second minimum hold alone. The
+overall change budget is disabled unless explicitly enabled with a positive
+`--color-phase-change-interval`.
+
+When enabled, for a caption lasting D seconds, the change budget is
 `floor(D / color_phase_change_interval)`. This uses the source caption's own
 proved interval, not summed layer/glyph lifetimes or later interval extension.
 There is no fixed two-change ceiling. A 6.67-second caption may retain three

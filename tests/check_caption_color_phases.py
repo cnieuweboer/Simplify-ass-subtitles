@@ -1,7 +1,7 @@
 """Whole-caption paint intent, duration limits, counters and repeat conversion."""
 import test_paths
 from stacked_contour_cases import *
-import contextlib,io,tempfile,math,hashlib,json,subprocess
+import contextlib,io,tempfile,math,hashlib,json,subprocess,sys
 from copy import deepcopy
 from PIL import Image,ImageChops
 checks=[]
@@ -19,11 +19,16 @@ with tempfile.TemporaryDirectory() as folder:
  for n,hold,config,retained,reason in [
   (1,1,s.SimplifyConfig(color_phase_change_interval=1e-320),True,None),
   (1,1,s.SimplifyConfig(color_phase_change_interval=1e308),False,'rate'),
-  (1,1,s.SimplifyConfig(),True,None),(2,1,s.SimplifyConfig(),False,'rate'),
+  (1,1,s.SimplifyConfig(),True,None),(2,1,s.SimplifyConfig(),True,None),
+  (2,1,s.SimplifyConfig(color_phase_change_interval=2),False,'rate'),
   (3,1.5,s.SimplifyConfig(),True,None),(25,2,s.SimplifyConfig(),True,None),
-  (25,1,s.SimplifyConfig(),False,'rate'),(2,.2,s.SimplifyConfig(),False,'both'),
+  (25,1,s.SimplifyConfig(),True,None),
+  (25,1,s.SimplifyConfig(color_phase_change_interval=2),False,'rate'),
+  (2,.2,s.SimplifyConfig(),False,'hold'),
+  (2,.2,s.SimplifyConfig(color_phase_change_interval=2),False,'both'),
   (2,.2,s.SimplifyConfig(color_phase_change_interval=0),False,'hold'),
-  (2,.2,s.SimplifyConfig(color_phase_min_hold=0),False,'rate'),
+  (2,.2,s.SimplifyConfig(color_phase_min_hold=0),True,None),
+  (2,.2,s.SimplifyConfig(color_phase_min_hold=0,color_phase_change_interval=2),False,'rate'),
   (25,.2,s.SimplifyConfig(color_phase_min_hold=0,color_phase_change_interval=0),True,None),
   (1,2,s.SimplifyConfig(color_phase_min_hold=3),False,'hold'),
   (1,2,s.SimplifyConfig(color_phase_change_interval=5),False,'rate')]:
@@ -39,6 +44,14 @@ with tempfile.TemporaryDirectory() as folder:
   check(name+' original unchanged',a.read_bytes()==before)
   check(name+' full pipeline repeat stable',b.read_bytes()==c.read_bytes())
   check(name+' genuine contribution counts',stats['color_phase_changes_removed']==(0 if retained else n) and stats['color_phase_captions_limited']==int(not retained))
+  if n==2 and hold==1:
+   cli_out=folder/'source.cli.ass';cli_stats=folder/'cli.json'
+   options=[] if config.color_phase_change_interval==0 else ['--color-phase-change-interval',str(config.color_phase_change_interval)]
+   subprocess.run([sys.executable,str(ROOT/'simplify_ass.py'),str(a),'--suffix','.cli',
+                   '--fonts-dir',str(ROOT/'fonts'),'--stats-json',str(cli_stats),*options],
+                  capture_output=True,text=True,check=True)
+   check(name+' CLI phase count',len(s.load_subtitle_events(cli_out)[1])==(3 if retained else 1))
+   check(name+' CLI effective default or opt-in',json.loads(cli_stats.read_text())['tracks'][0]['stats']['color_phase_change_interval']==config.color_phase_change_interval)
   if retained:
    check(name+' paint order preserved',[e.state['1c'] for e in events]==colors)
   else:

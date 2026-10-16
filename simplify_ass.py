@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.16.211"
+__version__ = "2026.10.16.212"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 # Reconstructed source contours keep thinner/axis-specific widths, but cap each
 # axis in ASS script units. Ordinary retained events are not subject to this cap.
@@ -108,7 +108,7 @@ class SimplifyConfig:
     encoding: str | None = None
     scroll_concurrency_limit: int = 32
     color_phase_min_hold: float = 1.0
-    color_phase_change_interval: float = 2.0
+    color_phase_change_interval: float = 0.0
 
     def __post_init__(self):
         for name in ('color_phase_min_hold','color_phase_change_interval'):
@@ -17694,8 +17694,8 @@ def main() -> int:
                     "(default 32; 0 disables text dropping)")
     ap.add_argument("--color-phase-min-hold",type=float,default=1.,
                     help="minimum whole-caption color phase in seconds (default 1; 0 disables hold limit)")
-    ap.add_argument("--color-phase-change-interval",type=float,default=2.,
-                    help="seconds of caption duration per permitted color change (default 2; 0 is unlimited)")
+    ap.add_argument("--color-phase-change-interval",type=float,default=0.,
+                    help="seconds of caption duration per permitted color change (default 0: unlimited)")
     ap.add_argument("--fonts-dir", action="append", default=[], metavar="FOLDER",
                     help="extra font folder (repeatable); exact fonts enable measured word spacing")
     ap.add_argument("--font-mkv", type=Path, metavar="FILE",
