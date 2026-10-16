@@ -47,7 +47,7 @@ class UpdaterChecks(unittest.TestCase):
         for tool in (*TOOLS, "subtitle_tools_update", "subtitle_tools"):
             name = "installer/windows/bin/" + tool + ".cmd"
             self.files[name] = (INSTALLER / "bin" / (tool + ".cmd")).read_bytes()
-        for name in self.updater.ENGINE_MODULES:
+        for name in load_installer().source_modules(self.repository):
             self.files[name] = ("# updated " + name + "\n").encode()
         self.calls = []
 
@@ -73,7 +73,7 @@ class UpdaterChecks(unittest.TestCase):
             self.assertEqual(self.updater.update(self.target), self.sha)
         for tool in (*TOOLS, "simplify_ass"):
             self.assertEqual((self.target / "simplify-ass" / (tool + ".py")).read_bytes(), self.files[tool + ".py"])
-        for name in self.updater.ENGINE_MODULES:
+        for name in load_installer().source_modules(self.repository):
             self.assertEqual((self.target / "simplify-ass" / name).read_bytes(), self.files[name])
         for name in ("install.py", "subtitle_tools_update.py", "subtitle_tools.py"):
             self.assertEqual((self.target / "simplify-ass" / name).read_bytes(), self.files["installer/windows/" + name])
@@ -85,6 +85,55 @@ class UpdaterChecks(unittest.TestCase):
         self.assertFalse(any("fixtures" in url for url in self.calls))
         self.assertFalse(list(self.target.glob(".subtitle-tools-install-*")))
 
+    def test_v213_download_selection_bootstraps_extensible_delivery(self):
+        # v213 only downloads these two private files. v214 must still fit that
+        # contract so its installer/updater can replace the fixed-list versions.
+        legacy_modules = {"_simplify_ass/__init__.py", "_simplify_ass/font_metrics.py"}
+        select = self.updater.selected_file
+        def legacy_selection(name):
+            return select(name) and (not name.startswith("_simplify_ass/") or name in legacy_modules)
+        settings = self.target / "simplify-ass/install_settings.json"
+        settings.write_text(json.dumps({"version": 1, "launchers": [*TOOLS, "subtitle_tools", "subtitle_tools_update"]}))
+        (self.target / "bin/subtitle_tracks.cmd").unlink()
+        self.before = snapshot(self.target)
+        with patch.object(self.updater, "selected_file", side_effect=legacy_selection), \
+             patch.object(self.updater, "download", side_effect=self.fetch), patch("sys.stdout", new_callable=io.StringIO):
+            self.updater.update(self.target)
+        self.assertEqual(json.loads(settings.read_text())["version"], 2)
+        self.assertFalse((self.target / "bin/subtitle_tracks.cmd").exists())
+        # Run the installed updater next, receiving a later layout with a new
+        # nested dependency and a retired module; no filename-list edits.
+        spec = importlib.util.spec_from_file_location("installed_updater", self.target / "simplify-ass/subtitle_tools_update.py")
+        installed = importlib.util.module_from_spec(spec); spec.loader.exec_module(installed)
+        self.files["_simplify_ass/new/__init__.py"] = b""
+        self.files["_simplify_ass/new/helper.py"] = b"VALUE = 215\n"
+        self.files["simplify_ass.py"] = b"from _simplify_ass.new.helper import VALUE\nprint(VALUE)\n"
+        del self.files["_simplify_ass/font_metrics.py"]
+        user = self.target / "simplify-ass/_simplify_ass/user.py"; user.write_text("# user\n")
+        self.before = snapshot(self.target)
+        with patch.object(installed, "download", side_effect=self.fetch), patch("sys.stdout", new_callable=io.StringIO):
+            installed.update(self.target)
+        self.assertFalse((self.target / "simplify-ass/_simplify_ass/font_metrics.py").exists())
+        self.assertEqual(user.read_text(), "# user\n")
+        self.assertFalse((self.target / "bin/subtitle_tracks.cmd").exists())
+        result = subprocess.run([sys.executable, str(self.target / "simplify-ass/simplify_ass.py")],
+                                cwd=self.root, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "215")
+
+    def test_new_module_verification_failure_never_modifies_installation(self):
+        name = "_simplify_ass/new/helper.py"
+        for mode in ("hash", "syntax"):
+            self.files[name] = b"def broken(:\n" if mode == "syntax" else b"VALUE=1\n"
+            def fetch(url):
+                if mode == "hash" and url.endswith("/" + name):
+                    return b"wrong"
+                return self.fetch(url)
+            with self.subTest(mode=mode), patch.object(self.updater, "download", side_effect=fetch), \
+                 patch("sys.stdout", new_callable=io.StringIO):
+                self.assertEqual(self.updater.main(["--target", str(self.target)]), 1)
+            self.assertEqual(snapshot(self.target), self.before)
+
     def test_download_failure_or_invalid_content_never_modifies_installation(self):
         for mode in ("network", "hash", "syntax", "missing", "module-missing", "module-hash", "module-syntax"):
             with self.subTest(mode=mode):
@@ -94,7 +143,7 @@ class UpdaterChecks(unittest.TestCase):
                 if mode == "missing":
                     del self.files["sync_fonts.py"]
                 if mode == "module-missing":
-                    del self.files["_simplify_ass/font_metrics.py"]
+                    del self.files["_simplify_ass/__init__.py"]
                 if mode == "module-syntax":
                     self.files["_simplify_ass/font_metrics.py"] = b"def broken(:\n"
                 def fetch(url):
@@ -176,9 +225,12 @@ class UpdaterChecks(unittest.TestCase):
         for name in ("../bad.py", "/bad.py", "installer/windows/../bad.py", "fixtures/font.ttf", "README.md",
                      "_simplify_ass/../bad.py", "_simplify_ass/__pycache__/bad.py"):
             self.assertFalse(self.updater.selected_file(name), name)
-        self.assertEqual(set(self.updater.ENGINE_MODULES),set(load_installer().ENGINE_MODULES))
-        for name in self.updater.ENGINE_MODULES:
-            self.assertTrue(self.updater.selected_file(name),name)
+        owner = load_installer()
+        for name in ("_simplify_ass/__init__.py", "_simplify_ass/font_outlines.py",
+                     "_simplify_ass/nested/helper.py", "_simplify_ass/CON.py", "_simplify_ass//bad.py",
+                     "_simplify_ass/__pycache__/bad.py", "_simplify_ass/x.py:stream"):
+            self.assertEqual(self.updater.module_path(name), owner.module_path(name), name)
+            self.assertEqual(self.updater.selected_file(name), owner.module_path(name), name)
 
     @unittest.skipUnless(os.name == "nt", "Native CMD self-update requires Windows")
     def test_cmd_can_replace_itself_and_keep_the_updaters_exit_status(self):

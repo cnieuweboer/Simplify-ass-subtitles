@@ -50,7 +50,7 @@ class InstallerChecks(unittest.TestCase):
             root = Path(folder); repository = checkout(root); target = root/'tools'
             owner = load_installer(); owner.install(repository, target)
             before = {str(p.relative_to(target)):p.read_bytes() for p in target.rglob('*') if p.is_file()}
-            (repository/'_simplify_ass/font_metrics.py').unlink()
+            (repository/'_simplify_ass/__init__.py').unlink()
             with self.assertRaisesRegex(RuntimeError, 'complete repository'):
                 owner.install(repository, target)
             self.assertEqual(before, {str(p.relative_to(target)):p.read_bytes() for p in target.rglob('*') if p.is_file()})
@@ -86,7 +86,7 @@ class InstallerChecks(unittest.TestCase):
                 self.assertEqual(owner.main(['--target',str(target),'--keep-launchers']),0)
             self.assertEqual(prompt.call_count,1)
             self.assertEqual({p.name for p in (target/'bin').iterdir()},launchers)
-            for name in owner.ENGINE_MODULES:
+            for name in owner.source_modules(repository):
                 self.assertEqual((target/'simplify-ass'/name).read_bytes(),(repository/name).read_bytes())
 
     def test_uninstall_retains_unrelated_package_files_and_bytecode(self):
@@ -101,6 +101,138 @@ class InstallerChecks(unittest.TestCase):
             self.assertFalse(managed.exists())
             self.assertEqual(unrelated.read_bytes(),b'user')
             self.assertEqual(notes.read_text(),'keep')
+
+    def test_nested_modules_are_discovered_retired_and_uninstalled_by_inventory(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); repository = checkout(root); target = root / "tools"
+            owner = load_installer()
+            nested = repository / "_simplify_ass/geometry"
+            nested.mkdir()
+            (nested / "__init__.py").write_text("")
+            (nested / "outlines.py").write_text("VALUE = 214\n")
+            (nested / "README.md").write_text("not runtime")
+            owner.install(repository, target)
+            installed = target / "simplify-ass/_simplify_ass/geometry"
+            self.assertEqual((installed / "outlines.py").read_text(), "VALUE = 214\n")
+            self.assertFalse((installed / "README.md").exists())
+            cache = installed / "__pycache__"; cache.mkdir()
+            (cache / "outlines.cpython-312.pyc").write_bytes(b"owned cache")
+            user = installed / "user.py"; user.write_text("# user\n")
+            user_cache = cache / "user.cpython-312.pyc"; user_cache.write_bytes(b"user cache")
+            shutil.rmtree(nested)
+            owner.install(repository, target)
+            self.assertFalse((installed / "outlines.py").exists())
+            self.assertFalse((cache / "outlines.cpython-312.pyc").exists())
+            settings = json.loads((target / "simplify-ass/install_settings.json").read_text())
+            self.assertEqual(settings["version"], 2)
+            self.assertEqual(settings["engine_modules"], list(owner.source_modules(repository)))
+            with patch("sys.stdout", new_callable=io.StringIO):
+                owner.remove(target)
+            self.assertEqual(user.read_text(), "# user\n")
+            self.assertEqual(user_cache.read_bytes(), b"user cache")
+
+    def test_retired_module_deletion_failure_restores_sources_caches_and_inventory(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); repository = checkout(root); target = root / "tools"
+            owner = load_installer(); owner.install(repository, target)
+            package = target / "simplify-ass/_simplify_ass"
+            cache = package / "__pycache__"; cache.mkdir()
+            retired_cache = cache / "font_metrics.cpython-312.pyc"; retired_cache.write_bytes(b"old cache")
+            before = {str(p.relative_to(target)): p.read_bytes() for p in target.rglob("*") if p.is_file()}
+            (repository / "_simplify_ass/font_metrics.py").unlink()
+            nested = repository / "_simplify_ass/new/deep"; nested.mkdir(parents=True)
+            (nested / "helper.py").write_text("# new\n")
+            original = Path.unlink
+            def unlink(path, *args, **kwargs):
+                if path == retired_cache:
+                    raise PermissionError("locked retired cache")
+                return original(path, *args, **kwargs)
+            with patch.object(Path, "unlink", unlink), self.assertRaises(PermissionError):
+                owner.install(repository, target)
+            self.assertEqual(before, {str(p.relative_to(target)): p.read_bytes() for p in target.rglob("*") if p.is_file()})
+            self.assertFalse((package / "new").exists())
+            self.assertFalse(list(target.glob(".subtitle-tools-install-*")))
+            owner.install(repository, target)
+            self.assertFalse(retired_cache.exists())
+            self.assertFalse((package / "__pycache__").exists())
+            with patch("sys.stdout", new_callable=io.StringIO):
+                owner.remove(target)
+            self.assertFalse((target / "simplify-ass").exists())
+
+    def test_invalid_ownership_and_unowned_collisions_fail_without_mutation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); repository = checkout(root); target = root / "tools"
+            owner = load_installer(); owner.install(repository, target)
+            settings = target / "simplify-ass/install_settings.json"
+            original = settings.read_bytes()
+            invalid = ("../outside.py", "_simplify_ass/../../outside.py", "_simplify_ass/C:bad.py",
+                       "_simplify_ass//bad.py", "_simplify_ass/__pycache__/bad.py", "_simplify_ass/CON.py",
+                       "_simplify_ass/bad.py:stream", "_simplify_ass/../bad.py", "_simplify_ass/xx\\bad.py")
+            for name in invalid:
+                data = json.loads(original); data["engine_modules"].append(name)
+                settings.write_text(json.dumps(data))
+                before = {str(p.relative_to(target)): p.read_bytes() for p in target.rglob("*") if p.is_file()}
+                with self.subTest(name=name):
+                    for action in (lambda: owner.install(repository, target, True), lambda: owner.remove(target)):
+                        with self.assertRaisesRegex(RuntimeError, "ownership inventory"):
+                            action()
+                        self.assertEqual(before, {str(p.relative_to(target)): p.read_bytes() for p in target.rglob("*") if p.is_file()})
+            settings.write_bytes(original)
+            user = target / "simplify-ass/_simplify_ass/new.py"; user.write_text("# user\n")
+            (repository / "_simplify_ass/new.py").write_text("# incoming\n")
+            with self.assertRaisesRegex(RuntimeError, "unrelated file"):
+                owner.install(repository, target)
+            self.assertEqual(user.read_text(), "# user\n")
+            self.assertEqual(settings.read_bytes(), original)
+
+    def test_staging_failure_does_not_take_ownership_or_change_installed_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); repository = checkout(root); target = root / "tools"
+            owner = load_installer(); owner.install(repository, target)
+            before = {str(p.relative_to(target)): p.read_bytes() for p in target.rglob("*") if p.is_file()}
+            added = repository / "_simplify_ass/helper.py"; added.write_text("# new\n")
+            original = shutil.copy2
+            def copy(source, destination, *args, **kwargs):
+                if source == added:
+                    raise OSError("unreadable new module")
+                return original(source, destination, *args, **kwargs)
+            with patch.object(owner.shutil, "copy2", copy), self.assertRaises(OSError):
+                owner.install(repository, target)
+            self.assertEqual(before, {str(p.relative_to(target)): p.read_bytes() for p in target.rglob("*") if p.is_file()})
+            self.assertFalse(list(target.glob(".subtitle-tools-install-*")))
+
+    def test_case_only_renames_and_corrupt_settings_are_rejected_before_changes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); repository = checkout(root); target = root / "tools"
+            owner = load_installer(); owner.install(repository, target)
+            before = {str(p.relative_to(target)): p.read_bytes() for p in target.rglob("*") if p.is_file()}
+            (repository / "_simplify_ass/font_metrics.py").rename(repository / "_simplify_ass/Font_metrics.py")
+            with self.assertRaisesRegex(RuntimeError, "Case-only"):
+                owner.install(repository, target)
+            self.assertEqual(before, {str(p.relative_to(target)): p.read_bytes() for p in target.rglob("*") if p.is_file()})
+            settings = target / "simplify-ass/install_settings.json"
+            for invalid in ("{broken", "[]", '{"version": 2, "launchers": []}'):
+                settings.write_text(invalid)
+                with self.assertRaisesRegex(RuntimeError, "ownership inventory"):
+                    owner.remove(target)
+                self.assertTrue((target / "simplify-ass/simplify_ass.py").exists())
+
+    def test_linked_package_is_rejected_before_install_or_uninstall(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); repository = checkout(root); target = root / "tools"
+            owner = load_installer(); owner.install(repository, target)
+            package = target / "simplify-ass/_simplify_ass"
+            outside = root / "outside"; package.rename(outside)
+            try:
+                package.symlink_to(outside, target_is_directory=True)
+            except OSError:
+                self.skipTest("Directory symlinks unavailable")
+            before = {p.name: p.read_bytes() for p in outside.iterdir()}
+            for action in (lambda: owner.install(repository, target), lambda: owner.remove(target)):
+                with self.assertRaisesRegex(RuntimeError, "Linked"):
+                    action()
+                self.assertEqual(before, {p.name: p.read_bytes() for p in outside.iterdir()})
+            self.assertTrue((target / "simplify-ass/simplify_ass.py").exists())
 
     def test_custom_target_layout_updates_and_preserves_unrelated_tools(self):
         with tempfile.TemporaryDirectory() as folder:

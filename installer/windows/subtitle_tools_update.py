@@ -15,7 +15,6 @@ API = f"https://api.github.com/repos/{REPOSITORY}"
 RAW = f"https://raw.githubusercontent.com/{REPOSITORY}"
 TOOLS = ("simplify_subtitles", "subtitle_tracks", "subtitle_properties", "sync_fonts")
 MAX_DOWNLOAD = 16 * 1024 * 1024
-ENGINE_MODULES = ("_simplify_ass/__init__.py", "_simplify_ass/font_metrics.py")
 
 
 def download(url):
@@ -33,11 +32,25 @@ def commit_sha(value):
     return value
 
 
+def module_path(name):
+    """Accept portable Python source paths within the private engine package."""
+    if not isinstance(name, str):
+        return False
+    parts = name.split("/")
+    reserved = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)),
+                *(f"lpt{i}" for i in range(1, 10))}
+    return (len(parts) >= 2 and parts[0] == "_simplify_ass" and parts[-1].endswith(".py")
+            and all(re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", part)
+                    and part.lower() not in reserved and part != "__pycache__"
+                    for part in (*parts[:-1], parts[-1][:-3])))
+
+
 def selected_file(path):
     parts = PurePosixPath(path).parts
-    if not parts or ".." in parts or "\\" in path or PurePosixPath(path).is_absolute():
+    if (not parts or ".." in parts or "\\" in path or ":" in path
+            or PurePosixPath(path).is_absolute() or PurePosixPath(path).as_posix() != path):
         return False
-    return (path in ENGINE_MODULES
+    return (module_path(path)
             or (len(parts) == 1 and path.endswith(".py"))
             or (len(parts) == 3 and parts[:2] == ("installer", "windows") and path.endswith(".py"))
             or (len(parts) == 4 and parts[:3] == ("installer", "windows", "bin") and path.endswith(".cmd")))
@@ -53,7 +66,7 @@ def fetch_checkout(directory):
     files = {entry["path"]: entry for entry in tree["tree"]
              if entry.get("type") == "blob" and entry.get("mode") in ("100644", "100755")
              and selected_file(entry["path"])}
-    required = (set(ENGINE_MODULES) | {tool + ".py" for tool in (*TOOLS, "simplify_ass")}
+    required = ({"_simplify_ass/__init__.py"} | {tool + ".py" for tool in (*TOOLS, "simplify_ass")}
                 | {f"installer/windows/{name}.py" for name in ("install", "subtitle_tools_update", "subtitle_tools")}
                 | {f"installer/windows/bin/{tool}.cmd" for tool in (*TOOLS, "subtitle_tools_update", "subtitle_tools")})
     if not required.issubset(files):

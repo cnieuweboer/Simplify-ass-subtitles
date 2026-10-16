@@ -16,6 +16,8 @@ The first implementation module is documented in
 [bounded assessment](FONT_MEASUREMENT_EXTRACTION_ASSESSMENT.md). The measurement
 owner moved into `_simplify_ass/`; production script locations and reconstruction
 policy are unchanged. Distribution must include that private package.
+[v214 module delivery](MODULE_DELIVERY.md) discovers its sources and tracks
+installed ownership; future extractions do not need delivery filename lists.
 
 ## Tools
 

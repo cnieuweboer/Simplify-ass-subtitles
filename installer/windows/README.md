@@ -91,11 +91,43 @@ removed optional launchers. Older installations without saved preferences keep
 their existing launchers until you choose differently during reinstall.
 Rerun the installer and answer No to remove existing individual launchers.
 
-## Upgrading an installation from before v213
+## Implementation modules and ownership (v214)
 
-Older installed updaters do not download the new `_simplify_ass/` directory.
-For this transition, download/extract the complete current repository and rerun
-its installer against your existing target:
+The installer discovers Python sources recursively under `_simplify_ass/`;
+the updater downloads those sources from its pinned GitHub tree. New modules and
+nested packages need no installer filename-list changes. Module/directory names
+must be portable Python identifiers, excluding `__pycache__` and Windows device
+names. The top-level package `__init__.py` is required. Data files and caches are
+not runtime delivery inputs; ship a complete repository rather than a partial
+selection of files. As before, updating executes code from this repository.
+
+`install_settings.json` version 2 records launcher preferences and the relative
+`engine_modules` paths owned by the installation. An update stages new sources,
+settings, backups, and removal of retired owned sources and their bytecode as
+one transaction. Failure restores the old files and settings; newly created
+nested directories are removed when empty. Uninstall uses this same inventory.
+Unrelated files, caches and nonempty directories are preserved. A new module
+whose destination is occupied by an unowned file causes an error before changes;
+move that file aside deliberately and retry. Managed paths must not be symlinks
+or Windows junctions. Case-only module renames are rejected for portability.
+
+Keep this settings file with the installed tools; do not delete or hand-edit the
+ownership inventory. Invalid settings stop updates and uninstall before changes.
+Restore a valid backup before retrying. Version 1 settings (and older installs
+without settings) migrate using only the two known v213 module paths; the
+installer never claims all existing Python files in the installed package.
+
+## Upgrading older installations
+
+The installed **v213 updater can install v214 normally**: this release keeps the
+same two engine modules while replacing the fixed-list installer/updater. Once
+v214 is installed, later additions and removals are discovered automatically.
+
+Updaters from before v213 cannot download the implementation package. Clients
+that **skip v214** and still run the v213 fixed-list updater also cannot download
+modules added by a later extraction. For either situation, download/extract the
+**complete current repository** and rerun its installer against the existing
+target; do not rely on the old update command to bridge that change:
 
 ```cmd
 installer\windows\install.cmd --target "D:\My Tools" --keep-launchers
@@ -103,11 +135,11 @@ installer\windows\install.cmd --target "D:\My Tools" --keep-launchers
 
 Choose **Reinstall / update**. `--keep-launchers` preserves the saved launcher
 selection and does not recreate manually removed optional launchers. PATH and
-package-installation changes retain their existing prompts. Subsequent updates
-using the newly installed updater include the implementation modules, verify
-their contents and stage them with the other tool files. Missing modules fail
-before any installed file is replaced.
+package-installation changes retain their existing prompts. This is also the
+recovery route if an old updater has already installed an incomplete runtime.
+A preparation release cannot change the download rules of a client that never
+installed it.
 
 Keep the implementation directory beside `simplify_ass.py` when moving an
-installation. Uninstall removes only managed sources and their generated Python
-bytecode; unrelated files and nonempty directories remain.
+installation. See [the v214 delivery review](../../docs/MODULE_DELIVERY.md) for
+validation evidence and the boundary retained for future extractions.

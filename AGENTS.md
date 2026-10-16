@@ -11,6 +11,9 @@ The production entry point is `simplify_subtitles.py` → `simplify_ass.py`.
 The exact-font measurement owner lives in `_simplify_ass/font_metrics.py`;
 the engine re-exports its four classes for existing callers. Ship the private
 package with the engine and preserve one-way imports and sibling font discovery.
+The Windows installer/updater discover private Python sources and persist owned
+paths; keep this delivery contract and the older-updater migration documented in
+`docs/MODULE_DELIVERY.md`. New modules must not need a delivery filename list.
 Preserve this batch MKV workflow and the engine's CLI compatibility. The older
 `simplify_ass.bat` / `simplify_ass.ps1` launchers have been retired.
 `tests/windows/test_mkv_subtitles.ps1` performs extraction and conversion in one pass.

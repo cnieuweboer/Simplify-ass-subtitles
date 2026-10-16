@@ -7,6 +7,8 @@ import json
 import ntpath
 import os
 from pathlib import Path
+import re
+import stat
 import shutil
 import subprocess
 import sys
@@ -18,35 +20,129 @@ WINDOWS = os.name == "nt"
 MAINTENANCE = ("install.py", "subtitle_tools_update.py", "subtitle_tools.py")
 OPTIONAL_LAUNCHERS = (*TOOLS, "subtitle_tools_update")
 SETTINGS = "install_settings.json"
-# Keep the independently downloaded updater's required module list in sync.
-ENGINE_MODULES = ("_simplify_ass/__init__.py", "_simplify_ass/font_metrics.py")
+# Only installations without an ownership inventory use this v213 migration list.
+LEGACY_ENGINE_MODULES = ("_simplify_ass/__init__.py", "_simplify_ass/font_metrics.py")
 REQUIREMENTS = {"Pillow": "PIL.ImageFont", "fonttools": "fontTools.ttLib", "uharfbuzz": "uharfbuzz"}
+
+
+def module_path(name):
+    """Accept portable Python source paths within the private engine package."""
+    if not isinstance(name, str):
+        return False
+    parts = name.split("/")
+    reserved = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)),
+                *(f"lpt{i}" for i in range(1, 10))}
+    return (len(parts) >= 2 and parts[0] == "_simplify_ass" and parts[-1].endswith(".py")
+            and all(re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", part)
+                    and part.lower() not in reserved and part != "__pycache__"
+                    for part in (*parts[:-1], parts[-1][:-3])))
+
+
+def check_local_path(base, path):
+    """Do not follow links/junctions when replacing or deleting managed paths."""
+    relative = path.relative_to(base)
+    for item in (base, *(base.joinpath(*relative.parts[:i]) for i in range(1, len(relative.parts) + 1))):
+        try:
+            info = item.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise RuntimeError(f"Linked installation/source path is not supported: {item}")
+        if item != path and not item.is_dir():
+            raise RuntimeError(f"A file occupies an installed package directory: {item}")
+
+
+def install_settings(target):
+    path = target / "simplify-ass" / SETTINGS
+    check_local_path(target, path)
+    if not path.exists():
+        return {"version": 1}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        supported = (*OPTIONAL_LAUNCHERS, "subtitle_tools")
+        if (data.get("version") not in (1, 2) or not isinstance(data.get("launchers"), list)
+                or any(name not in supported for name in data["launchers"])):
+            raise ValueError("invalid launcher preferences")
+        if data["version"] == 2:
+            names = data.get("engine_modules")
+            if (not isinstance(names, list) or not all(module_path(name) for name in names)
+                    or "_simplify_ass/__init__.py" not in names
+                    or len({name.casefold() for name in names}) != len(names)):
+                raise ValueError("invalid engine ownership inventory")
+        return data
+    except (ValueError, AttributeError, TypeError) as error:
+        raise RuntimeError("Cannot read install settings/ownership inventory; restore a valid settings file before retrying.") from error
+
+
+def owned_modules(target):
+    data = install_settings(target)
+    return tuple(data["engine_modules"]) if data["version"] == 2 else LEGACY_ENGINE_MODULES
+
+
+def source_modules(repository):
+    package = repository / "_simplify_ass"
+    if not (package / "__init__.py").is_file():
+        raise RuntimeError("Missing installer source: _simplify_ass/__init__.py. Download or clone the complete repository first.")
+    names = []
+    check_local_path(repository, package)
+    for source in sorted(package.rglob("*")):
+        if "__pycache__" in source.relative_to(package).parts:
+            continue
+        check_local_path(repository, source)
+        if source.suffix != ".py" or not source.is_file():
+            continue
+        name = source.relative_to(repository).as_posix()
+        if not module_path(name):
+            raise RuntimeError(f"Unsupported engine module path: {name}")
+        names.append(name)
+    if len({name.casefold() for name in names}) != len(names):
+        raise RuntimeError("Engine module paths collide on Windows.")
+    return tuple(names)
 
 
 def installed_files(target):
     return ([target / "simplify-ass" / (tool + ".py") for tool in (*TOOLS, "simplify_ass")]
-            + [target / "simplify-ass" / name for name in (*MAINTENANCE, *ENGINE_MODULES)]
+            + [target / "simplify-ass" / name for name in (*MAINTENANCE, *owned_modules(target))]
             + [target / "bin" / (tool + ".cmd") for tool in (*OPTIONAL_LAUNCHERS, "subtitle_tools")]
             + [target / "simplify-ass" / SETTINGS])
+
+
+def bytecode_files(target, sources):
+    found = []
+    for source in sources:
+        cache = source.parent / "__pycache__"
+        check_local_path(target, cache)
+        if cache.is_dir():
+            for path in sorted(cache.glob(source.stem + ".*.pyc")):
+                check_local_path(target, path)
+                if path.is_file():
+                    found.append(path)
+    return found
+
+
+def prune_empty_folders(target, paths):
+    folders = {path.parent / "__pycache__" for path in paths if path.suffix == ".py"}
+    for path in paths:
+        folders.update(parent for parent in path.parents if parent != target and target in parent.parents)
+    for folder in sorted(folders, key=lambda p: len(p.parts), reverse=True):
+        try:
+            if folder.is_dir() and not any(folder.iterdir()):
+                folder.rmdir()
+        except OSError:
+            # Empty-directory tidying is optional; never turn a committed update
+            # into a reported failure because Windows still holds a directory.
+            pass
 
 
 def selected_launchers(target, individual):
     if individual is not None:
         return {"subtitle_tools", *OPTIONAL_LAUNCHERS} if individual else {"subtitle_tools"}
-    settings = target / "simplify-ass" / SETTINGS
+    data = install_settings(target)
     supported = (*OPTIONAL_LAUNCHERS, "subtitle_tools")
     present = {tool for tool in supported
                if (target / "bin" / (tool + ".cmd")).is_file()}
-    if settings.is_file():
-        try:
-            data = json.loads(settings.read_text(encoding="utf-8"))
-            names = data["launchers"]
-            if data.get("version") != 1 or not isinstance(names, list) or any(
-                    not isinstance(name, str) or name not in supported for name in names):
-                raise ValueError("invalid launcher preferences")
-            present.intersection_update(names)
-        except (ValueError, KeyError, TypeError) as error:
-            raise RuntimeError("Cannot read launcher preferences; reinstall to select them again.") from error
+    if "launchers" in data:
+        present.intersection_update(data["launchers"])
     return {"subtitle_tools", *present}
 
 
@@ -211,25 +307,15 @@ def offer_path_change(bin_dir, adding):
 def remove(target):
     removed = 0
     managed = installed_files(target)
-    for path in managed:
-        if path.is_file() or path.is_symlink():
+    caches = bytecode_files(target, [p for p in managed if p.suffix == ".py"])
+    # Validate the entire removal set before deleting any files.
+    for path in (*managed, *caches):
+        check_local_path(target, path)
+    for path in (*managed, *caches):
+        if path.is_file():
             path.unlink()
             removed += 1
-    # Remove only bytecode corresponding to managed source names. Other user
-    # files/caches keep their directories; never recursively remove the tree.
-    cache_dirs = {p.parent / "__pycache__" for p in managed if p.suffix == ".py"}
-    for source in (p for p in managed if p.suffix == ".py"):
-        cache = source.parent / "__pycache__"
-        if cache.is_dir() and not cache.is_symlink():
-            for path in cache.glob(source.stem + ".*.pyc"):
-                if path.is_file() or path.is_symlink():
-                    path.unlink()
-                    removed += 1
-    folders = {*cache_dirs, target / "simplify-ass/_simplify_ass",
-               target / "simplify-ass", target / "bin"}
-    for folder in sorted(folders, key=lambda p: len(p.parts), reverse=True):
-        if not folder.is_symlink() and folder.is_dir() and not any(folder.iterdir()):
-            folder.rmdir()
+    prune_empty_folders(target, (*managed, *caches))
     print(f"Removed {removed} installed file(s). Unrelated files were preserved.")
 
 
@@ -237,21 +323,35 @@ def install(repository, target, individual_launchers=None):
     launchers = repository / "installer" / "windows" / "bin"
     tool_dir = target / "simplify-ass"
     bin_dir = target / "bin"
+    previous_modules = set(owned_modules(target))
+    modules = source_modules(repository)
     selected = selected_launchers(target, individual_launchers)
+    previous_spelling = {name.casefold(): name for name in previous_modules}
+    if any(name.casefold() in previous_spelling and previous_spelling[name.casefold()] != name for name in modules):
+        raise RuntimeError("Case-only engine module renames are not portable to Windows; use a distinct module name.")
     files = [(repository / (tool + ".py"), tool_dir / (tool + ".py")) for tool in TOOLS]
     files.append((repository / "simplify_ass.py", tool_dir / "simplify_ass.py"))
-    files.extend((repository / name, tool_dir / name) for name in ENGINE_MODULES)
+    files.extend((repository / name, tool_dir / name) for name in modules)
     files.extend((launchers.parent / name, tool_dir / name) for name in MAINTENANCE)
     files.extend((launchers / (tool + ".cmd"), bin_dir / (tool + ".cmd"))
                  for tool in sorted(selected))
+    obsolete = [tool_dir / name for name in sorted(previous_modules - set(modules))]
+    removals = [bin_dir / (tool + ".cmd") for tool in OPTIONAL_LAUNCHERS if tool not in selected]
+    removals.extend(obsolete)
+    removals.extend(bytecode_files(target, obsolete))
+    for name in modules:
+        destination = tool_dir / name
+        if (name not in previous_modules and destination.exists()
+                and (repository / name).resolve() != destination.resolve()):
+            raise RuntimeError(f"An unrelated file occupies a new engine module path: {destination}")
     # Check the complete source set before creating or updating anything.
+    for destination in (*removals, *(destination for _, destination in files), tool_dir / SETTINGS):
+        check_local_path(target, destination)
+        if destination.is_dir():
+            raise RuntimeError(f"A folder occupies an installed file's path: {destination}")
     for source, destination in files:
         if not source.is_file():
             raise RuntimeError(f"Missing installer source: {source}. Download or clone the complete repository first.")
-        if destination.parent.exists() and not destination.parent.is_dir():
-            raise RuntimeError(f"A file occupies an installed package directory: {destination.parent}")
-        if destination.is_dir():
-            raise RuntimeError(f"A folder occupies an installed file's path: {destination}")
     bin_dir.mkdir(parents=True, exist_ok=True)
     tool_dir.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".subtitle-tools-install-", dir=target))
@@ -259,10 +359,9 @@ def install(repository, target, individual_launchers=None):
     try:
         pending = []
         settings = staging / SETTINGS
-        settings.write_text(json.dumps({"version": 1, "launchers": sorted(selected)}, indent=2) + "\n", encoding="utf-8")
+        settings.write_text(json.dumps({"version": 2, "launchers": sorted(selected),
+                                        "engine_modules": list(modules)}, indent=2) + "\n", encoding="utf-8")
         files.append((settings, tool_dir / SETTINGS))
-        if (tool_dir / SETTINGS).is_dir():
-            raise RuntimeError("A folder occupies the install settings path.")
         # Stage all replacements and backups before touching installed files.
         for index, (source, destination) in enumerate(files):
             if source.resolve() == destination.resolve():
@@ -274,30 +373,34 @@ def install(repository, target, individual_launchers=None):
                 backup = staging / f"old-{index}-{destination.name}"
                 shutil.copy2(destination, backup)
             pending.append((replacement, destination, backup))
-        # Remove unselected optional launchers in the same transaction.
-        removals = [bin_dir / (tool + ".cmd") for tool in OPTIONAL_LAUNCHERS if tool not in selected]
-        for destination in removals:
+        # Retired owned modules, bytecode and optional launchers share rollback.
+        for index, destination in enumerate(removals):
             if destination.is_file():
-                backup = staging / ("removed-" + destination.name)
+                backup = staging / f"removed-{index}-{destination.name}"
                 shutil.copy2(destination, backup)
                 pending.append((None, destination, backup))
         created_directories = []
+        applied = []
         try:
             for replacement, destination, backup in pending:
                 if replacement is None:
                     destination.unlink()
                 else:
-                    if not destination.parent.exists():
-                        destination.parent.mkdir()
-                        created_directories.append(destination.parent)
+                    missing = []
+                    parent = destination.parent
+                    while not parent.exists():
+                        missing.append(parent)
+                        parent = parent.parent
+                    for directory in reversed(missing):
+                        directory.mkdir()
+                        created_directories.append(directory)
                     replacement.replace(destination)
+                applied.append((replacement, destination, backup))
             for _, destination in files:
                 unblock(destination)
         except BaseException:
             failed = []
-            for replacement, destination, backup in reversed(pending):
-                if (replacement is not None and replacement.exists()) or (replacement is None and destination.exists()):
-                    continue
+            for replacement, destination, backup in reversed(applied):
                 try:
                     if backup is None:
                         destination.unlink(missing_ok=True)
@@ -319,6 +422,7 @@ def install(repository, target, individual_launchers=None):
     finally:
         if not preserve_staging:
             shutil.rmtree(staging)
+    prune_empty_folders(target, removals)
     return bin_dir, tool_dir
 
 
