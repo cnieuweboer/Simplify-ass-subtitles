@@ -826,14 +826,26 @@ SIMPLIFICATION_SETTINGS = (
 class ExplicitSetting(argparse.Action):
     """Track explicit values through argparse, including --option=value syntax."""
     def __call__(self, argument_parser, namespace, value, option_string=None):
-        setattr(namespace, self.dest, value)
+        setattr(namespace, self.dest, self.const if self.nargs == 0 else value)
         supplied = getattr(namespace, "explicit_settings", frozenset())
         namespace.explicit_settings = supplied | {self.dest}
 
 
+def workflow_options(args, name):
+    if name == "mode":
+        return ["Keep originals and add simplified subtitles", "Replace originals with simplified subtitles"]
+    filtered = (f"Consistent groups qualifying in any MKV (> {args.minimum_subtitle_bytes} bytes, "
+                f"> {args.minimum_event_reduction_percent:g}% fewer events)" if args.mode == "add" else
+                f"Only tracks > {args.minimum_subtitle_bytes} bytes with > {args.minimum_event_reduction_percent:g}% fewer events")
+    return [filtered, "All ASS/SSA tracks"]
+
+
 def choose_simplification_settings(args):
     fixed = getattr(args, "explicit_settings", frozenset())
-    editable = {str(number): setting for number, setting in enumerate(SIMPLIFICATION_SETTINGS, 1)
+    settings = (("mode", "Original subtitle tracks", None, "", ""),
+                ("process_all_tracks", "ASS/SSA tracks to process", None, "", ""),
+                *SIMPLIFICATION_SETTINGS)
+    editable = {str(number): setting for number, setting in enumerate(settings, 1)
                 if setting[0] not in fixed}
     if args.yes or not editable:
         return
@@ -843,9 +855,15 @@ def choose_simplification_settings(args):
         return
     while True:
         print("\nCurrent simplification settings")
-        for number, (name, label, _, unit, note) in enumerate(SIMPLIFICATION_SETTINGS, 1):
+        for number, (name, label, value_type, unit, note) in enumerate(settings, 1):
             locked = " [command line; fixed]" if name in fixed else ""
-            print(f"  {number}. {label}: {getattr(args, name):g}{unit} ({note}){locked}")
+            if value_type is None:
+                options = workflow_options(args, name)
+                index = int(args.mode == "replace") if name == "mode" else int(args.process_all_tracks)
+                value = options[index]
+            else:
+                value = f"{getattr(args, name):g}{unit} ({note})"
+            print(f"  {number}. {label}: {value}{locked}")
         print("  0. Done\n  q. Cancel")
         selected = single_key("Choose a setting or 0 to continue: ", (*editable, "0", "q"))
         if selected == "q":
@@ -853,6 +871,11 @@ def choose_simplification_settings(args):
         if selected == "0":
             return
         name, label, value_type, unit, _ = editable[selected]
+        if value_type is None:
+            selected_value = choice(label, workflow_options(args, name))
+            setattr(args, name, ("add" if selected_value == 1 else "replace")
+                    if name == "mode" else selected_value == 2)
+            continue
         while True:
             answer = input(f"{label} [{getattr(args, name):g}{unit}] (Enter to keep; q to cancel): ").strip()
             if answer.lower() == "q":
@@ -882,11 +905,12 @@ def parser():
     result.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 1) // 2),
                         help="parallel subtitle processes per MKV (default: half the logical CPUs, minimum 1)")
     mode = result.add_mutually_exclusive_group()
-    mode.add_argument("--keep-originals", "--add-simplified-subtitles", dest="mode", action="store_const", const="add")
-    mode.add_argument("--replace-originals", dest="mode", action="store_const", const="replace")
+    mode.add_argument("--keep-originals", "--add-simplified-subtitles", dest="mode", action=ExplicitSetting, nargs=0, const="add")
+    mode.add_argument("--replace-originals", dest="mode", action=ExplicitSetting, nargs=0, const="replace")
     policy = result.add_mutually_exclusive_group()
-    policy.add_argument("--process-all-tracks", dest="process_all_tracks", action="store_const", const=True)
-    policy.add_argument("--filtered", dest="process_all_tracks", action="store_const", const=False)
+    policy.add_argument("--process-all-tracks", dest="process_all_tracks", action=ExplicitSetting, nargs=0, const=True)
+    policy.add_argument("--filtered", dest="process_all_tracks", action=ExplicitSetting, nargs=0, const=False)
+    result.set_defaults(mode="add", process_all_tracks=False)
     result.add_argument("--minimum-subtitle-bytes", type=int, default=50000)
     result.add_argument("--minimum-event-reduction-percent", type=float, default=10)
     result.add_argument("--scroll-concurrency-limit", type=int, default=0, action=ExplicitSetting, help="0 disables text dropping (default)")
@@ -952,15 +976,6 @@ def main(argv=None):
         for option in ("--stats-json", "--suffix", "--scroll-concurrency-limit", "--color-phase-min-hold", "--color-phase-change-interval"):
             if option not in help_text:
                 raise RuntimeError(f"The simplifier must support {option}; use the current simplify_ass.py")
-        if args.mode is None:
-            args.mode = "add" if args.yes else ("add" if choice("Original subtitle tracks", [
-                "Keep originals and add simplified subtitles", "Replace originals with simplified subtitles"]) == 1 else "replace")
-        if args.process_all_tracks is None:
-            args.process_all_tracks = False if args.yes else choice("ASS/SSA tracks to process", [
-                (f"Consistent groups qualifying in any MKV (> {args.minimum_subtitle_bytes} bytes, "
-                 f"> {args.minimum_event_reduction_percent:g}% fewer events)" if args.mode == "add" else
-                 f"Only tracks > {args.minimum_subtitle_bytes} bytes with > {args.minimum_event_reduction_percent:g}% fewer events"),
-                "All ASS/SSA tracks"]) == 2
         choose_simplification_settings(args)
         report.update(ScrollConcurrencyLimit=args.scroll_concurrency_limit,
                       ColorPhaseMinHold=args.color_phase_min_hold,

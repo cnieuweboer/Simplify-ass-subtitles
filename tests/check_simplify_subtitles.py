@@ -159,9 +159,9 @@ class WrapperChecks(unittest.TestCase):
             self.assertEqual(wrapper.find_tool("mkvextract", relative), str(tool.resolve()))
 
     def test_menu_choices_cancellation_and_no_argument_folder_default(self):
-        for answers, mode, all_tracks, execute in ((["1", "1", "1", "y"], "add", False, True),
-                                                  (["2", "2", "1", "y"], "replace", True, True),
-                                                  (["1", "2", "1", "n"], "add", True, False)):
+        for answers, mode, all_tracks, execute in ((["1", "y"], "add", False, True),
+                                                  (["2", "1", "2", "2", "2", "0", "y"], "replace", True, True),
+                                                  (["1", "n"], "add", False, False)):
             with tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
                 (root / "episode.mkv").touch()
@@ -401,7 +401,7 @@ class SettingsMenuChecks(unittest.TestCase):
         with patch("builtins.input", return_value="1"), patch("sys.stdout", new_callable=io.StringIO):
             wrapper.choose_simplification_settings(args)
         self.assertEqual(self.values(args), (0, 1, 2))
-        answers = ["2", "1", "bad", "1.5", "-1", "32", "2", "nan", "inf", "-0.5", "0.25", "3", "0", "0"]
+        answers = ["2", "3", "bad", "1.5", "-1", "32", "4", "nan", "inf", "-0.5", "0.25", "5", "0", "0"]
         with patch("builtins.input", side_effect=answers), patch("sys.stdout", new_callable=io.StringIO) as console:
             wrapper.choose_simplification_settings(args)
         self.assertEqual(self.values(args), (32, 0.25, 0))
@@ -411,7 +411,7 @@ class SettingsMenuChecks(unittest.TestCase):
 
     def test_partial_command_line_values_stay_fixed_and_ignore_their_menu_keys(self):
         args = wrapper.parser().parse_args(["--scroll-concurrency-limit=0", "--color-phase-min-hold", "1"])
-        with patch("builtins.input", side_effect=["2", "1", "2", "3", "4.5", "0"]), \
+        with patch("builtins.input", side_effect=["2", "3", "4", "5", "4.5", "0"]), \
              patch("sys.stdout", new_callable=io.StringIO) as console:
             wrapper.choose_simplification_settings(args)
         self.assertEqual(self.values(args), (0, 1, 4.5))
@@ -419,18 +419,18 @@ class SettingsMenuChecks(unittest.TestCase):
 
     def test_blank_keeps_value_and_cancellation_is_supported_at_every_stage(self):
         args = wrapper.parser().parse_args([])
-        with patch("builtins.input", side_effect=["2", "2", "", "0"]), \
+        with patch("builtins.input", side_effect=["2", "4", "", "0"]), \
              patch("sys.stdout", new_callable=io.StringIO):
             wrapper.choose_simplification_settings(args)
         self.assertEqual(self.values(args), (0, 1, 2))
-        for answers in (["q"], ["2", "q"], ["2", "2", "q"]):
+        for answers in (["q"], ["2", "q"], ["2", "4", "q"]):
             with patch("builtins.input", side_effect=answers), \
                  patch("sys.stdout", new_callable=io.StringIO), self.assertRaises(EOFError):
                 wrapper.choose_simplification_settings(args)
 
     def test_yes_and_all_explicit_options_never_prompt_for_settings(self):
         for options in (["--yes"], ["--yes", "--scroll-concurrency-limit=8"],
-                        ["--scroll-concurrency-limit", "8", "--color-phase-min-hold", "0",
+                        ["--keep-originals", "--filtered", "--scroll-concurrency-limit", "8", "--color-phase-min-hold", "0",
                          "--color-phase-change-interval", "0"]):
             args = wrapper.parser().parse_args(options)
             before = self.values(args)
@@ -445,7 +445,7 @@ class SettingsMenuChecks(unittest.TestCase):
         source.write_bytes(b"unchanged source")
         engine.touch()
         help_text = "--stats-json --suffix --scroll-concurrency-limit --color-phase-min-hold --color-phase-change-interval"
-        argv = ["-i", folder, "--simplifier", str(engine), "--keep-originals", "--filtered", *options]
+        argv = ["-i", folder, "--simplifier", str(engine), *options]
         with patch.object(wrapper, "find_tool", side_effect=lambda name, _: name), \
              patch.object(wrapper, "run", return_value=help_text), \
              patch.object(wrapper, "scan_batch", return_value={}), \
@@ -459,10 +459,39 @@ class SettingsMenuChecks(unittest.TestCase):
         extract.assert_not_called()
         return process, read, console.getvalue()
 
+    def test_default_run_only_needs_one_choice_then_confirmation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            process, read, _ = self.run_menu(folder, ["1", "y"])
+            self.assertEqual(read.call_count, 2)
+            self.assertEqual(read.call_args.args[0], "Proceed? (y/N): ")
+            args = process.call_args.args[3]
+            self.assertEqual((args.mode, args.process_all_tracks), ("add", False))
+            self.assertEqual(self.values(args), (0, 1, 2))
+            self.assertTrue(process.call_args.args[7]["GroupConsistency"])
+
+    def test_workflow_command_line_values_are_fixed_and_policy_label_follows_mode(self):
+        for option, expected_all in (("--filtered", False), ("--replace-originals", True)):
+            args = wrapper.parser().parse_args([option])
+            with patch("builtins.input", side_effect=["2", "1", "2", "2", "0"]), \
+                 patch("sys.stdout", new_callable=io.StringIO) as console:
+                wrapper.choose_simplification_settings(args)
+            self.assertEqual((args.mode, args.process_all_tracks), ("replace", expected_all))
+            self.assertIn("[command line; fixed]", console.getvalue())
+            self.assertIn("Only tracks > 50000 bytes", console.getvalue())
+
+    def test_workflow_aliases_track_explicit_choices_and_keep_mutual_exclusion(self):
+        parser = wrapper.parser()
+        args = parser.parse_args(["--add-simplified-subtitles", "--process-all-tracks"])
+        self.assertEqual((args.mode, args.process_all_tracks), ("add", True))
+        self.assertEqual(args.explicit_settings, {"mode", "process_all_tracks"})
+        for options in (["--keep-originals", "--replace-originals"], ["--filtered", "--process-all-tracks"]):
+            with patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+                parser.parse_args(options)
+
     def test_effective_settings_reach_processing_final_summary_and_json_report(self):
         with tempfile.TemporaryDirectory() as folder:
             report = Path(folder) / "report.json"
-            process, _, console = self.run_menu(folder, ["2", "2", "0.5", "3", "0", "0", "y"],
+            process, _, console = self.run_menu(folder, ["2", "4", "0.5", "5", "0", "0", "y"],
                                                ["--scroll-concurrency-limit", "32", "--report", str(report)])
             args = process.call_args.args[3]
             self.assertEqual(self.values(args), (32, 0.5, 0))
@@ -474,13 +503,13 @@ class SettingsMenuChecks(unittest.TestCase):
             self.assertIn("Seconds per caption color change: 0 s", console)
 
     def test_cancel_before_processing_never_extracts_or_changes_media(self):
-        for answers in (["q"], ["2", "q"], ["2", "2", "q"], ["2", "2", "0.5", "0", "n"]):
+        for answers in (["q"], ["2", "q"], ["2", "4", "q"], ["2", "4", "0.5", "0", "n"]):
             with tempfile.TemporaryDirectory() as folder:
                 process, _, _ = self.run_menu(folder, answers)
                 process.assert_not_called()
 
     def test_explicit_settings_skip_menu_but_keep_final_confirmation(self):
-        options = ["--scroll-concurrency-limit", "32", "--color-phase-min-hold", "0",
+        options = ["--keep-originals", "--filtered", "--scroll-concurrency-limit", "32", "--color-phase-min-hold", "0",
                    "--color-phase-change-interval", "0"]
         with tempfile.TemporaryDirectory() as folder:
             process, read, _ = self.run_menu(folder, ["y"], options)

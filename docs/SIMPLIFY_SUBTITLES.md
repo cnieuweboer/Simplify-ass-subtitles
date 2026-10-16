@@ -20,8 +20,7 @@ relative to the input folder, without including that folder's own name. Addition
 font folders (`-f`, repeatable) supplement embedded fonts. Optional recursion
 excludes output folders. Existing outputs are skipped.
 
-The initial menus choose adding versus replacing tracks and filtered versus all
-ASS/SSA tracks. Individual qualification requires an extracted subtitle strictly
+Individual track qualification requires an extracted subtitle strictly
 larger than 50,000 bytes and an event-count reduction strictly greater than 10%.
 Thresholds are configurable.
 
@@ -40,10 +39,12 @@ It lists differing groups with their presence counts. These checks are advisory,
 not proof of a single show, and never block a confirmed batch. Recursive input
 is still one batch; cancel and split unrelated shows when necessary. `--yes`
 prints the checks but bypasses the confirmation. `--yes` uses add/filtered defaults unless options override them.
-An additional menu offers **Use default settings** or **Adjust settings** for
-scrolling concurrency and caption color hold/change limits. The editor lists current
-values; select a setting to change it, press Enter to keep its value, or `0` to finish.
-Command-line values are fixed, and the menu is skipped when all three are supplied.
+One settings menu offers **Use default settings** or **Adjust settings** for
+original-track handling, ASS/SSA processing policy, scrolling concurrency, and
+caption color hold/change limits. Defaults keep originals and use filtered tracks:
+press `1`, then `y` at confirmation to start. The editor lists all current values;
+select a setting to change it or `0` to finish. Numeric input accepts Enter to keep
+the current value. Command-line values are fixed; supplying all five skips the menu.
 `--yes` uses defaults or supplied values without prompting.
 A settings summary and confirmation precede writing outputs. Menu choices accept
 single keypresses; new numeric values require Enter. `q` cancels, and confirmation
