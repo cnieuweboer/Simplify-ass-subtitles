@@ -116,6 +116,96 @@ for i,c in enumerate('ABCDEFGH'):
 row=s.TextRow(parts[0][0],parts,paint_rows=[[e for e,c,p in parts]],foreground=[e for e,c,p in parts])
 timeline=s._caption_paint_timeline(row)
 check('sub-centisecond clocks share one exact handoff',timeline is not None and [(a,b) for a,b,p in timeline.phases]==[(1,2),(2,5)])
+
+# Source-owned outer contours follow the same phase decision as their complete
+# foreground. Different styles and independent event splitting are incidental.
+def glow_fixture(*,hold=.4,changes=3,split=False,gradient=False,layout=r'\pos(320,100)',
+                 variant='',same_style=False):
+ header=HEADER.replace('[Events]', 'Style: Halo,Volkhov,40,5,0,0,&H00FFFFFF,&H000000FF,&H00000000,&H00000000\n[Events]')
+ colors=['335577','AA6633','4488AA','992255'][:changes+1]
+ records=[]
+ for i,color in enumerate(colors):
+  start=1+i*hold;end=start+hold
+  front=rf'{{\bord2\1c&H{color}&\3c&HFFFFFF&}}Complete caption'
+  if gradient:front=front.replace('caption',r'{\1c&H'+color[::-1]+'&}caption')
+  records.append(event(front,2,start=start,end=end,layout=layout))
+  for j in range(2 if split else 1):
+   a=start+(end-start)*j/(2 if split else 1);b=start+(end-start)*(j+1)/(2 if split else 1)
+   shade='112244' if variant=='independent color' and i==1 else color
+   alpha='60' if variant=='independent opacity' and i==1 else '40'
+   width='7' if variant=='independent stroke' and i==1 else '5'
+   body=rf'{{\bord{width}\blur2\1a&HFF&\3a&H{alpha}&\3c&H{shade}&}}Complete caption'
+   if gradient:body=body.replace('caption',r'{\3c&H'+color[::-1]+'&}caption')
+   if variant=='independent fill color' and i==1:body=r'{\1c&HCC4411&}'+body
+   if variant=='independent fill exposure' and j==1:body=body.replace(r'\1a&HFF&',r'\1a&H00&')
+   if variant=='coupled fill exposure' and i==0:body=body.replace(r'\1a&HFF&',r'\1a&H00&')
+   if variant=='clip':body=r'{\clip(0,0,640,360)}'+body
+   if variant=='gap' and i==1:a+=.05
+   if variant=='outlasting' and i==len(colors)-1:b+=.1
+   pos=r'\pos(330,100)' if variant=='different geometry' else layout
+   line=event(body,0,start=a,end=b,layout=pos)
+   if not same_style:line=line.replace(',Default,',',Halo,')
+   records.append(line)
+ if variant in ('interleaved','distant peer'):
+  records.append(event(r'{\bord0}Independent',1,start=1,end=1+len(colors)*hold,
+                       layout=r'\pos(320,100)' if variant=='interleaved' else r'\pos(320,290)'))
+ return header+''.join(records)
+with tempfile.TemporaryDirectory() as folder:
+ folder=Path(folder);a=folder/'source.ass';b=folder/'out.ass';again=folder/'again.ass'
+ for label,options,config,accepted in [
+  ('limited glow',{},s.SimplifyConfig(),False),
+  ('split glow',{'split':True},s.SimplifyConfig(),False),
+  ('gradient glow',{'gradient':True},s.SimplifyConfig(),False),
+  ('rotated glow',{'layout':r'\pos(320,100)\frz12'},s.SimplifyConfig(),False),
+  ('implicit glow',{'layout':''},s.SimplifyConfig(),False),
+  ('distant interleaved paint',{'variant':'distant peer'},s.SimplifyConfig(),False),
+  ('accepted glow',{'hold':1.2,'changes':1},s.SimplifyConfig(max_blur=2),True),
+  ('accepted split gradient',{'hold':1.2,'changes':1,'split':True,'gradient':True},s.SimplifyConfig(max_blur=2),True),
+  ('unlimited glow',{},s.SimplifyConfig(color_phase_min_hold=0,color_phase_change_interval=0),True),
+  ('retained blur',{},s.SimplifyConfig(max_blur=1),False),
+  ('source composite exposure',{'variant':'coupled fill exposure'},s.SimplifyConfig(max_blur=1),False),
+ ]:
+  text=glow_fixture(**options);a.write_text(text);source=a.read_bytes()
+  with contextlib.redirect_stdout(io.StringIO()):stats=s.simplify_ass(a,b,config,font_metrics=metric)
+  es=s.load_subtitle_events(b)[1];main=[e for e in es if e.layer=='2'];back=[e for e in es if e.layer=='0']
+  expected=(options.get('changes',3)+1) if accepted else 1
+  check(label+' complete phase families',len(main)==len(back)==expected)
+  check(label+' counters count captions, not paint planes',stats['color_phase_captions_preserved' if accepted else 'color_phase_captions_limited']==1)
+  for f,g in zip(main,back):
+   check(label+' shared exact interval',(f.start,f.end)==(g.start,g.end))
+   fp=paints(f);gp=paints(g)
+   check(label+' shared span palette',[p[1][0] for p in fp]==[p[1][1] for p in gp])
+   check(label+' authored contour transparency retained',all(p[1][3]==64 and p[1][4:]==(5,5) for p in gp))
+   check(label+' complete literal retained',s.OVERRIDE_RE.sub('',f.text)==s.OVERRIDE_RE.sub('',g.text)=='Complete caption')
+  if label=='source composite exposure':
+   check('companion exposure comes from selected source appearance',back[0].state['1a']==(0 if main[0].state['1c']=='335577' else 255))
+  check(label+' source immutable',a.read_bytes()==source)
+  with contextlib.redirect_stdout(io.StringIO()):s.simplify_ass(b,again,config,font_metrics=metric)
+  records=lambda path:[(e.fields()[:9],s.static_text_paint_geometry(e,set())[0]) for e in s.load_subtitle_events(path)[1]]
+  check(label+' repeat paint, geometry and timing stable',records(b)==records(again))
+  if label in ('accepted glow','accepted split gradient'):
+   for at in (1.1,2.19,2.2,3.3):
+    check(label+f' native authored phase {at}',ImageChops.difference(frame(a,at),frame(b,at)).getbbox() is None)
+  if label in ('limited glow','retained blur'):
+   check(label+' native composed caption stays static',ImageChops.difference(frame(b,1.1),frame(b,2.1)).getbbox() is None)
+ a.write_text(glow_fixture(same_style=True))
+ with contextlib.redirect_stdout(io.StringIO()):stats=s.simplify_ass(a,b,s.SimplifyConfig(),font_metrics=metric)
+ es=s.load_subtitle_events(b)[1]
+ check('already flattened same-style stack remains one complete caption',len(es)==1 and s.OVERRIDE_RE.sub('',es[0].text)=='Complete caption')
+ check('already flattened stack still applies one phase decision',stats['color_phase_captions_limited']==1 and stats['color_phase_changes_removed']==3)
+ for variant in ('independent color','independent opacity','independent stroke','independent fill color','independent fill exposure','clip','gap','outlasting','different geometry','interleaved'):
+  split=variant=='independent fill exposure'
+  a.write_text(glow_fixture(variant=variant,split=split))
+  with contextlib.redirect_stdout(io.StringIO()):stats=s.simplify_ass(a,b,s.SimplifyConfig(),font_metrics=metric)
+  es=s.load_subtitle_events(b)[1]
+  if split:
+   source=s._prepare_text_document(s.read_subtitle_document(a),a)
+   prepared=s._prepare_source_text(source,set(),s.SimplifyConfig(),metric)
+   check(variant+' cannot acquire companion ownership',all(not timeline.companions for timeline in prepared.paint_timelines))
+  else:
+   check(variant+' retains uncertain companion phases',len([e for e in es if e.layer=='0'])==4)
+  check(variant+' foreground limits remain active',stats['color_phase_captions_limited']==1)
+
 for key in ('color_phase_min_hold','color_phase_change_interval'):
  for v in (-1,float('nan'),float('inf')):
   try:s.SimplifyConfig(**{key:v})

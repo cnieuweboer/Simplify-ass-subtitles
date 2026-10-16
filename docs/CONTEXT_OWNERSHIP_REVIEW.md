@@ -242,3 +242,19 @@ its complete-caption handoffs through recursion without changing the containers.
 Ordinary neighboring text supplies context without becoming eligible for edits.
 The proof expires before serialization, and reconstruction receives bounded
 fragment lifetimes. See [SOURCE_CAPTION_ALTERNATION.md](SOURCE_CAPTION_ALTERNATION.md).
+
+## Caption phase ownership — v209/v210
+
+The source timeline producer owns immutable `CaptionPaintTimeline` bindings,
+source identity sets and per-literal paint tuples. The owner Event is borrowed
+read-only; neither style catalogs nor source formatting buffers are modified.
+The text-stage consumer retains the proof separately from layout reconstruction
+and requires complete surviving literal, geometry and interval correspondence.
+
+v210 attaches `CaptionPaintCompanion` bindings for proved outer contours. Their
+immutable fill/exposure samples survive earlier sequence merging, which can
+otherwise discard underlying source paint. One real source time supplies both
+the foreground phase and the companion's underlying fill. The consumer copies
+retained events and parsed span state; no shared parser buffer is edited. Source
+authority expires at serialization, with ordinary sequential output re-entering
+the source proof on repeat conversion. See [CAPTION_COLOR_PHASES.md](CAPTION_COLOR_PHASES.md).

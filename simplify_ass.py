@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.16.209"
+__version__ = "2026.10.16.210"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 # Reconstructed source contours keep thinner/axis-specific widths, but cap each
 # axis in ASS script units. Ordinary retained events are not subject to this cap.
@@ -10935,6 +10935,19 @@ _ROW_TIME_QUANTUM = .011  # ASS row timings have centisecond precision.
 
 
 @dataclass(frozen=True)
+class CaptionPaintCompanion:
+    """A source-proved outer contour whose color follows foreground fill.
+
+    The fill beneath the opaque foreground can disappear in earlier sequence
+    merging. Borrow its source exposure so one actual appearance supplies all
+    paint. Contour width/opacity, blur and geometry stay with the retained plane.
+    """
+    owner: Event
+    members: frozenset[int]
+    fill_phases: tuple[tuple[float,float,tuple[tuple[str,float],...]],...]
+
+
+@dataclass(frozen=True)
 class CaptionPaintTimeline:
     """Producer-proved source paint, independent of later layout reconstruction.
 
@@ -10945,6 +10958,7 @@ class CaptionPaintTimeline:
     members: frozenset[int]
     literal: str
     phases: tuple[tuple[float,float,tuple[SourceCaptionPaint,...]],...]
+    companions: tuple[CaptionPaintCompanion,...] = ()
 
 
 def _near_caption_palette(a: tuple, b: tuple) -> bool:
@@ -11118,7 +11132,146 @@ def _collect_caption_paint_timelines(data: CollectedSourceText, families: list[T
             owner=replace_event(first,end=run[-1][0].end,end_s=run[-1][0].end_s)
             timeline=_join_source_paint_phases(owner,frozenset(members),literal,samples)
             if timeline is not None:timelines.append(timeline)
-    return tuple(timelines)
+    return _attach_caption_paint_companions(tuple(timelines),retained,metric)
+
+
+def _attach_caption_paint_companions(timelines: tuple, events: list[Event],
+                                      metric: FontMetrics | None) -> tuple:
+    """Extend source ownership to synchronized outer contours, across styles.
+
+    Whole static caption planes share exact literal geometry, continuous cue
+    coverage and foreground-fill/outer-contour colors at every source boundary.
+    Independent opacity, stroke, layout or color changes confer no ownership.
+    The existing clearance proof protects interleaved content. No styles or
+    particular colors identify a glow; blurred and sharp outer planes qualify.
+    """
+    if not timelines or metric is None or not metric.available:return timelines
+    paint=set(CAPTION_PAINT_TAGS)|{'alpha','c'}
+    literals={t.literal for t in timelines}
+    profiles={};groups={};by_id={e.source_index:e for e in events}
+    for e in events:
+        if e.kind!='Dialogue' or ''.join(OVERRIDE_RE.sub('',e.text).split()) not in literals:continue
+        e=dataclass_replace(e,state=event_evaluation(e).formatting)
+        by_id[e.source_index]=e
+        profile=static_text_paint_geometry(e,paint)
+        if profile is None or not e.layer.lstrip('-').isdigit():continue
+        profiles[e.source_index]=profile[0]
+        key=(profile[0],e.name,e.margin_l,e.margin_r,e.margin_v,e.measurement)
+        groups.setdefault(key,{}).setdefault((e.style,e.layer),[]).append(e)
+    proposals=[]
+    for timeline in timelines:
+        owner=timeline.owner
+        if any(i not in profiles for i in timeline.members):continue
+        front=[by_id[i] for i in timeline.members
+               if by_id[i].style==owner.style and by_id[i].layer==owner.layer]
+        if not front:continue
+        front.sort(key=lambda e:e.start_s)
+        if (abs(front[0].start_s-owner.start_s)>1e-6 or abs(front[-1].end_s-owner.end_s)>1e-6 or
+                any(abs(a.end_s-b.start_s)>1e-6 for a,b in zip(front,front[1:]))):continue
+        shape=profiles[front[0].source_index]
+        if len(shape)!=1 or any(profiles[e.source_index]!=shape for e in front):continue
+        key=(shape,owner.name,owner.margin_l,owner.margin_r,owner.margin_v,owner.measurement)
+        for group in groups.get(key,{}).values():
+            back=sorted([e for e in group if e.start_s<owner.end_s and e.end_s>owner.start_s],key=lambda e:e.start_s)
+            if not back or any(e.source_index in timeline.members and e.layer==owner.layer for e in back):continue
+            if (abs(back[0].start_s-owner.start_s)>1e-6 or abs(back[-1].end_s-owner.end_s)>1e-6 or
+                    any(abs(a.end_s-b.start_s)>1e-6 for a,b in zip(back,back[1:]))):continue
+            low=int(back[0].layer);high=min(int(e.layer) for e in front)
+            if low>=high:continue
+            points=sorted({owner.start_s,owner.end_s,*[t for e in front+back for t in (e.start_s,e.end_s)],
+                           *[t for a,b,p in timeline.phases for t in (a,b)]})
+            signature=None;fill_exposure={};fill_phases=[];valid=True
+            for a,b in zip(points,points[1:]):
+                at=(a+b)/2
+                fs=[e for e in front if e.start_s<=at<e.end_s]
+                bs=[e for e in back if e.start_s<=at<e.end_s]
+                if len(fs)!=1 or len(bs)!=1:valid=False;break
+                ranges=_literal_paint_ranges([fs[0],bs[0]])
+                if ranges is None:valid=False;break
+                current=[];exposure=[]
+                for literal,(f,g) in ranges:
+                    fw=tuple(f.get(k,f.get('bord',0)) for k in ('xbord','ybord'))
+                    gw=tuple(g.get(k,g.get('bord',0)) for k in ('xbord','ybord'))
+                    if (any(k in st for st in (f,g) for k in ('clip','iclip')) or
+                            any(st.get(k,st.get('shad',0)) for st in (f,g) for k in ('xshad','yshad')) or
+                            f.get('1a',0)!=0 or f.get('3a',0)!=0 or f.get('blur',0) or f.get('be',0) or
+                            not 0<=g.get('3a',0)<255 or max(gw)<=0 or
+                            any(x<y for x,y in zip(gw,fw)) or
+                            not (gw!=fw or g.get('blur',0)>0 or g.get('be',0)>0) or
+                            any(abs(int(f['1c'][i:i+2],16)-int(g['3c'][i:i+2],16))>2 for i in (0,2,4))):
+                        valid=False;break
+                    current.extend((g.get('3a',0),gw,g.get('blur',0),g.get('be',0),g['1c']) for c in literal if not c.isspace())
+                    exposure.extend((g['1c'],g.get('1a',0)) for c in literal if not c.isspace())
+                if not valid or signature is not None and signature!=current:valid=False;break
+                signature=current
+                phase=next(i for i,(start,end,palette) in enumerate(timeline.phases) if start<=at<end)
+                if phase in fill_exposure and fill_exposure[phase]!=exposure:valid=False;break
+                fill_exposure[phase]=exposure
+                fill_phases.append((a,b,tuple(exposure)))
+            if not valid:continue
+            members={e.source_index for e in front+back}
+            # Reuse the existing measured clearance, including implicit rows.
+            # Unknown placement/wrapping cannot authorize a cross-layer rewrite.
+            probe,available=_caption_implicit_anchor(back[0])
+            if probe is None:continue
+            footprints=[dataclass_replace(e,state=states[0]) for e in front+back
+                        for literal,states in _literal_paint_ranges([e])]
+            state=probe.state.copy()
+            for k in ('bord','xbord','ybord','blur','be'):
+                state[k]=max(e.state.get(k,e.state.get('bord',0) if k.endswith('bord') else 0) for e in footprints)
+            # Uniform glyph geometry was proved above. Paint-only span headers
+            # must not prevent the existing whole-line clearance measurement.
+            probe=dataclass_replace(probe,state=state,
+                text='{'+render_tag('pos',get_pos(probe.text))+'}'+OVERRIDE_RE.sub('',probe.text))
+            box=caption_bounds(probe,metric)
+            if box is None or available is not None and box[2]-box[0]>available:continue
+            if not _glyph_replacement_row_is_clear(probe,(owner.start_s,owner.end_s),members,
+                    max(int(e.layer) for e in front),by_id,metric,footprints):continue
+            proposals.append((timeline,CaptionPaintCompanion(back[0],frozenset(e.source_index for e in back),tuple(fill_phases))))
+    uses={}
+    for t,c in proposals:
+        for i in c.members:uses[i]=uses.get(i,0)+1
+    result=[]
+    for t in timelines:
+        companions=tuple(c for owner,c in proposals if owner is t and all(uses[i]==1 for i in c.members))
+        # Coextensive same-style sources can already belong to one paint proof.
+        # Give the retained outer planes their own identities before emission.
+        members=t.members-frozenset(i for c in companions for i in c.members)
+        result.append(dataclass_replace(t,members=members,companions=companions))
+    return tuple(result)
+
+
+def _retained_caption_plane(events: list[Event], owner: Event, members: frozenset[int],
+                            start: float, end: float, literal: str) -> list[Event]:
+    """Validate a source-owned plane's complete, unchanged retained interval."""
+    matches=sorted([e for e in events if e.kind=='Dialogue' and e.source_index in members and
+        e.style==owner.style and e.name==owner.name and
+        e.start_s>=start-1e-6 and e.end_s<=end+1e-6 and
+        ''.join(OVERRIDE_RE.sub('',e.text).split())==literal],key=lambda e:e.start_s)
+    if (not matches or abs(matches[0].start_s-start)>1e-6 or abs(matches[-1].end_s-end)>1e-6 or
+            any(abs(a.end_s-b.start_s)>1e-6 for a,b in zip(matches,matches[1:]))):return []
+    paint=set(CAPTION_PAINT_TAGS)|{'alpha','c'}
+    layouts=[static_text_paint_geometry(e,paint) for e in matches]
+    if any(p is None or p[0]!=layouts[0][0] for p in layouts):return []
+    return matches
+
+
+def _render_caption_phase(event: Event, palette: tuple, *, companion_fill: tuple | None=None) -> str | None:
+    """Map the proved phase to retained spans; companions keep all other paint."""
+    ranges=_literal_paint_ranges([event])
+    if ranges is None:return None
+    fragments=[];paints=[];cursor=0
+    for literal,states in ranges:
+        for char in literal:
+            index=min(cursor,len(palette)-1);proof=palette[index]
+            if not char.isspace():cursor+=1
+            fragments.append((char,states))
+            updates=({'1c':companion_fill[index][0],'1a':companion_fill[index][1],'3c':proof.fill} if companion_fill is not None else
+                {'1c':proof.fill,'3c':proof.outline,'3a':proof.outline_alpha,
+                 'bord':proof.border[0],'xbord':proof.border[0],'ybord':proof.border[1]})
+            paints.append({**states[0],**updates})
+    tags={'1c','1a','3c'} if companion_fill is not None else set(CAPTION_PAINT_TAGS)|{'alpha','c'}
+    return _render_literal_paint(event,fragments,paints,tags)
 
 
 def _emit_caption_paint_timelines(events: list[Event], timelines: tuple,
@@ -11137,19 +11290,13 @@ def _emit_caption_paint_timelines(events: list[Event], timelines: tuple,
     replacements={}
     for timeline in timelines:
         owner=timeline.owner
-        matches=sorted([e for e in events if e.kind=='Dialogue' and e.source_index in timeline.members and
-                 e.style==owner.style and e.name==owner.name and
-                 e.start_s>=owner.start_s-1e-6 and e.end_s<=owner.end_s+1e-6 and
-                 ''.join(OVERRIDE_RE.sub('',e.text).split())==timeline.literal],key=lambda e:e.start_s)
-        if (not matches or abs(matches[0].start_s-owner.start_s)>1e-6 or
-                abs(matches[-1].end_s-owner.end_s)>1e-6 or
-                any(abs(a.end_s-b.start_s)>1e-6 for a,b in zip(matches,matches[1:]))):continue
+        matches=_retained_caption_plane(events,owner,timeline.members,owner.start_s,owner.end_s,timeline.literal)
+        if not matches:continue
         paint_tags=set(CAPTION_PAINT_TAGS)|{'alpha','c'}
-        layouts=[static_text_paint_geometry(e,paint_tags) for e in matches]
-        if any(p is None or p[0]!=layouts[0][0] for p in layouts):continue
         event=max(matches,key=lambda e:e.duration)
         if any(id(e) in replacements for e in matches):continue
         phases=timeline.phases;changes=len(phases)-1
+        source_times=[(a+b)/2 for a,b,palette in phases]
         rate=(config.color_phase_change_interval>0 and
               changes*config.color_phase_change_interval>owner.duration+1e-6)
         hold=config.color_phase_min_hold>0 and any(b-a+1e-6<config.color_phase_min_hold for a,b,p in phases)
@@ -11162,26 +11309,36 @@ def _emit_caption_paint_timelines(events: list[Event], timelines: tuple,
             for a,b,palette in phases:
                 votes[palette]=votes.get(palette,0)+b-a
             selected=max(votes,key=votes.get)
+            # Keep each companion's other paint from the same real source
+            # appearance, including fill exposure hidden by the foreground.
+            source_times=[next((a+b)/2 for a,b,palette in phases if palette==selected)]
             phases=((owner.start_s,owner.end_s,selected),)
-        ranges=_literal_paint_ranges([event])
-        if ranges is None:continue
         output=[]
         for a,b,palette in phases:
-            fragments=[];paints=[];cursor=0
-            for literal,states in ranges:
-                for char in literal:
-                    proof=palette[min(cursor,len(palette)-1)]
-                    if not char.isspace():cursor+=1
-                    fragments.append((char,states))
-                    paints.append({**states[0],'1c':proof.fill,'3c':proof.outline,'3a':proof.outline_alpha,
-                                   'bord':proof.border[0],'xbord':proof.border[0],'ybord':proof.border[1]})
-            body=_render_literal_paint(event,fragments,paints,set(CAPTION_PAINT_TAGS)|{'alpha','c'})
+            body=_render_caption_phase(event,palette)
             start,end=format_time(a),format_time(b)
-            if start==end:output=[];break
+            if body is None or start==end:output=[];break
             output.append(replace_event(event,text=body,start=start,end=end,start_s=parse_time(start),end_s=parse_time(end)))
         if not output:continue
         for e in matches:replacements[id(e)]=[]
         replacements[id(matches[0])]=output
+        for companion in timeline.companions:
+            peers=_retained_caption_plane(events,companion.owner,companion.members,
+                                          owner.start_s,owner.end_s,timeline.literal)
+            if not peers or any(id(e) in replacements or e.layer!=companion.owner.layer for e in peers):continue
+            if any(static_text_paint_geometry(e,paint_tags)[0]!=static_text_paint_geometry(event,paint_tags)[0] for e in peers):continue
+            pieces=[]
+            for (a,b,palette),at in zip(phases,source_times):
+                template=next(e for e in peers if e.start_s<=at<e.end_s)
+                exposure=next(fill for start,end,fill in companion.fill_phases if start<=at<end)
+                body=_render_caption_phase(template,palette,companion_fill=exposure)
+                if body is None:pieces=[];break
+                start,end=format_time(a),format_time(b)
+                pieces.append(replace_event(template,text=body,start=start,end=end,
+                                           start_s=parse_time(start),end_s=parse_time(end)))
+            if not pieces:continue
+            for e in peers:replacements[id(e)]=[]
+            replacements[id(peers[0])]=pieces
         if not (rate or hold):
             counts['color_phase_captions_preserved']+=1;counts['color_phase_changes_preserved']+=changes
     return [piece for e in events for piece in replacements.get(id(e),[e])],counts
@@ -14941,6 +15098,24 @@ def _prove_glyph_phase_lives(slots: list, max_piece_duration: float) -> list[Gly
     return lives
 
 
+def _caption_implicit_anchor(event: Event) -> tuple[Event | None,float | None]:
+    """Resolve a static ASS margin anchor for measured clearance only.
+
+    Return the available width so callers reject unknown automatic wrapping.
+    This never changes serialized placement or renderer collision policy.
+    """
+    if get_pos(event.text) is not None:return event,None
+    if event.measurement.canvas is None or re.search(r'\\(?:move|t)\s*\(',event.text):return None,None
+    width,height=event.measurement.canvas
+    st=event.state;alignment=int(st.get('an',2))
+    if alignment not in range(1,10):return None,None
+    left,right,vertical=(float(value) or st.get(tag,0) for value,tag in
+        ((event.margin_l,'marginl'),(event.margin_r,'marginr'),(event.margin_v,'marginv')))
+    x=(left,(width+left-right)/2,width-right)[(alignment-1)%3]
+    y=(height-vertical,height/2,vertical)[(alignment-1)//3]
+    return replace_event(event,text=set_pos(event.text,(x,y))),width-left-right
+
+
 def _glyph_replacement_row_is_clear(caption: Event, core: tuple[float,float],
                                     members: set[int], highest: int,
                                     parsed: dict[int,Event], metric: FontMetrics,
@@ -15003,17 +15178,9 @@ def _glyph_replacement_row_is_clear(caption: Event, core: tuple[float,float],
         peer = dataclass_replace(peer,state=envelope)
         implicit = get_pos(peer.text) is None
         available = None
-        if implicit and peer.measurement.canvas is not None and not re.search(r'\\(?:move|t)\s*\(',peer.text):
-            width,height = peer.measurement.canvas
-            st = peer.state;alignment = int(st.get('an',2))
-            if alignment not in range(1,10):
-                return False
-            left,right,vertical = (float(value) or st.get(tag,0) for value,tag in
-                ((peer.margin_l,'marginl'),(peer.margin_r,'marginr'),(peer.margin_v,'marginv')))
-            x = (left,(width+left-right)/2,width-right)[(alignment-1)%3]
-            y = (height-vertical,height/2,vertical)[(alignment-1)//3]
-            peer = replace_event(peer,text=set_pos(peer.text,(x,y)))
-            available = width-left-right
+        if implicit:
+            peer,available = _caption_implicit_anchor(peer)
+            if peer is None:return False
         peer_box = caption_bounds(peer,metric)
         if implicit and peer_box is not None and available is not None and peer_box[2]-peer_box[0] > available:
             peer_box = None  # Automatic wrapping could change its footprint.

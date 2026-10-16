@@ -159,3 +159,105 @@ repeat conversion. These are now shared parts of phase ownership, rather than
 late repairs or matcher exceptions. Historical statistics comparisons assert
 inactive phase behavior before excluding new reporting fields. No additional
 dedicated follow-up review is required by this release.
+
+## Matched outer-contour ownership — v210
+
+The existing source timeline producer can also prove an outer caption plane
+whose contour color follows the foreground fill. The phase decision then applies
+to both planes. Rapid cycling becomes one coherent appearance, while accepted
+slow changes keep synchronized foreground and contour phases. The settings,
+disable semantics and caption-based reporting are unchanged; paint layers do not
+multiply the reported number of removed changes.
+
+The proof uses complete static captions with identical resolved literal/glyph
+geometry and matching placement, margins and measurement context. Style names
+may differ. Every source boundary is checked, so different event splitting
+cannot hide an independent change. Foreground ink and its contour must be opaque,
+the lower contour must be an expanded or blurred version of the same glyphs,
+and its corresponding colors must follow foreground fill within the existing
+two-level tolerance. Spatial gradients remain spatial gradients. Continuous
+coverage, numeric layer order, exact-font clearance and unique ownership protect
+other content. The shared clearance helper now reuses one implicit-margin anchor
+resolver; it never changes serialized placement or collision policy.
+
+Contour opacity, stroke and blur must remain stable. Clipping, shadow offsets,
+uncertain wrapping, differing geometry, gaps, overlong backing lifetimes and
+intervening ink do not acquire companion authority. Unsupported animated or
+projective layouts remain protected. This is a complete-caption paint-plane
+proof, not a new fragment or moving-caption matcher.
+
+Immutable companion records carry source identities and the fill exposure
+beneath the opaque foreground. Earlier effect-sequence merging can discard that
+exposure, so the consumer must not infer it from the remaining first frame.
+Fill exposure must be stable within each foreground phase; unrelated underlying
+fill colors or mid-phase exposure changes do not confer ownership. When limits
+select one palette, its earliest source occurrence supplies the companion's
+other fill paint as well. Retained blur, contour width/opacity and geometry stay
+with the simplified plane. The foreground's existing two-unit reconstruction cap
+is unchanged. Already-flattened stacks stay flattened; no layer is resurrected.
+
+Emission uses this producer evidence after layout, alongside existing foreground
+emission. It requires complete surviving source lineage, the original cue union
+and unchanged shared geometry. It does not discover new matches downstream or
+add exceptions to frame/effect matchers. Ordinary sequential output retains its
+paint, geometry, timing and compositing on repeat conversion without hidden tags.
+
+`tests/check_caption_color_phases.py` includes different styles, event splits,
+gradients, rotation, implicit placement, accepted/limited/disabled phases, retained
+blur, source fill exposure, already-flattened stacks and uncertain counterexamples.
+Native references check accepted authored phases and static limited composites.
+
+Fresh corpus and real-scene commands:
+
+```sh
+python validation/run_caption_glow_phase_corpus.py
+ASS_REGRESSION_FONT_BACKEND=windows \
+PYTHONPATH="$PWD/validation/backend_startup:$PWD" \
+python validation/check_caption_glow_phase_scene.py
+```
+
+They require the private v209 engine and corpus summary/outputs under
+`validation/kill-color-phase-investigation`, the original eleven corpus assets,
+and the uploaded `blood-color-phase-investigation` / `kill-color-phase-investigation`
+subtitle/font folders. The runners verify source, engine, font and baseline
+hashes. Real-scene references hold a genuine source appearance, simplified by
+v209 independently of the new ownership proof, with the foreground's established
+two-unit reconstruction cap made explicit. Generated reports, media and fonts
+remain ignored development assets.
+
+### Fresh v210 results and follow-up evaluation
+
+All **90** regression scripts pass with unchanged runtime/harness inputs,
+including **275** focused phase checks. The **63** PowerShell reporting checks and MKV
+extraction/simplification/remux/font-sync smoke test pass. The thirteen-file
+exact-font comparison has no missing fonts. **Twelve outputs are byte-identical
+to v209**, including Blood+ and Demon Slayer. Kill la Kill changes only its two
+matched outer-contour styles: **142 frame events become 14 held events**, taking
+the full output from **592 to 464** dialogue events. Foreground records remain
+identical, peak concurrency stays four, and reporting still counts **128 changes
+across 14 captions**. Timing, complete text, contour transparency and geometry
+remain intact.
+
+**35** native held-source reference samples cover all seven lyric pairs, including
+the original rapid-change boundaries. Five original/v209/v210 comparison panels
+show the now-coherent foreground and outer contour. Accepted synthetic phases
+also match authored rendering with retained blur; disabling limits preserves
+the full proved palette progression.
+
+The ownership extension is upstream and semantic. It preserves source fill
+exposure that earlier sequence merging could otherwise lose, reuses measured
+clearance, and adds no per-show conditions or late matcher exceptions. The
+fourteen matched captions retain paint, geometry, timing and compositing on
+repeat conversion.
+
+One **separate follow-up** was uncovered: Kill la Kill's **2:30.79–2:34.38**
+“omoi wa kitto hitotsu” / “We must be one in spirit.” Every source color phase
+has a fade tail (142 ms; 271 ms for the last phase). The original fade-bearing
+sequence has no static phase authority; after simplification removes the fades,
+repeat conversion recognizes two captions with four changes each. Hash-bound
+v209 already changes their foreground on repeat. v210 additionally keeps their
+glows coherent when that later proof becomes available. This is not whole-file
+idempotence: the real-scene runner explicitly records the older fade difference
+and requires every other record's paint, geometry, timing and compositing to
+remain stable. A dedicated source-fade/timeline evidence handoff investigation
+is warranted; it is not a reason to change the accepted duration defaults.
