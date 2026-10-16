@@ -217,6 +217,7 @@ def ass_fonts(path, with_usage=False):
 
 
 def font_faces(path):
+    from fontTools.pens.recordingPen import DecomposingRecordingPen
     from fontTools.ttLib import TTCollection, TTFont
     with path.open("rb") as handle:
         collection = handle.read(4) == b"ttcf"
@@ -225,8 +226,17 @@ def font_faces(path):
         faces = container.fonts if collection else [container]
         metadata = []
         for face in faces:
-            # Ask fontTools to parse all tables, not just the family name table.
-            face.ensureDecompiled()
+            # Check the font's usable content, rather than strictly decompiling
+            # every optional table. Older fonts may have nonconforming device
+            # metrics or smoothing tables which renderers can still tolerate.
+            for tag in ("head", "maxp", "hhea", "hmtx", "cmap"):
+                face[tag]
+            face["cmap"].ensureDecompiled()
+            glyphs = face.getGlyphSet()
+            if not glyphs:
+                raise ValueError("A font face has no glyphs.")
+            for glyph in glyphs.values():
+                glyph.draw(DecomposingRecordingPen(glyphs, skipMissingComponents=False))
             face_names, families, fullnames = set(), set(), set()
             for record in face["name"].names:
                 # Family, full, PostScript, typographic and WWS family names; all languages.

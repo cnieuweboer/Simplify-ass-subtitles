@@ -28,6 +28,7 @@ Standalone track/property checks:
 ```sh
 python tests/check_subtitle_tracks.py
 python tests/check_subtitle_properties.py
+python tests/check_sync_fonts_validation.py
 ```
 
 These cover automatic detection, manual selection, review/cancellation, output
@@ -35,6 +36,9 @@ exclusions, source changes, error cleanup, and warning/verification handling.
 With `mkvmerge` on PATH they also create temporary MKVs and exercise real remuxes
 with subtitles, audio, attachments, and chapters (plus video when FFmpeg is
 available). No corpus fixtures or user media are required or modified.
+
+Font validation checks use generated fonts to cover readable outlines with
+nonconforming optional tables, damaged required tables, and font collections.
 
 Historical parser/ownership comparisons may explicitly exclude contour fields
 that changed in v198; they run the current renderer. Full input-immutability
