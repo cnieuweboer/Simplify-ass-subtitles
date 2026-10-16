@@ -17,6 +17,9 @@ C:\Tools\
         subtitle_tools.cmd
     simplify-ass\
         simplify_ass.py
+        _simplify_ass\
+            __init__.py
+            font_metrics.py
         simplify_subtitles.py
         subtitle_tracks.py
         subtitle_properties.py
@@ -87,3 +90,24 @@ Updates preserve the saved launcher selection and do not recreate manually
 removed optional launchers. Older installations without saved preferences keep
 their existing launchers until you choose differently during reinstall.
 Rerun the installer and answer No to remove existing individual launchers.
+
+## Upgrading an installation from before v213
+
+Older installed updaters do not download the new `_simplify_ass/` directory.
+For this transition, download/extract the complete current repository and rerun
+its installer against your existing target:
+
+```cmd
+installer\windows\install.cmd --target "D:\My Tools" --keep-launchers
+```
+
+Choose **Reinstall / update**. `--keep-launchers` preserves the saved launcher
+selection and does not recreate manually removed optional launchers. PATH and
+package-installation changes retain their existing prompts. Subsequent updates
+using the newly installed updater include the implementation modules, verify
+their contents and stage them with the other tool files. Missing modules fail
+before any installed file is replaced.
+
+Keep the implementation directory beside `simplify_ass.py` when moving an
+installation. Uninstall removes only managed sources and their generated Python
+bytecode; unrelated files and nonempty directories remain.

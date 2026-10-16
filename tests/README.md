@@ -1,8 +1,9 @@
 # Regression checks
 
 Run checks from the repository root. Python checks and their shared helpers live
-here; production modules remain at the root. `test_paths.py` makes production
-modules importable when a check is executed directly.
+here; production entry points remain at the root, with engine-specific measurement
+code in `_simplify_ass/`. `test_paths.py` makes production modules importable when
+a check is executed directly.
 
 ```sh
 python validation/run_backend_check.py --backend windows tests/check_glyph_lifecycles.py
@@ -17,6 +18,8 @@ Windows batch-testing and PowerShell reporting scripts are in `windows/`.
 They look for `simplify_ass.py` beside themselves, at the repository root, then
 on PATH (including the Windows installer's `bin` layout). `-Simplifier` overrides
 lookup. The step-two BAT defaults to `cache/` and `results/` beside the BAT.
+Their reports include source manifests for the engine and `_simplify_ass/`, with
+an explicit indication if runtime sources changed during conversion.
 
 ```powershell
 .\tests\windows\check_simplifier_lookup.ps1
@@ -39,6 +42,14 @@ available). No corpus fixtures or user media are required or modified.
 
 Font validation checks use generated fonts to cover readable outlines with
 nonconforming optional tables, damaged required tables, and font collections.
+`check_font_module.py` covers the extracted measurement module, missing optional
+backends and isolated installed-tree execution. Installer/updater checks remain
+separate commands:
+
+```sh
+python tests/check_windows_installer.py
+python tests/check_windows_updater.py
+```
 
 Historical parser/ownership comparisons may explicitly exclude contour fields
 that changed in v198; they run the current renderer. Full input-immutability

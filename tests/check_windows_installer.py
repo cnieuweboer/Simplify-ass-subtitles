@@ -26,6 +26,10 @@ def checkout(root):
     shutil.copytree(INSTALLER, windows)
     for name in (*TOOLS, "simplify_ass"):
         (repository / (name + ".py")).write_text("# " + name + " version one\n")
+    package = repository / "_simplify_ass"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "font_metrics.py").write_text("# measurement version one\n")
     return repository
 
 
@@ -40,6 +44,63 @@ class InstallerChecks(unittest.TestCase):
     def run_installer(self, repository, *args):
         return subprocess.run([sys.executable, str(repository / "installer/windows/install.py"), *args],
                               input="1\ny\nn\nn\n", capture_output=True, text=True)
+
+    def test_package_is_required_before_touching_an_existing_installation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); repository = checkout(root); target = root/'tools'
+            owner = load_installer(); owner.install(repository, target)
+            before = {str(p.relative_to(target)):p.read_bytes() for p in target.rglob('*') if p.is_file()}
+            (repository/'_simplify_ass/font_metrics.py').unlink()
+            with self.assertRaisesRegex(RuntimeError, 'complete repository'):
+                owner.install(repository, target)
+            self.assertEqual(before, {str(p.relative_to(target)):p.read_bytes() for p in target.rglob('*') if p.is_file()})
+
+    def test_failed_first_package_upgrade_restores_the_old_tree(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); repository = checkout(root); target = root/'tools'
+            owner = load_installer(); owner.install(repository, target)
+            package = target/'simplify-ass/_simplify_ass'; shutil.rmtree(package)
+            before = {str(p.relative_to(target)):p.read_bytes() for p in target.rglob('*') if p.is_file()}
+            (repository/'simplify_ass.py').write_text('# new engine\n')
+            original = Path.replace
+            def replace(source, destination):
+                if source.name.startswith('new-') and Path(destination).name=='font_metrics.py':
+                    raise PermissionError('locked module')
+                return original(source, destination)
+            with patch.object(Path, 'replace', replace), self.assertRaises(PermissionError):
+                owner.install(repository, target)
+            self.assertEqual(before, {str(p.relative_to(target)):p.read_bytes() for p in target.rglob('*') if p.is_file()})
+            self.assertFalse(package.exists())
+
+    def test_reinstall_bridge_preserves_existing_launcher_choices(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); repository = checkout(root); target = root/'tools'
+            owner = load_installer(); owner.install(repository, target, individual_launchers=True)
+            shutil.rmtree(target/'simplify-ass/_simplify_ass')
+            (target/'bin/subtitle_tracks.cmd').unlink()
+            launchers = {p.name for p in (target/'bin').iterdir()}
+            with patch.object(owner, '__file__', str(repository/'installer/windows/install.py')), \
+                 patch.object(owner, 'prompt_key', return_value='1') as prompt, \
+                 patch.object(owner, 'offer_path_change'), patch.object(owner, 'offer_dependencies'), \
+                 patch('sys.stdout', new_callable=io.StringIO):
+                self.assertEqual(owner.main(['--target',str(target),'--keep-launchers']),0)
+            self.assertEqual(prompt.call_count,1)
+            self.assertEqual({p.name for p in (target/'bin').iterdir()},launchers)
+            for name in owner.ENGINE_MODULES:
+                self.assertEqual((target/'simplify-ass'/name).read_bytes(),(repository/name).read_bytes())
+
+    def test_uninstall_retains_unrelated_package_files_and_bytecode(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); repository = checkout(root); target = root/'tools'
+            owner = load_installer(); owner.install(repository, target)
+            cache = target/'simplify-ass/_simplify_ass/__pycache__'; cache.mkdir()
+            managed = cache/'font_metrics.cpython-312.pyc'; managed.write_bytes(b'generated')
+            unrelated = cache/'user.cpython-312.pyc'; unrelated.write_bytes(b'user')
+            notes = cache/'font_metrics.notes.txt'; notes.write_text('keep')
+            with patch('sys.stdout', new_callable=io.StringIO):owner.remove(target)
+            self.assertFalse(managed.exists())
+            self.assertEqual(unrelated.read_bytes(),b'user')
+            self.assertEqual(notes.read_text(),'keep')
 
     def test_custom_target_layout_updates_and_preserves_unrelated_tools(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -59,7 +120,7 @@ class InstallerChecks(unittest.TestCase):
             for name in TOOLS:
                 self.assertEqual((target / "bin" / (name + ".cmd")).read_bytes(),
                                  (repository / "installer/windows/bin" / (name + ".cmd")).read_bytes())
-            self.assertEqual(len(list(target.rglob("*.py"))), 8)
+            self.assertEqual(len(list(target.rglob("*.py"))), 10)
             (repository / "simplify_ass.py").write_text("# version two\n")
             result = self.run_installer(repository, "--target", str(target))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -93,14 +154,14 @@ class InstallerChecks(unittest.TestCase):
             (repository / "simplify_subtitles.py").write_text("# updated\n")
             original = Path.replace
             def replace(source, destination):
-                if source.name == "new-1" or source.name == "old-simplify_subtitles.py":
+                if source.name == "new-1" or source.name.endswith("-simplify_subtitles.py"):
                     raise PermissionError("locked file")
                 return original(source, destination)
             with patch.object(Path, "replace", replace), self.assertRaisesRegex(RuntimeError, "Recovery copies were kept"):
                 installer.install(repository, target, individual_launchers=True)
             recovery = list(target.glob(".subtitle-tools-install-*"))
             self.assertEqual(len(recovery), 1)
-            self.assertEqual((recovery[0] / "old-simplify_subtitles.py").read_bytes(), previous)
+            self.assertEqual((recovery[0] / "old-0-simplify_subtitles.py").read_bytes(), previous)
 
     def test_install_when_sources_already_occupy_the_tool_directory(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -137,7 +198,7 @@ class InstallerChecks(unittest.TestCase):
             result = subprocess.run([sys.executable, str(repository / "installer/windows/install.py"), str(target)],
                                     input="2\nn\n", capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn("Removed 15 installed file(s)", result.stdout)
+            self.assertIn("Removed 17 installed file(s)", result.stdout)
             self.assertEqual(other.read_text(), "other tool")
             self.assertEqual(media.read_text(), "user media")
             self.assertFalse(any(path.exists() for path in load_installer().installed_files(target)))
@@ -347,7 +408,7 @@ class MaintenanceChecks(unittest.TestCase):
             repository.rename(placed / "simplify-ass")
             with patch.object(installer, "unblock") as unblock:
                 installer.install(placed / "simplify-ass", placed, individual_launchers=True)
-            self.assertEqual(unblock.call_count, 15)
+            self.assertEqual(unblock.call_count, 17)
 
     def test_prompt_only_accepts_listed_keys_and_defaults_to_no_or_cancel(self):
         installer = self.installer

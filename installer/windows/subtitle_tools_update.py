@@ -15,6 +15,7 @@ API = f"https://api.github.com/repos/{REPOSITORY}"
 RAW = f"https://raw.githubusercontent.com/{REPOSITORY}"
 TOOLS = ("simplify_subtitles", "subtitle_tracks", "subtitle_properties", "sync_fonts")
 MAX_DOWNLOAD = 16 * 1024 * 1024
+ENGINE_MODULES = ("_simplify_ass/__init__.py", "_simplify_ass/font_metrics.py")
 
 
 def download(url):
@@ -36,7 +37,8 @@ def selected_file(path):
     parts = PurePosixPath(path).parts
     if not parts or ".." in parts or "\\" in path or PurePosixPath(path).is_absolute():
         return False
-    return ((len(parts) == 1 and path.endswith(".py"))
+    return (path in ENGINE_MODULES
+            or (len(parts) == 1 and path.endswith(".py"))
             or (len(parts) == 3 and parts[:2] == ("installer", "windows") and path.endswith(".py"))
             or (len(parts) == 4 and parts[:3] == ("installer", "windows", "bin") and path.endswith(".cmd")))
 
@@ -51,7 +53,7 @@ def fetch_checkout(directory):
     files = {entry["path"]: entry for entry in tree["tree"]
              if entry.get("type") == "blob" and entry.get("mode") in ("100644", "100755")
              and selected_file(entry["path"])}
-    required = ({tool + ".py" for tool in (*TOOLS, "simplify_ass")}
+    required = (set(ENGINE_MODULES) | {tool + ".py" for tool in (*TOOLS, "simplify_ass")}
                 | {f"installer/windows/{name}.py" for name in ("install", "subtitle_tools_update", "subtitle_tools")}
                 | {f"installer/windows/bin/{tool}.cmd" for tool in (*TOOLS, "subtitle_tools_update", "subtitle_tools")})
     if not required.issubset(files):

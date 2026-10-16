@@ -7,6 +7,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
 import argparse,hashlib,json,os,subprocess,sys
+from runtime_manifest import runtime_manifest
 
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 import simplify_ass as s
@@ -23,6 +24,8 @@ assert sha(BASE)==baseline_sha
 previous=json.loads(args.baseline_summary.read_text())
 assert previous['engine_sha256']==baseline_sha
 fonts=previous['font_sha256'];assert all(sha(ROOT/p)==value for p,value in fonts.items())
+current_manifest=runtime_manifest(ROOT/'simplify_ass.py')
+if 'runtime_manifest' in previous:assert previous['runtime_manifest']==runtime_manifest(BASE)
 engine_sha=sha(ROOT/'simplify_ass.py');env=os.environ.copy()
 env['ASS_REGRESSION_FONT_BACKEND']='windows';env['PYTHONPATH']=str(ROOT/'validation/backend_startup')
 
@@ -33,6 +36,7 @@ def measure(engine,source,font_folder,output):
             cwd=ROOT,env=env,check=True,stdout=log,stderr=log)
     result=json.loads(output.with_suffix('.json').read_text())
     assert not result['missing_families'] and result['engine_sha256']==sha(engine)
+    assert result['runtime_manifest']==runtime_manifest(engine)
     return result
 
 jobs=[]
@@ -71,7 +75,8 @@ def compare(job):
     return result
 
 with ThreadPoolExecutor(max_workers=3) as pool:cases=list(pool.map(compare,jobs))
+assert current_manifest==runtime_manifest(ROOT/'simplify_ass.py')
 assert engine_sha==sha(ROOT/'simplify_ass.py') and all(sha(ROOT/p)==value for p,value in fonts.items())
-(DEST/'summary.json').write_text(json.dumps(dict(engine_sha256=engine_sha,baseline_sha256=baseline_sha,
+(DEST/'summary.json').write_text(json.dumps(dict(engine_sha256=engine_sha,runtime_manifest=current_manifest,baseline_sha256=baseline_sha,
     harness_sha256=sha(Path(__file__)),font_sha256=fonts,cases=cases),indent=2)+'\n')
 print(len(cases),'fresh exact-font corpus comparisons completed',flush=True)

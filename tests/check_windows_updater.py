@@ -47,6 +47,8 @@ class UpdaterChecks(unittest.TestCase):
         for tool in (*TOOLS, "subtitle_tools_update", "subtitle_tools"):
             name = "installer/windows/bin/" + tool + ".cmd"
             self.files[name] = (INSTALLER / "bin" / (tool + ".cmd")).read_bytes()
+        for name in self.updater.ENGINE_MODULES:
+            self.files[name] = ("# updated " + name + "\n").encode()
         self.calls = []
 
     def fetch(self, url):
@@ -71,6 +73,8 @@ class UpdaterChecks(unittest.TestCase):
             self.assertEqual(self.updater.update(self.target), self.sha)
         for tool in (*TOOLS, "simplify_ass"):
             self.assertEqual((self.target / "simplify-ass" / (tool + ".py")).read_bytes(), self.files[tool + ".py"])
+        for name in self.updater.ENGINE_MODULES:
+            self.assertEqual((self.target / "simplify-ass" / name).read_bytes(), self.files[name])
         for name in ("install.py", "subtitle_tools_update.py", "subtitle_tools.py"):
             self.assertEqual((self.target / "simplify-ass" / name).read_bytes(), self.files["installer/windows/" + name])
         for tool in (*TOOLS, "subtitle_tools_update", "subtitle_tools"):
@@ -82,14 +86,20 @@ class UpdaterChecks(unittest.TestCase):
         self.assertFalse(list(self.target.glob(".subtitle-tools-install-*")))
 
     def test_download_failure_or_invalid_content_never_modifies_installation(self):
-        for mode in ("network", "hash", "syntax", "missing"):
+        for mode in ("network", "hash", "syntax", "missing", "module-missing", "module-hash", "module-syntax"):
             with self.subTest(mode=mode):
                 saved = dict(self.files)
                 if mode == "syntax":
                     self.files["sync_fonts.py"] = b"def broken(:\n"
                 if mode == "missing":
                     del self.files["sync_fonts.py"]
+                if mode == "module-missing":
+                    del self.files["_simplify_ass/font_metrics.py"]
+                if mode == "module-syntax":
+                    self.files["_simplify_ass/font_metrics.py"] = b"def broken(:\n"
                 def fetch(url):
+                    if mode == "module-hash" and url.endswith("/_simplify_ass/font_metrics.py"):
+                        return b"incorrect module"
                     if url.endswith("/sync_fonts.py"):
                         if mode == "network":
                             raise OSError("connection failed")
@@ -163,8 +173,12 @@ class UpdaterChecks(unittest.TestCase):
              patch.object(self.updater, "MAX_DOWNLOAD", 8):
             with self.assertRaisesRegex(RuntimeError, "download limit"):
                 self.updater.download("https://api.github.com/example")
-        for name in ("../bad.py", "/bad.py", "installer/windows/../bad.py", "fixtures/font.ttf", "README.md"):
+        for name in ("../bad.py", "/bad.py", "installer/windows/../bad.py", "fixtures/font.ttf", "README.md",
+                     "_simplify_ass/../bad.py", "_simplify_ass/__pycache__/bad.py"):
             self.assertFalse(self.updater.selected_file(name), name)
+        self.assertEqual(set(self.updater.ENGINE_MODULES),set(load_installer().ENGINE_MODULES))
+        for name in self.updater.ENGINE_MODULES:
+            self.assertTrue(self.updater.selected_file(name),name)
 
     @unittest.skipUnless(os.name == "nt", "Native CMD self-update requires Windows")
     def test_cmd_can_replace_itself_and_keep_the_updaters_exit_status(self):

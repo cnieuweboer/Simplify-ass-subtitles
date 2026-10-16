@@ -1,5 +1,9 @@
 # Bounded assessment: font measurement extraction
 
+Implemented in [v213](FONT_MEASUREMENT_EXTRACTION.md). This document retains the
+pre-extraction findings and v212 baseline; the linked release note records the
+implementation and acceptance results.
+
 This assesses the v212 engine at commit `1ce8136`. It proposes no new
 matching or rendering policy and does not prescribe the eventual module tree.
 The assessment leaves implementation, wrappers, tests and installers unchanged.

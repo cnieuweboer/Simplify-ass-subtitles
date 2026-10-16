@@ -65,7 +65,9 @@ def measurement_fonts(metric):
 
 def row_test_call(metric,name,*args,**kwargs):
     if hasattr(metric,name):return getattr(metric,name)(*args,**kwargs)
-    module=sys.modules[type(metric).__module__]
+    # Row algorithms belong to the engine, independently of the font owner's
+    # defining module. Historical owners still dispatch their methods above.
+    import simplify_ass as module
     function=getattr(module,ROW_NAMES[name])
     if name in {'recover','recover_tracked','fit_fullwidth_run'}:
         kwargs['font_report']=font_test_report(metric)

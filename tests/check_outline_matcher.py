@@ -5,7 +5,7 @@ from pathlib import Path
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
-import ast,contextlib,importlib.util,json,math,sys,tempfile
+import ast,contextlib,importlib.util,inspect,json,math,sys,tempfile
 import simplify_ass as current
 from event_evidence_test_helpers import event_comparison_fields
 from font_geometry_test_helpers import font_test_report, adapt_reference_font_api
@@ -208,7 +208,13 @@ class Normalize(ast.NodeTransformer):
   return n
 check('decoder algorithm AST unchanged',ast.dump(old_decoder,include_attributes=False)==ast.dump(Normalize().visit(deepcopy(new_decoder)),include_attributes=False))
 # Portable ink has its own v173 method audit and real-backend regression.
-backend=deepcopy(b['FontMetrics'])
+# Inspect the defining module after extraction. Only resource-root wiring is
+# normalized; the installed-tree check independently protects its behavior.
+backend_source=inspect.getsource(current.FontMetrics)
+assert backend_source.count('Path(__file__).resolve().parent.parent / "fonts"')==1
+backend_source=backend_source.replace('Path(__file__).resolve().parent.parent / "fonts"',
+                                      'Path(__file__).resolve().parent / "fonts"')
+backend=next(n for n in executable_ast(ast.parse(backend_source)).body if isinstance(n,ast.ClassDef))
 ink=next(n for n in a['FontMetrics'].body if isinstance(n,ast.FunctionDef) and n.name=='line_ink_metrics')
 backend.body=[deepcopy(ink) if isinstance(n,ast.FunctionDef) and n.name=='line_ink_metrics' else n for n in backend.body]
 check('font backend unchanged outside portable ink',ast.dump(a['FontMetrics'],include_attributes=False)==ast.dump(backend,include_attributes=False))

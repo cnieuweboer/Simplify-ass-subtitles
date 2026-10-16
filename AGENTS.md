@@ -8,6 +8,9 @@ Keep uncertain content when ownership, geometry, timing or exact fonts cannot be
 proved; avoid guessing text or substituting fonts.
 
 The production entry point is `simplify_subtitles.py` → `simplify_ass.py`.
+The exact-font measurement owner lives in `_simplify_ass/font_metrics.py`;
+the engine re-exports its four classes for existing callers. Ship the private
+package with the engine and preserve one-way imports and sibling font discovery.
 Preserve this batch MKV workflow and the engine's CLI compatibility. The older
 `simplify_ass.bat` / `simplify_ass.ps1` launchers have been retired.
 `tests/windows/test_mkv_subtitles.ps1` performs extraction and conversion in one pass.
@@ -46,12 +49,15 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-90-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+91-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it
 from the user before continuing font-dependent analysis or changes.
 Keep fresh reports separate from imported historical evidence.
+Current runtime evidence must identify `simplify_ass.py` and every Python source
+under `_simplify_ass/`; a root-script hash alone is incomplete. Use the manifest
+helper in `validation/runtime_manifest.py` and check it before/after validation.
 
 Fonts, subtitle fixtures, generated conversions and reports are local development
 assets ignored by Git. Preserve them and the user's media. Do not publish these

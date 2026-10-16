@@ -98,6 +98,24 @@ $checks++
 $testFolder = Join-Path ([IO.Path]::GetTempPath()) ('subtitle-report-check-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $testFolder | Out-Null
 try {
+    $fixtureEngine = Join-Path $testFolder 'simplify_ass.py'
+    '# standalone' | Set-Content -LiteralPath $fixtureEngine -Encoding UTF8
+    $single = Get-SimplifierRuntimeManifest $fixtureEngine
+    if ($single.Count -ne 1 -or -not $single.Contains('simplify_ass.py')) { throw 'Standalone fingerprint incorrect.' }
+    $checks++
+    $package = Join-Path $testFolder '_simplify_ass'
+    New-Item -ItemType Directory -Path $package | Out-Null
+    '' | Set-Content -LiteralPath (Join-Path $package '__init__.py') -Encoding UTF8
+    $module = Join-Path $package 'font_metrics.py'
+    '# first' | Set-Content -LiteralPath $module -Encoding UTF8
+    $first = Get-SimplifierRuntimeManifest $fixtureEngine
+    if ($first.Count -ne 3 -or -not $first.Contains('_simplify_ass/font_metrics.py')) { throw 'Package sources missing from fingerprint.' }
+    $checks++
+    '# second' | Set-Content -LiteralPath $module -Encoding UTF8
+    $second = Get-SimplifierRuntimeManifest $fixtureEngine
+    if ($first['_simplify_ass/font_metrics.py'] -eq $second['_simplify_ass/font_metrics.py'] -or
+        $first['simplify_ass.py'] -ne $second['simplify_ass.py']) { throw 'Module edit did not change only its source hash.' }
+    $checks++
     $counterBlocks = @()
     foreach ($name in @('test_mkv_subtitles.ps1','test_subtitles_step2_test.ps1')) {
         $tokens = $null; $errors = $null
@@ -141,12 +159,18 @@ try {
             $checks++
             $reportPath=Join-Path $testFolder ($name+$SimplificationLevel+'.txt')
             $jsonReportPath=Join-Path $testFolder ($name+$SimplificationLevel+'.json')
-            $inputRoot=$testFolder; $simplifierPath='simplify_ass.py'; $simplifierHash='test'
+            $inputRoot=$testFolder; $simplifierPath=$fixtureEngine; $simplifierHash='test'
+            $simplifierRuntimeManifest=Get-SimplifierRuntimeManifest $simplifierPath
             $supportsScrollLimit=$true; $ScrollConcurrencyLimit=32; $supportsColorPhases=$true; $ColorPhaseMinHold=1; $ColorPhaseChangeInterval=2; $workerCount=1; $NoFontSpacing=$false
             $Encoding=$null; $runState='completed'; $startedAt=Get-Date; $files=@('example.mkv'); $runRoot=$testFolder
             Save-Report
             $text=Get-Content -LiteralPath $reportPath -Raw
             $json=Get-Content -LiteralPath $jsonReportPath -Raw | ConvertFrom-Json
+            if (-not $json.RuntimeSourcesUnchanged -or
+                $json.SimplifierRuntimeManifest.'_simplify_ass/font_metrics.py' -ne $second['_simplify_ass/font_metrics.py']) {
+                throw 'Wrapper report lost the complete runtime identity.'
+            }
+            $checks++
             if ($text -notmatch 'glyph phases merged: 0\r?\n' -or
                 $text -notmatch 'duplicate layers removed: 3 \(reported for 2/3 tracks; total incomplete\)' -or
                 $text -match 'staggered row fragments merged|fullwidth glyph events merged' -or
@@ -168,6 +192,13 @@ try {
             $counterBlocks += [pscustomobject]@{Level=$SimplificationLevel;Text=$block}
         }
     }
+    '# changed during conversion' | Set-Content -LiteralPath $module -Encoding UTF8
+    Save-Report
+    $changed=Get-Content -LiteralPath $jsonReportPath -Raw | ConvertFrom-Json
+    if ($changed.RuntimeSourcesUnchanged -or
+        $changed.CurrentSimplifierRuntimeManifest.'_simplify_ass/font_metrics.py' -eq
+        $changed.SimplifierRuntimeManifest.'_simplify_ass/font_metrics.py') { throw 'Changed runtime was reported as unchanged.' }
+    $checks++
     foreach ($level in @(1,2)) {
         $blocks=@($counterBlocks | Where-Object {$_.Level -eq $level})
         if ($blocks[0].Text -ne $blocks[1].Text) { throw 'Wrapper counter reports differ.' }

@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.16.209",
+  "version": "2026.10.16.213",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -23,6 +23,11 @@
     },
     {
       "script": "tests/check_font_selection.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "tests/check_font_module.py",
       "status": "current",
       "category": "general"
     },

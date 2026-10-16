@@ -35,6 +35,23 @@ function Resolve-SubtitleSimplifier([string] $ScriptRoot, [string] $Simplifier) 
     throw 'Cannot find simplify_ass.py beside the test script, at the repository root, or on PATH. Use -Simplifier to specify it.'
 }
 
+# Source identity for a standalone engine or its sibling private package.
+function Get-SimplifierRuntimeManifest([string] $Simplifier) {
+    $engine = Get-Item -LiteralPath $Simplifier
+    $root = $engine.Directory.FullName
+    $files = @($engine)
+    $package = Join-Path $root '_simplify_ass'
+    if (Test-Path -LiteralPath $package -PathType Container) {
+        $files += @(Get-ChildItem -LiteralPath $package -Recurse -File -Force -Filter '*.py')
+    }
+    $manifest = [ordered]@{}
+    foreach ($file in ($files | Sort-Object FullName)) {
+        $relative = $file.FullName.Substring($root.Length).TrimStart([char[]]'\/').Replace('\','/')
+        $manifest[$relative] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    return $manifest
+}
+
 function Get-SubtitleCounterCatalog([int] $Level = 1) {
     $filters = [ordered]@{
         deduped = 'duplicate layers removed'

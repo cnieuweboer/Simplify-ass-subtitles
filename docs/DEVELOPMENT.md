@@ -11,10 +11,11 @@ at the repository root; Python checks/helpers are in `tests/`, Windows test
 wrappers in `tests/windows/`, runner tools in `validation/`, and notes in `docs/`.
 All commands below run from the repository root.
 
-The first proposed implementation-module boundary and its distribution/test
-requirements are documented in
-[FONT_MEASUREMENT_EXTRACTION_ASSESSMENT.md](FONT_MEASUREMENT_EXTRACTION_ASSESSMENT.md).
-The assessment does not move production scripts or change reconstruction policy.
+The first implementation module is documented in
+[FONT_MEASUREMENT_EXTRACTION.md](FONT_MEASUREMENT_EXTRACTION.md), following the
+[bounded assessment](FONT_MEASUREMENT_EXTRACTION_ASSESSMENT.md). The measurement
+owner moved into `_simplify_ass/`; production script locations and reconstruction
+policy are unchanged. Distribution must include that private package.
 
 ## Tools
 
@@ -65,7 +66,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 90 current scripts. The runner uses three workers for
+The suite inventory lists 91 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.

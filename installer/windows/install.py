@@ -18,12 +18,14 @@ WINDOWS = os.name == "nt"
 MAINTENANCE = ("install.py", "subtitle_tools_update.py", "subtitle_tools.py")
 OPTIONAL_LAUNCHERS = (*TOOLS, "subtitle_tools_update")
 SETTINGS = "install_settings.json"
+# Keep the independently downloaded updater's required module list in sync.
+ENGINE_MODULES = ("_simplify_ass/__init__.py", "_simplify_ass/font_metrics.py")
 REQUIREMENTS = {"Pillow": "PIL.ImageFont", "fonttools": "fontTools.ttLib", "uharfbuzz": "uharfbuzz"}
 
 
 def installed_files(target):
     return ([target / "simplify-ass" / (tool + ".py") for tool in (*TOOLS, "simplify_ass")]
-            + [target / "simplify-ass" / name for name in MAINTENANCE]
+            + [target / "simplify-ass" / name for name in (*MAINTENANCE, *ENGINE_MODULES)]
             + [target / "bin" / (tool + ".cmd") for tool in (*OPTIONAL_LAUNCHERS, "subtitle_tools")]
             + [target / "simplify-ass" / SETTINGS])
 
@@ -208,12 +210,25 @@ def offer_path_change(bin_dir, adding):
 
 def remove(target):
     removed = 0
-    for path in installed_files(target):
+    managed = installed_files(target)
+    for path in managed:
         if path.is_file() or path.is_symlink():
             path.unlink()
             removed += 1
-    for folder in (target / "simplify-ass", target / "bin"):
-        if folder.is_dir() and not any(folder.iterdir()):
+    # Remove only bytecode corresponding to managed source names. Other user
+    # files/caches keep their directories; never recursively remove the tree.
+    cache_dirs = {p.parent / "__pycache__" for p in managed if p.suffix == ".py"}
+    for source in (p for p in managed if p.suffix == ".py"):
+        cache = source.parent / "__pycache__"
+        if cache.is_dir() and not cache.is_symlink():
+            for path in cache.glob(source.stem + ".*.pyc"):
+                if path.is_file() or path.is_symlink():
+                    path.unlink()
+                    removed += 1
+    folders = {*cache_dirs, target / "simplify-ass/_simplify_ass",
+               target / "simplify-ass", target / "bin"}
+    for folder in sorted(folders, key=lambda p: len(p.parts), reverse=True):
+        if not folder.is_symlink() and folder.is_dir() and not any(folder.iterdir()):
             folder.rmdir()
     print(f"Removed {removed} installed file(s). Unrelated files were preserved.")
 
@@ -225,6 +240,7 @@ def install(repository, target, individual_launchers=None):
     selected = selected_launchers(target, individual_launchers)
     files = [(repository / (tool + ".py"), tool_dir / (tool + ".py")) for tool in TOOLS]
     files.append((repository / "simplify_ass.py", tool_dir / "simplify_ass.py"))
+    files.extend((repository / name, tool_dir / name) for name in ENGINE_MODULES)
     files.extend((launchers.parent / name, tool_dir / name) for name in MAINTENANCE)
     files.extend((launchers / (tool + ".cmd"), bin_dir / (tool + ".cmd"))
                  for tool in sorted(selected))
@@ -232,6 +248,8 @@ def install(repository, target, individual_launchers=None):
     for source, destination in files:
         if not source.is_file():
             raise RuntimeError(f"Missing installer source: {source}. Download or clone the complete repository first.")
+        if destination.parent.exists() and not destination.parent.is_dir():
+            raise RuntimeError(f"A file occupies an installed package directory: {destination.parent}")
         if destination.is_dir():
             raise RuntimeError(f"A folder occupies an installed file's path: {destination}")
     bin_dir.mkdir(parents=True, exist_ok=True)
@@ -253,21 +271,25 @@ def install(repository, target, individual_launchers=None):
             shutil.copy2(source, replacement)
             backup = None
             if destination.exists():
-                backup = staging / ("old-" + destination.name)
+                backup = staging / f"old-{index}-{destination.name}"
                 shutil.copy2(destination, backup)
             pending.append((replacement, destination, backup))
         # Remove unselected optional launchers in the same transaction.
         removals = [bin_dir / (tool + ".cmd") for tool in OPTIONAL_LAUNCHERS if tool not in selected]
         for destination in removals:
             if destination.is_file():
-                backup = staging / ("old-" + destination.name)
+                backup = staging / ("removed-" + destination.name)
                 shutil.copy2(destination, backup)
                 pending.append((None, destination, backup))
+        created_directories = []
         try:
             for replacement, destination, backup in pending:
                 if replacement is None:
                     destination.unlink()
                 else:
+                    if not destination.parent.exists():
+                        destination.parent.mkdir()
+                        created_directories.append(destination.parent)
                     replacement.replace(destination)
             for _, destination in files:
                 unblock(destination)
@@ -283,6 +305,12 @@ def install(repository, target, individual_launchers=None):
                         backup.replace(destination)
                 except OSError:
                     failed.append(str(destination))
+            for directory in reversed(created_directories):
+                try:
+                    if directory.is_dir() and not any(directory.iterdir()):
+                        directory.rmdir()
+                except OSError:
+                    failed.append(str(directory))
             if failed:
                 preserve_staging = True
                 raise RuntimeError("Could not restore these files after installation failed: " + ", ".join(failed)
@@ -298,6 +326,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("folder", nargs="?", type=Path, help="installation root (default: C:\\Tools)")
     parser.add_argument("--target", type=Path, help="installation root instead of C:\\Tools")
+    parser.add_argument("--keep-launchers", action="store_true",
+                        help="preserve the installed launcher selection when reinstalling")
     args = parser.parse_args(argv)
     if args.folder is not None and args.target is not None:
         parser.error("Specify the installation root positionally or with --target, not both.")
@@ -315,7 +345,7 @@ def main(argv=None):
                 remove(target)
                 offer_path_change(target / "bin", adding=False)
                 return 0
-        individual = prompt_key("Install individual launchers? (y/N): ", ("y", "n")) == "y"
+        individual = None if args.keep_launchers else prompt_key("Install individual launchers? (y/N): ", ("y", "n")) == "y"
         bin_dir, tool_dir = install(repository, target, individual_launchers=individual)
         print(f"Installed Python tools: {tool_dir}")
         print(f"Installed CMD launchers: {bin_dir}")

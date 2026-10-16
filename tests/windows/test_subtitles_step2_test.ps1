@@ -133,6 +133,7 @@ $outputRoot = Normalize-Folder $OutputFolder
 if ($outputRoot -ieq $inputRoot) { throw 'OutputFolder must differ from InputFolder.' }
 $simplifierPath = (Resolve-Path -LiteralPath $Simplifier).Path
 $simplifierHash = (Get-FileHash -LiteralPath $simplifierPath -Algorithm SHA256).Hash
+$simplifierRuntimeManifest = Get-SimplifierRuntimeManifest $simplifierPath
 $pythonCommand = Get-Command $Python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $pythonCommand) { throw "Cannot find Python command: $Python" }
 $pythonPath = $pythonCommand.Source
@@ -530,11 +531,18 @@ function Add-ResultToSummary($Item) {
 }
 
 function Save-Report {
+    $currentRuntimeManifest = Get-SimplifierRuntimeManifest $simplifierPath
+    $runtimeUnchanged = (($simplifierRuntimeManifest | ConvertTo-Json -Compress) -eq
+                         ($currentRuntimeManifest | ConvertTo-Json -Compress))
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add('Cached ASS/SSA simplification test')
     $lines.Add("Input folder: $inputRoot")
     $lines.Add("Simplifier: $simplifierPath")
     $lines.Add("Simplifier SHA256: $simplifierHash")
+    $lines.Add("Runtime sources unchanged: $runtimeUnchanged")
+    foreach ($entry in $simplifierRuntimeManifest.GetEnumerator()) {
+        $lines.Add("Runtime source SHA256: $($entry.Key) $($entry.Value)")
+    }
     $lines.Add("Simplification mode: $(if ($SimplificationLevel -eq 1) { 'standard' } else { 'legacy' })")
     $limitText = if (-not $supportsScrollLimit) { 'unavailable in this simplifier' } elseif ($null -eq $ScrollConcurrencyLimit) { 'engine default' } else { [string]$ScrollConcurrencyLimit }
     $lines.Add("Scrolling-text concurrent event limit: $limitText (0 disables dropping)")
@@ -620,6 +628,8 @@ function Save-Report {
     [pscustomobject]@{
         Status = $runState; Started = $startedAt.ToString('o'); Updated = (Get-Date).ToString('o')
         Input = $inputRoot; Simplifier = $simplifierPath; SimplifierSHA256 = $simplifierHash; Level = $SimplificationLevel
+        SimplifierRuntimeManifest = $simplifierRuntimeManifest; RuntimeSourcesUnchanged = $runtimeUnchanged
+        CurrentSimplifierRuntimeManifest = $currentRuntimeManifest
         ScrollConcurrencyLimit = if ($supportsScrollLimit) { $ScrollConcurrencyLimit } else { $null }
         ColorPhaseWarnings = @($colorPhaseWarnings.ToArray())
         ColorPhaseMinHold = if ($supportsColorPhases) { $ColorPhaseMinHold } else { $null }

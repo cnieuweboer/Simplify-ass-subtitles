@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from PIL import features
+from runtime_manifest import runtime_manifest
 import argparse, hashlib, json, os, shutil, subprocess, sys, time
 
 root=Path(__file__).resolve().parents[1]
@@ -23,9 +24,11 @@ else:
 scripts=[x['script'] for x in json.loads((root/'validation/regression-inventory.json').read_text())['current']]
 harness_inputs=sorted(set([*root.glob('tests/*.py'),Path(__file__),
     root/'validation/run_backend_check.py',root/'validation/backend_startup/sitecustomize.py',
-    root/'validation/regression-inventory.json']))
+    root/'validation/regression-inventory.json',root/'validation/runtime_manifest.py',
+    root/'installer/windows/install.py',root/'installer/windows/subtitle_tools_update.py']))
 hashes=lambda paths:{str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 initial_harness_hashes=hashes(harness_inputs)
+initial_runtime_manifest=runtime_manifest(root/'simplify_ass.py')
 initial_runtime_hash=hashlib.sha256((root/'simplify_ass.py').read_bytes()).hexdigest()
 pixel={s for s in scripts if s.endswith('_render.py') or Path(s).name=='check_relative_size_render.py'}
 all_results=[]
@@ -69,9 +72,11 @@ report=dict(runtime_sha256=hashlib.sha256((root/'simplify_ass.py').read_bytes())
             primary_backend='windows' if 'windows' in backends else 'raqm',
             requested_backend=args.backend,backends=backend_results,checks=all_results,
             raqm_available=features.check_feature('raqm'))
+report['runtime_manifest']=runtime_manifest(root/'simplify_ass.py')
 report['harness_sha256']=initial_harness_hashes
 report['inputs_unchanged']=(hashes(harness_inputs)==initial_harness_hashes and
-                          report['runtime_sha256']==initial_runtime_hash)
+                          report['runtime_sha256']==initial_runtime_hash and
+                          report['runtime_manifest']==initial_runtime_manifest)
 (root/'validation/complete-regression-checks.json').write_text(json.dumps(report,indent=2)+'\n')
 if args.backend=='both' and 'raqm' not in backends:
     print('RAQM unavailable on this host; required Windows regressions completed',flush=True)

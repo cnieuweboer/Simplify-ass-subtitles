@@ -74,7 +74,9 @@ becomes `cleaned/B/C/Y.mkv`. Without `--output`, it becomes `media/B/C/output/Y.
 
 ## Simplify subtitles
 
-Keep `simplify_ass.py` beside `simplify_subtitles.py`.
+Keep `simplify_ass.py`, its `_simplify_ass/` implementation directory, and
+`simplify_subtitles.py` together. Download or install the complete tool set;
+copying only the engine script is no longer sufficient.
 
 ```console
 python simplify_subtitles.py
