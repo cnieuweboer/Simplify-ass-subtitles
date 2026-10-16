@@ -77,7 +77,7 @@ class SingleFileChecks(unittest.TestCase):
                             engine = root / "engine.py"
                             engine.touch()
                             with patch.object(module, "find_tool", side_effect=lambda name, _: name), \
-                                 patch.object(module, "run", return_value="--stats-json --suffix --scroll-concurrency-limit"), \
+                                 patch.object(module, "run", return_value="--stats-json --suffix --scroll-concurrency-limit --color-phase-min-hold --color-phase-change-interval"), \
                                  patch.object(module, "find_files") as find, \
                                  patch.object(module, "scan_batch", return_value={}) as scan, \
                                  patch.object(module, "process_batch") as process:

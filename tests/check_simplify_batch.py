@@ -48,6 +48,8 @@ class BatchPolicyChecks(unittest.TestCase):
                  patch.object(wrapper, "extract_items") as extract, \
                  patch("sys.stdout", new_callable=io.StringIO) as console:
                 def confirm(prompt):
+                    if prompt == "Choose 1 or 2 (q to cancel): ":
+                        return "1"  # Use default simplification settings.
                     self.assertIn("Filename prefixes differ", console.getvalue())
                     self.assertIn("Subtitle groups vary", console.getvalue())
                     self.assertIn("present in 1/2 files", console.getvalue())

@@ -816,6 +816,61 @@ def choice(prompt, options):
     return int(answer)
 
 
+SIMPLIFICATION_SETTINGS = (
+    ("scroll_concurrency_limit", "Scrolling concurrency limit", int, "", "0 disables text dropping"),
+    ("color_phase_min_hold", "Minimum caption color hold", float, " s", "0 disables hold limit"),
+    ("color_phase_change_interval", "Seconds per caption color change", float, " s", "0 is unlimited"),
+)
+
+
+class ExplicitSetting(argparse.Action):
+    """Track explicit values through argparse, including --option=value syntax."""
+    def __call__(self, argument_parser, namespace, value, option_string=None):
+        setattr(namespace, self.dest, value)
+        supplied = getattr(namespace, "explicit_settings", frozenset())
+        namespace.explicit_settings = supplied | {self.dest}
+
+
+def choose_simplification_settings(args):
+    fixed = getattr(args, "explicit_settings", frozenset())
+    editable = {str(number): setting for number, setting in enumerate(SIMPLIFICATION_SETTINGS, 1)
+                if setting[0] not in fixed}
+    if args.yes or not editable:
+        return
+    if fixed:
+        print("Settings supplied on the command line remain fixed.")
+    if choice("Simplification settings", ["Use default settings", "Adjust settings"]) == 1:
+        return
+    while True:
+        print("\nCurrent simplification settings")
+        for number, (name, label, _, unit, note) in enumerate(SIMPLIFICATION_SETTINGS, 1):
+            locked = " [command line; fixed]" if name in fixed else ""
+            print(f"  {number}. {label}: {getattr(args, name):g}{unit} ({note}){locked}")
+        print("  0. Done\n  q. Cancel")
+        selected = single_key("Choose a setting or 0 to continue: ", (*editable, "0", "q"))
+        if selected == "q":
+            raise EOFError
+        if selected == "0":
+            return
+        name, label, value_type, unit, _ = editable[selected]
+        while True:
+            answer = input(f"{label} [{getattr(args, name):g}{unit}] (Enter to keep; q to cancel): ").strip()
+            if answer.lower() == "q":
+                raise EOFError
+            if not answer:
+                break
+            try:
+                value = value_type(answer)
+                if value < 0 or (value_type is float and not math.isfinite(value)):
+                    raise ValueError
+            except ValueError:
+                kind = "whole number" if value_type is int else "finite number"
+                print(f"Enter a nonnegative {kind}.")
+                continue
+            setattr(args, name, value)
+            break
+
+
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("folder", nargs="?", type=Path, help="MKV file or folder")
@@ -834,9 +889,9 @@ def parser():
     policy.add_argument("--filtered", dest="process_all_tracks", action="store_const", const=False)
     result.add_argument("--minimum-subtitle-bytes", type=int, default=50000)
     result.add_argument("--minimum-event-reduction-percent", type=float, default=10)
-    result.add_argument("--scroll-concurrency-limit", type=int, default=0, help="0 disables text dropping (default)")
-    result.add_argument("--color-phase-min-hold",type=float,default=1.,help="minimum color hold seconds; 0 disables hold limit")
-    result.add_argument("--color-phase-change-interval",type=float,default=2.,help="seconds per color change; 0 is unlimited")
+    result.add_argument("--scroll-concurrency-limit", type=int, default=0, action=ExplicitSetting, help="0 disables text dropping (default)")
+    result.add_argument("--color-phase-min-hold",type=float,default=1.,action=ExplicitSetting,help="minimum color hold seconds; 0 disables hold limit")
+    result.add_argument("--color-phase-change-interval",type=float,default=2.,action=ExplicitSetting,help="seconds per color change; 0 is unlimited")
     result.add_argument("--level", "--simplification-level", type=int, choices=(1, 2), default=1, help="2 is deprecated legacy mode")
     result.add_argument("--simplifier", type=Path, help="engine path (default: simplify_ass.py beside this script)")
     result.add_argument("--mkvtoolnix-dir", "--mkvtoolnix-folder", type=Path)
@@ -906,6 +961,10 @@ def main(argv=None):
                  f"> {args.minimum_event_reduction_percent:g}% fewer events)" if args.mode == "add" else
                  f"Only tracks > {args.minimum_subtitle_bytes} bytes with > {args.minimum_event_reduction_percent:g}% fewer events"),
                 "All ASS/SSA tracks"]) == 2
+        choose_simplification_settings(args)
+        report.update(ScrollConcurrencyLimit=args.scroll_concurrency_limit,
+                      ColorPhaseMinHold=args.color_phase_min_hold,
+                      ColorPhaseChangeInterval=args.color_phase_change_interval)
         consistent = args.mode == "add" and not args.process_all_tracks
         report["GroupConsistency"] = consistent
         scans = scan_batch(files, root, output, merge) if consistent else {}
@@ -916,7 +975,8 @@ def main(argv=None):
         print(f"Subtitle workers: {args.workers}")
         if consistent:
             batch_warnings(scans)
-        print(f"Scrolling concurrency limit: {args.scroll_concurrency_limit} (0 disables text dropping)")
+        for name, label, _, unit, note in SIMPLIFICATION_SETTINGS:
+            print(f"{label}: {getattr(args, name):g}{unit} ({note})")
         if not args.yes and single_key("Proceed? (y/N): ", ("y", "n")) != "y":
             print("Cancelled. No files changed.")
             return 0

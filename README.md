@@ -94,6 +94,9 @@ Scrolling-text dropping is disabled by default (`0`); enable it explicitly
 with `--scroll-concurrency-limit`. `-f` adds fonts alongside embedded fonts.
 `--temp-dir scratch` can choose temporary storage; video is never cached there.
 
+Interactive runs offer **Use default settings** or **Adjust settings** for scrolling
+and caption color limits. Command-line values stay fixed; `--yes` skips this menu.
+
 Use `--yes` to run without prompts (default: keep originals, filtered tracks)
 and `--report run.json` for a JSON report.
 
