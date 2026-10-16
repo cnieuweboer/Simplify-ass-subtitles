@@ -20,6 +20,7 @@ lookup. The step-two BAT defaults to `cache/` and `results/` beside the BAT.
 
 ```powershell
 .\tests\windows\check_simplifier_lookup.ps1
+.\tests\windows\check_test_settings.ps1
 ```
 
 Standalone track/property checks:
@@ -39,3 +40,6 @@ Historical parser/ownership comparisons may explicitly exclude contour fields
 that changed in v198; they run the current renderer. Full input-immutability
 checks and current-policy paint/native checks retain contour values. See
 [the v199 coverage notes](../docs/CURRENT_POLICY_INTEGRATION_COVERAGE.md).
+
+Windows simplification test wrappers use the engine's own scrolling/color defaults.
+Set optional overrides in PowerShell or the blank fields near the top of the step-two BAT.

@@ -10,11 +10,11 @@ param(
     [ValidateRange(1, 128)] [int] $MaxParallel = [Math]::Min(4, [Environment]::ProcessorCount),
     [switch] $NoFontSpacing,
     [string] $Encoding,
-    [ValidateRange(0, 2147483647)] [int] $ScrollConcurrencyLimit = 32,
+    [ValidateRange(0, 2147483647)] [Nullable[int]] $ScrollConcurrencyLimit,
     [ValidateScript({ $_ -ge 0 -and -not [double]::IsNaN($_) -and -not [double]::IsInfinity($_) })]
-    [double] $ColorPhaseMinHold = 1,
+    [Nullable[double]] $ColorPhaseMinHold,
     [ValidateScript({ $_ -ge 0 -and -not [double]::IsNaN($_) -and -not [double]::IsInfinity($_) })]
-    [double] $ColorPhaseChangeInterval = 2
+    [Nullable[double]] $ColorPhaseChangeInterval
 )
 
 . (Join-Path $PSScriptRoot 'subtitle_report_helpers.ps1')
@@ -319,10 +319,12 @@ $worker = {
             if ($entries.Count) {
                 $statsPath = Join-Path $Destination 'stats.json'
                 $arguments = @($SimplifierPath, '--level', [string]$Level, '--stats-json', $statsPath, '--suffix', '.simple')
-                if ($SupportsScrollLimit) { $arguments += @('--scroll-concurrency-limit', [string]$ScrollLimit) }
-                if ($SupportsColorPhases) {
-                    $arguments += @('--color-phase-min-hold', $PhaseHold.ToString([Globalization.CultureInfo]::InvariantCulture),
-                                    '--color-phase-change-interval', $PhaseInterval.ToString([Globalization.CultureInfo]::InvariantCulture))
+                if ($SupportsScrollLimit -and $null -ne $ScrollLimit) { $arguments += @('--scroll-concurrency-limit', [string]$ScrollLimit) }
+                if ($SupportsColorPhases -and $null -ne $PhaseHold) {
+                    $arguments += @('--color-phase-min-hold', $PhaseHold.ToString([Globalization.CultureInfo]::InvariantCulture))
+                }
+                if ($SupportsColorPhases -and $null -ne $PhaseInterval) {
+                    $arguments += @('--color-phase-change-interval', $PhaseInterval.ToString([Globalization.CultureInfo]::InvariantCulture))
                 }
                 if ($Level -eq 1 -and -not $DisableSpacing) { $arguments += @('--fonts-dir', $fontsFolder) }
                 if ($DisableSpacing) { $arguments += '--no-font-spacing' }
@@ -534,9 +536,11 @@ function Save-Report {
     $lines.Add("Simplifier: $simplifierPath")
     $lines.Add("Simplifier SHA256: $simplifierHash")
     $lines.Add("Simplification mode: $(if ($SimplificationLevel -eq 1) { 'standard' } else { 'legacy' })")
-    $limitText = if ($supportsScrollLimit) { [string]$ScrollConcurrencyLimit } else { 'unavailable in this simplifier' }
+    $limitText = if (-not $supportsScrollLimit) { 'unavailable in this simplifier' } elseif ($null -eq $ScrollConcurrencyLimit) { 'engine default' } else { [string]$ScrollConcurrencyLimit }
     $lines.Add("Scrolling-text concurrent event limit: $limitText (0 disables dropping)")
-    $phaseSettings = if ($supportsColorPhases) { "hold=$ColorPhaseMinHold s; seconds per change=$ColorPhaseChangeInterval (0 disables each limit)" } else { 'unavailable in this simplifier' }
+    $holdText = if ($null -eq $ColorPhaseMinHold) { 'engine default' } else { "$ColorPhaseMinHold s" }
+    $intervalText = if ($null -eq $ColorPhaseChangeInterval) { 'engine default' } else { [string]$ColorPhaseChangeInterval }
+    $phaseSettings = if ($supportsColorPhases) { "hold=$holdText; seconds per change=$intervalText (0 disables each limit)" } else { 'unavailable in this simplifier' }
     $lines.Add("Color phase limits: $phaseSettings")
     $lines.Add("Concurrent MKV jobs: $workerCount")
     $lines.Add("Font spacing disabled: $([bool]$NoFontSpacing)")
