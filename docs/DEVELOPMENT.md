@@ -290,3 +290,8 @@ all eleven exact-font sources against the hash-bound v205 baseline.
 See [SOURCE_CAPTION_ALTERNATION.md](SOURCE_CAPTION_ALTERNATION.md) for complete
 source phases across different fragmentations and the shared lyric-boundary
 handoff through frame and text-effect merging (v207).
+
+The proposed follow-up release plan is in
+[PAINT_PHASE_RELEASE_PLAN.md](PAINT_PHASE_RELEASE_PLAN.md): v208 restores source
+paint ownership/handoffs; v209 adds configurable whole-caption color phases and
+explicit reporting when duration-based limits remove changes.
