@@ -78,3 +78,12 @@ style: corrected paint permits more complete rows, reducing dialogue events from
 byte-identical on repeat conversion. Native original/v205/v206 panels confirm
 restored colored outlines for both gradient families. The MKV/font-sync smoke
 workflow and the integrated track/property utility suites (64 tests) also pass.
+
+## Representative source paint (v208)
+
+The same ordered contour proof now serves confirmed dense source rows before
+freezing, and can sample discrete source color steps as one coherent palette.
+Contained foreground/backing intervals are admitted by the stack producer only
+after an ownership/compositing proof; consumers retain both contour color and
+width. See [REPRESENTATIVE_SOURCE_PAINT.md](REPRESENTATIVE_SOURCE_PAINT.md) for
+selection, original-evidence ownership and validation.

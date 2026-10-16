@@ -31,5 +31,23 @@ with tempfile.TemporaryDirectory() as folder:
       for at in (.99,1.5,3):
         check(f'{number} {background} authored native contour and timing {at}',
             ImageChops.difference(frame(out,at,background),frame(expected,at,background)).getbbox() is None)
+ # Shared source-time palettes and contained foregrounds reach the native
+ # renderer as a single caption with its authored contour, including the lead.
+ for inline in (False,True):
+  source=folder/'source.ass';out=folder/'current.ass';expected=folder/'expected.ass'
+  source.write_text(stepped_fixture(inline=inline))
+  body=r'{\bord2\1c&HFFFFFF&\3c&HDDD37F&}AB'
+  if inline:body+=r'{\1c&HCCEEFF&\3c&H88AA77&} CD'
+  expected.write_text(HEADER+event(body,0,end=4))
+  with contextlib.redirect_stdout(io.StringIO()):s.simplify_ass(source,out,s.SimplifyConfig(),font_metrics=metric)
+  for at in (1.01,1.9,2.5,3.8,4):
+   check(f'source-time palette {inline} native {at}',ImageChops.difference(frame(out,at,'gray'),frame(expected,at,'gray')).getbbox() is None)
+ for offset in (.01,.04,.05):
+  source=folder/'source.ass';out=folder/'current.ass';expected=folder/'expected.ass'
+  source.write_text(HEADER+event(r'{\bord2\1c&H000000&\3c&HBBBBCC&}AB',1)+event(r'{\bord0\1c&HDDDDEE&}AB',2,start=1+offset))
+  expected.write_text(HEADER+event(r'{\bord2\1c&HDDDDEE&\3c&HBBBBCC&}AB',2))
+  with contextlib.redirect_stdout(io.StringIO()):s.simplify_ass(source,out,s.SimplifyConfig(),font_metrics=metric)
+  for at in (.99,1.01,1.05,2,3):
+   check(f'contained paint {offset} native {at}',ImageChops.difference(frame(out,at,'gray'),frame(expected,at,'gray')).getbbox() is None)
 (ROOT/'validation/stacked-contour-render-checks.json').write_text(json.dumps(dict(version=s.__version__,checks_passed=len(checks),checks=checks,engine_sha256=hashlib.sha256((ROOT/'simplify_ass.py').read_bytes()).hexdigest()),indent=2)+'\n')
 print(len(checks),'native ordered contour checks passed')

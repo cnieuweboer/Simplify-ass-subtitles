@@ -165,3 +165,10 @@ index reviews remain separate unless concrete evidence makes one necessary.
 Detailed v207 investigation evidence is local under
 `validation/demon-opening-diagnosis/INVESTIGATION.md`; source/media assets remain
 ignored and must not be published incidentally.
+
+## v208 implementation
+
+The source-row/stack ownership and representative-palette work is implemented
+in v208. See [REPRESENTATIVE_SOURCE_PAINT.md](REPRESENTATIVE_SOURCE_PAINT.md) for
+the producer/consumer contracts and validation entry points. v209's configurable
+multi-phase emission remains the next planned step.

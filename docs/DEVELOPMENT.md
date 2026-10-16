@@ -295,3 +295,8 @@ The proposed follow-up release plan is in
 [PAINT_PHASE_RELEASE_PLAN.md](PAINT_PHASE_RELEASE_PLAN.md): v208 restores source
 paint ownership/handoffs; v209 adds configurable whole-caption color phases and
 explicit reporting when duration-based limits remove changes.
+
+See [REPRESENTATIVE_SOURCE_PAINT.md](REPRESENTATIVE_SOURCE_PAINT.md) for v208's
+shared source-row/stack contour proof, coherent representative palettes and
+containing backing-interval handoff. Source paint/timing records remain borrowed
+original evidence; confirmed row assembly retains normalized fragment paint.

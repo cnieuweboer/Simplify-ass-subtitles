@@ -8,8 +8,8 @@ PlayResY: 360
 ScaledBorderAndShadow: yes
 WrapStyle: 2
 [V4+ Styles]
-Format: Name, Fontname, Fontsize, Alignment, Outline, Shadow
-Style: Default,Volkhov,40,5,0,0
+Format: Name, Fontname, Fontsize, Alignment, Outline, Shadow, PrimaryColour, SecondaryColour, OutlineColour, BackColour
+Style: Default,Volkhov,40,5,0,0,&H00FFFFFF,&H000000FF,&H00000000,&H00000000
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 '''
@@ -47,3 +47,11 @@ def paints(event):
         result.extend((char,tuple(state.get(k,state.get('bord',0) if k in ('xbord','ybord') else 0)
              for k in ('1c','3c','1a','3a','xbord','ybord'))) for char in fragment)
     return result
+
+def stepped_fixture(*,inline=False,offset=0,terminal=0):
+    front=r'{\bord0\1c&H92DDFC&\t(1000,1000,\1c&HFFFFFF&)\t(2200,2200,\1c&H92DDFC&)}AB'
+    back=r'{\bord2\1c&H000000&\3c&H2594FC&\t(1000,1000,\3c&HDDD37F&)}AB'
+    if inline:
+        front+=r'{\1c&HCCEEFF&} CD'
+        back+=r'{\3c&H88AA77&} CD'
+    return HEADER+event(back,1,end=4)+event(front,2,start=1+offset,end=4-terminal)

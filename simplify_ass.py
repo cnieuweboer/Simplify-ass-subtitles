@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.15.207"
+__version__ = "2026.10.16.208"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 # Reconstructed source contours keep thinner/axis-specific widths, but cap each
 # axis in ASS script units. Ordinary retained events are not subject to this cap.
@@ -663,6 +663,8 @@ class StackedTextContext:
     glow_captions: dict[int,Event] = field(default_factory=dict)
     glow_collapsed: dict[int,list[int]] = field(default_factory=dict)
     matched_backing_fades: dict[frozenset[int],MatchedBackingFade] = field(default_factory=dict)
+    # Producer-owned unequal-lifetime stacks, consumed without repeating proof.
+    contained_paint: dict[frozenset[int],tuple] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -4770,9 +4772,67 @@ def _prepare_stacked_text_copies(events: list[Event], visible_map: dict[int,str]
                e.margin_v, pos, visible)
         groups.setdefault(key, []).append(e)
     context = StackedTextContext(groups,kept,collision_peers,paint,animated_sources,source_events,font_metrics)
+    _group_contained_stacked_paint(context,events)
     context.matched_backing_fades.update(_index_matched_backing_fades(context,events))
     context.glow_paint.update(_index_glow_pulse_paint(context))
     return context,echo_removed
+
+
+def _group_contained_stacked_paint(context: StackedTextContext, events: list[Event]) -> None:
+    """Admit a foreground inside one held backing, without equating lifetimes.
+
+    Frame-scale endpoint offsets alone grant no ownership. Require original
+    corresponding opaque glyph planes and an unobstructed paint-order interval.
+    Ambiguous families, independent foregrounds and incomplete support stay out.
+    The stack producer owns both the proof and its containing display interval.
+    """
+    if context.source_events is None:
+        return
+    families={}
+    for key in context.groups:
+        if key[-2] is not None:
+            families.setdefault(key[2:],[]).append(key)
+    for keys in families.values():
+        for long_key in keys:
+            if long_key not in context.groups:
+                continue
+            held=context.groups[long_key];anchor=held[0]
+            overlaps=[key for key in keys if key!=long_key and key in context.groups and
+                      context.groups[key][0].start_s<anchor.end_s and
+                      context.groups[key][0].end_s>anchor.start_s]
+            if len(overlaps)!=1:
+                continue
+            short_key=overlaps[0];inside=context.groups[short_key][0]
+            if not (anchor.start_s<=inside.start_s and inside.end_s<=anchor.end_s and
+                    0<max(inside.start_s-anchor.start_s,anchor.end_s-inside.end_s)<=.0500001):
+                continue
+            group=held+context.groups[short_key]
+            if any(not e.layer.lstrip('-').isdigit() for e in group):
+                continue
+            chosen=max(group,key=lambda e:(int(e.layer),e.source_index))
+            if chosen not in context.groups[short_key]:
+                continue
+            contour=_stacked_source_contour_paint(context,chosen,group)
+            if contour is None:
+                continue
+            ids={e.source_index for e in group}
+            low=min((int(e.layer),e.source_index) for e in group)
+            high=(int(chosen.layer),chosen.source_index)
+            foreign=[e for e in events if e.source_index not in ids and e.kind=='Dialogue' and
+                     e.start_s<anchor.end_s and e.end_s>anchor.start_s and
+                     (not e.layer.lstrip('-').isdigit() or low<(int(e.layer),e.source_index)<high)]
+            box=caption_bounds(chosen,context.font_metrics)
+            obstructed=False
+            for other in foreign:
+                bounds=caption_bounds(other,context.font_metrics)
+                if box is None or bounds is None or (box[0]<bounds[2] and bounds[0]<box[2] and
+                                                     box[1]<bounds[3] and bounds[1]<box[3]):
+                    obstructed=True;break
+            if obstructed:
+                continue
+            context.groups[long_key]=group
+            del context.groups[short_key]
+            context.contained_paint[frozenset(ids)]=(chosen,anchor,contour)
 
 
 def _matched_backing_fade_phase(context: StackedTextContext, peers: list[Event]) -> BackingFadePhase | None:
@@ -4974,6 +5034,15 @@ def _select_inline_stacked_text_foreground(context: StackedTextContext, key: tup
     return chosen,ids
 
 
+def _render_source_contour_paint(layout: Event, contour: tuple, paint_tags: set[str]) -> str:
+    """Serialize the producer's complete palette without rediscovering ownership."""
+    ranges,proofs=contour
+    paints=[effective_state(render_simplified_caption(states[0],'',source_paint=proof,
+                measurement=layout.measurement),layout.defaults,layout.styles)
+            for (_,states),proof in zip(ranges,proofs)]
+    return _render_literal_paint(layout,ranges,paints,paint_tags)
+
+
 def _render_inline_stacked_text_caption(context: StackedTextContext, peers: list[Event],
                                         chosen: Event, ids: set[int], spans: dict
                                         ) -> tuple[list[Event],int]:
@@ -4986,11 +5055,7 @@ def _render_inline_stacked_text_caption(context: StackedTextContext, peers: list
     if contour is None:
         text = static_text_paint_caption(chosen,outlines,context.paint,source_events=peers)
     else:
-        ranges,proofs = contour
-        paints = [effective_state(render_simplified_caption(states[0],'',source_paint=proof,
-                    measurement=chosen.measurement),chosen.defaults,chosen.styles)
-                  for (_,states),proof in zip(ranges,proofs)]
-        text = _render_literal_paint(chosen,ranges,paints,context.paint)
+        text = _render_source_contour_paint(chosen,contour,context.paint)
     if text is None:
         return peers,0
     caption = replace_event(chosen, text=text, effect="",
@@ -5130,8 +5195,92 @@ def _settled_stacked_contour_source(source: Event) -> tuple[Event,tuple] | None:
     return settled,progression
 
 
+def _source_palette_boundaries(source: Event) -> set[float] | None:
+    """Borrow source timing for discrete paint; continuous color needs its own proof."""
+    boundaries=set()
+    for tag,value in event_override_tokens(source):
+        if tag!='t':
+            continue
+        parsed=parse_effect_transform(value,source.duration,
+            {'c','1c','2c','3c','4c','alpha','1a','2a','3a','4a'},allow_instant=True)
+        if parsed is None:
+            return None
+        begin,end,changes=parsed
+        if any(k in {'c','1c','2c','3c','4c'} for k,v in changes):
+            if begin!=end:
+                return None
+            boundaries.add(source.start_s+begin/1000)
+    return boundaries
+
+
+def _representative_source_palette_time(sources: Iterable[Event], start: float, end: float) -> float:
+    """Choose one held palette interval, never independent channel winners.
+
+    One source-time sample supplies every corresponding fill and contour span.
+    Geometry and karaoke-completion admission remain with the calling producer.
+    Original events and their full timelines remain borrowed, unmodified evidence.
+    """
+    sources=list(sources)
+    points={start,end}
+    for source in sources:
+        points.update(t for t in (_source_palette_boundaries(source) or ()) if start<t<end)
+    points=sorted(points)
+    if len(points)==2:
+        return (start+end)/2
+    votes={}
+    for a,b in zip(points,points[1:]):
+        at=(a+b)/2;palette=[]
+        for source in sources:
+            sampled=_source_palette_at(source,at)
+            ranges=_literal_paint_ranges([sampled[0]]) if sampled else None
+            spans=[]
+            for fragment,states in ranges or []:
+                color=tuple(states[0].get(k) for k in ('1c','3c','1a','3a'))
+                if spans and spans[-1][0]==color:
+                    spans[-1]=(color,spans[-1][1]+fragment)
+                else:
+                    spans.append((color,fragment))
+            palette.append(tuple(spans))
+        key=tuple(palette)
+        duration,representative=votes.get(key,(0.,at))
+        votes[key]=(duration+b-a,representative)
+    # Repeated equal palettes and no-op tag boundaries add exposure rather
+    # than competing as unrelated phases. The chosen time still occurred.
+    return max(votes.values(),key=lambda item:(round(item[0],6),-item[1]))[1]
+
+
+def _source_palette_at(source: Event, at: float) -> tuple[Event,tuple] | None:
+    """Resolve source color steps at a common time, then prove coupled opacity.
+
+    Replay each block in place so resets and intentional span gradients retain
+    their meaning. Only color is sampled here; the existing opacity proof still
+    owns fade admission. No sampled successor replaces the original source map.
+    """
+    if _faded_cue_is_scrolling(source) or _source_palette_boundaries(source) is None:
+        return None
+    source=dataclass_replace(source,effect='')
+    def block(match):
+        result=[]
+        for tag,value in tokenize_override(match[1]):
+            if tag!='t':
+                result.append('\\'+tag+value);continue
+            begin,end,changes=parse_effect_transform(value,source.duration,
+                {'c','1c','2c','3c','4c','alpha','1a','2a','3a','4a'},allow_instant=True)
+            colors=[(k,v) for k,v in changes if k in {'c','1c','2c','3c','4c'}]
+            opacity=[(k,v) for k,v in changes if k not in {'c','1c','2c','3c','4c'}]
+            if source.start_s+begin/1000<=at:
+                result.extend('\\'+k+v for k,v in colors)
+            if opacity:
+                prefix=value[1:-1].partition('\\')[0]
+                result.append('\\t('+prefix+''.join('\\'+k+v for k,v in opacity)+')')
+        return '{'+''.join(result)+'}'
+    sampled=replace_event(source,text=OVERRIDE_RE.sub(block,source.text))
+    return _settled_stacked_contour_source(sampled)
+
+
 def _stacked_source_contour_paint(context: StackedTextContext, chosen: Event,
-                                  group: list[Event]) -> tuple[list[tuple],list[SourceCaptionPaint]] | None:
+                                  group: list[Event], *, at: float | None = None
+                                  ) -> tuple[list[tuple],list[SourceCaptionPaint]] | None:
     """Prove the immediate opaque stroke beneath an opaque borderless foreground.
 
     Coincident lower copies can have several contour colors without being
@@ -5145,6 +5294,9 @@ def _stacked_source_contour_paint(context: StackedTextContext, chosen: Event,
     ordered = sorted(group,key=lambda e:(int(e.layer),e.source_index),reverse=True)
     if ordered[0] is not chosen:
         return None
+    if at is None:
+        sources=[(context.source_events or {}).get(e.source_index,e) for e in group]
+        at=_representative_source_palette_time(sources,max(e.start_s for e in group),min(e.end_s for e in group))
     opacity=[]
     def original(event):
         source=event if context.source_events is None else context.source_events.get(event.source_index)
@@ -5154,7 +5306,7 @@ def _stacked_source_contour_paint(context: StackedTextContext, chosen: Event,
                 _faded_cue_is_scrolling(source)):
             return None
         source=dataclass_replace(source,effect='')  # Other Effect annotations are inert.
-        settled=_settled_stacked_contour_source(source)
+        settled=_source_palette_at(source,at)
         if settled is None:
             return None
         source,progression=settled
@@ -5192,7 +5344,6 @@ def _stacked_source_contour_paint(context: StackedTextContext, chosen: Event,
     for fragment,states in ranges:
         selected,_,front,back=states
         if (selected.get('1a',0)!=0 or front.get('1a',0)!=0 or
-                selected.get('1c')!=front.get('1c') or
                 any(front.get(k,front.get('bord',0))!=0 for k in ('xbord','ybord')) or
                 back.get('3a',0)!=0 or
                 max(back.get(k,back.get('bord',0)) for k in ('xbord','ybord'))<=0 or
@@ -5201,7 +5352,7 @@ def _stacked_source_contour_paint(context: StackedTextContext, chosen: Event,
                     any(state.get(k,state.get('shad',0)) for k in ('xshad','yshad'))
                     for state in (front,back))):
             return None
-        proof=_source_caption_paint(selected,[back])
+        proof=_source_caption_paint({**selected,'1c':front.get('1c','FFFFFF')},[back])
         if proof is None:
             return None
         proofs.append(proof)
@@ -5526,11 +5677,11 @@ def _render_stacked_text_caption(key: tuple, group: list[Event], proof: StackedT
                         authored.get('3a',0) < 255):
                     source_paint = _source_caption_paint(state,[authored])
             if source_paint is None:
-                source_paint = _source_caption_paint(state,outlines)
-            if source_paint is None:
                 contour = _stacked_source_contour_paint(context,chosen,group)
                 if contour is not None:
                     source_paint = contour[1][0]
+            if source_paint is None:
+                source_paint = _source_caption_paint(state,outlines)
     glow = context.glow_paint.get(chosen.source_index)
     if glow is not None:
         state = {**state,'1c':glow.fill,'fscx':glow.scale[0],'fscy':glow.scale[1]}
@@ -5554,6 +5705,13 @@ def _flatten_stacked_text_group(context: StackedTextContext, key: tuple,
     """Route literal-span layouts and proved uniform stacks through their existing rules."""
     if len(group) < 2:
         return group,0,None
+    contained=context.contained_paint.get(frozenset(e.source_index for e in group))
+    if contained is not None:
+        chosen,held,contour=contained
+        caption=replace_event(chosen,text=_render_source_contour_paint(chosen,contour,context.paint),
+            start=held.start,end=held.end,start_s=held.start_s,end_s=held.end_s,
+            source_index=min(e.source_index for e in group),effect='')
+        return compact_static_overrides([caption],0),len(group)-1,None
     fade=context.matched_backing_fades.get(frozenset(e.source_index for e in group))
     if fade is not None:
         return compact_static_overrides([_render_matched_backing_fade(fade,context.paint)],0),1,None
@@ -10777,12 +10935,57 @@ def _normalize_source_row_paint(
         paint = max(row.foreground,key=lambda e:(
             int(e.layer) if e.layer.lstrip('-').isdigit() else 0,e.duration))
         state = paint.state or effective_state(paint.text,paint.defaults,paint.styles)
-        pieces = [(replace_event(e,text=render_simplified_caption(
-            {**e.state,"1c":state.get("1c","FFFFFF")},text,
-            outline_states=[p.state for p in row.foreground if p.state],measurement=e.measurement,
-            source_paint=_source_caption_paint({**e.state,"1c":state.get("1c","FFFFFF")},
-                                             [p.state for p in row.foreground if p.state]))),text,pos)
-            for e,text,pos in row.pieces]
+        originals={p.source_index:p for peers in row.paint_rows for p in peers}
+        originals.update((p.source_index,p) for p in row.foreground)
+        at=_representative_source_palette_time(originals.values(),row.base.start_s,row.base.end_s)
+        completed=_source_palette_at(paint,at)
+        completed_fill=completed[0].state.get('1c') if completed else state.get('1c','FFFFFF')
+        paint_tags=set(CAPTION_PAINT_TAGS)|{'alpha','c'}
+        context=StackedTextContext({},[],{},paint_tags,set(),originals)
+        families={}
+        for source in originals.values():
+            sampled=_source_palette_at(source,at)
+            if sampled is None:
+                continue
+            profile=static_text_paint_geometry(sampled[0],paint_tags)
+            if profile is not None:
+                families.setdefault(profile[0],[]).append(sampled[0])
+        pieces=[]
+        for e,text,pos in row.pieces:
+            sampled=_source_palette_at(e,at)
+            profile=static_text_paint_geometry(sampled[0],paint_tags) if sampled else None
+            family=families.get(profile[0],[]) if profile else []
+            chosen=max(family,key=lambda p:(int(p.layer) if p.layer.lstrip('-').isdigit() else 0,
+                                           p.duration,-p.source_index)) if family else None
+            contour=None
+            if chosen is not None:
+                ranges=_literal_paint_ranges([chosen])
+                # A sharp foreground may already own its contour. Its lower
+                # glow must not turn that authored stroke into ambiguous paint.
+                if ranges and all(states[0].get('1a',0)==0 and
+                        not states[0].get('blur',0) and not states[0].get('be',0) and
+                        not any(states[0].get(k,states[0].get('shad',0)) for k in ('xshad','yshad'))
+                        for _,states in ranges):
+                    proofs=[_source_caption_paint(states[0],[states[0]]) for _,states in ranges]
+                    if all(proof is not None for proof in proofs) and any(max(proof.border)>0 for proof in proofs):
+                        contour=(ranges,proofs)
+                if contour is None:
+                    contour=_stacked_source_contour_paint(context,chosen,family,at=at)
+            if contour is not None:
+                # The dense-row completion proof already owns the shared fill
+                # when a terminal fragment has no completed foreground copy.
+                # Existing completed copies keep their own intentional variation.
+                if (paint.layer.lstrip('-').isdigit() and chosen.layer.lstrip('-').isdigit() and
+                        int(chosen.layer)<int(paint.layer)):
+                    contour=(contour[0],[dataclass_replace(proof,fill=completed_fill) for proof in contour[1]])
+                # Preserve the confirmed fragment's geometry and lifetime.
+                body=_render_source_contour_paint(sampled[0],contour,paint_tags)
+            else:
+                selected={**e.state,'1c':state.get('1c','FFFFFF')}
+                outlines=[p.state for p in row.foreground if p.state]
+                body=render_simplified_caption(selected,text,outline_states=outlines,
+                    measurement=e.measurement,source_paint=_source_caption_paint(selected,outlines))
+            pieces.append((replace_event(e,text=body),text,pos))
         rows.append(dataclass_replace(row,base=pieces[0][0],pieces=pieces,
             paint_rows=[list(peers) for peers in row.paint_rows],
             source_anchors={word:list(anchors) for word,anchors in row.source_anchors.items()},
@@ -11155,6 +11358,7 @@ def _fit_text_row_caption(
 def _join_text_row(
     context: RowReconstructionContext, edits: RowReconstructionEdits,
     run: list[Event], animated: bool, *, coextensive: bool = False,
+    preserve_paint: bool = False,
 ) -> bool:
     """Render a proved fitted row and record its replacement, evidence and counts."""
     candidate = _prove_text_row_join(context,edits,run,animated,coextensive=coextensive)
@@ -11172,7 +11376,7 @@ def _join_text_row(
         fit.text,fit.x,fit.sx,fit.sy,fit.alignment,fit.tracking,fit.measured)
     chosen = ordered[0]
     body = render_merged_caption(ordered,fragments,text,animated=animated,
-                                 an=alignment,pos=(x,y),fscx=sx,fscy=sy,fsp=tracking)
+                                 preserve_paint=preserve_paint,an=alignment,pos=(x,y),fscx=sx,fscy=sy,fsp=tracking)
     if body is None:
         return False
     first = min(e.source_index for e in run)
@@ -11212,7 +11416,8 @@ def _reconstruct_confirmed_source_rows(
         if (len(run) == len(row.pieces) and all(
                 e.start == row.base.start and e.end == row.base.end for e in run)):
             protected.update(e.source_index for e in run)
-            if not _join_text_row(context,edits,run,all(e.source_index in context.animated_sources for e in run)):
+            if not _join_text_row(context,edits,run,all(e.source_index in context.animated_sources for e in run),
+                                  preserve_paint=True):
                 idx = -1-sum(r.virtual for r in edits.row_evidence.values())
                 xs = [pos[0] for _,_,pos in row.pieces]
                 ys = [pos[1] for _,_,pos in row.pieces]
