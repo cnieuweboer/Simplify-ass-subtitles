@@ -298,15 +298,15 @@ def text_hint(path):
             printable = sum(c.isprintable() or c in "\r\n\t" for c in text)
             if printable / len(text) >= 0.98:
                 return f"appears to be text ({encoding.replace('-sig', '').upper()})"
-    return "does not clearly appear to be UTF-8/UTF-16 text"
+    return ""
 
 
 def confirm_invalid(invalid, log, preview):
     print("  Attachments that could not be validated as fonts:")
     for attachment, error, hint in invalid:
         label = f"{attachment['id']}: {attachment.get('file_name', '(unnamed)')}"
-        print(f"    {label} - {hint}\n      {error}")
-        log.append(f"FONT CHECK FAILED {label} | {hint} | {error}\n")
+        print(f"    {label}" + (f" - {hint}" if hint else "") + f"\n      {error}")
+        log.append(f"FONT CHECK FAILED {label}" + (f" | {hint}" if hint else "") + f" | {error}\n")
     if preview:
         print("  Preview: your answer only affects the removal plan.")
     while True:
@@ -340,7 +340,8 @@ def inspect_fonts(source, merge, extract):
                     hint = text_hint(path)
                     invalid.append((attachment, str(error), hint))
                     log.append(f"FONT CHECK FAILED {attachment['id']}: "
-                               f"{attachment.get('file_name', '(unnamed)')} | {hint} | {error}\n")
+                               f"{attachment.get('file_name', '(unnamed)')}" +
+                               (f" | {hint}" if hint else "") + f" | {error}\n")
     print(f"  Font check: {len(readable)} passed, {len(invalid)} failed.")
     scan = {"before": before, "readable": readable, "invalid": invalid, "log": log,
             "signature": (stat.st_size, stat.st_mtime_ns)}
@@ -359,7 +360,8 @@ def choose_removals(inspections, preview):
     for source, scan in affected:
         print("\n  " + source.name)
         for attachment, error, hint in scan["invalid"]:
-            print(f"    {attachment['id']}: {attachment.get('file_name', '(unnamed)')} - {hint}\n      {error}")
+            label = f"{attachment['id']}: {attachment.get('file_name', '(unnamed)')}"
+            print(f"    {label}" + (f" - {hint}" if hint else "") + f"\n      {error}")
     if preview:
         print("\nPreview: your choices only affect removal plans; no MKVs will be created.")
     print("\n  1. Remove all listed attachments from all affected MKVs")
