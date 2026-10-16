@@ -258,3 +258,14 @@ the foreground phase and the companion's underlying fill. The consumer copies
 retained events and parsed span state; no shared parser buffer is edited. Source
 authority expires at serialization, with ordinary sequential output re-entering
 the source proof on repeat conversion. See [CAPTION_COLOR_PHASES.md](CAPTION_COLOR_PHASES.md).
+
+v211's immutable `CaptionPhaseSource` borrows the original record and owns a
+separate fade-free paint view plus the actual non-fading core. Only timeline and
+companion proofs consume these views; working events, pose dwell and the original
+source map remain intact. A fade-only fragment can have an empty core; authority
+requires readable support somewhere in each complete paint phase. Source-owned
+overlap cutoffs travel on the timeline.
+The consumer can replace a complete surviving interval union only under that
+proof, without inferring handoffs again from already flattened output. The
+existing fade-overlap owner and color-phase producer share one readable-core
+clock selector; uniform caption-plane clearance is shared with glow ownership.

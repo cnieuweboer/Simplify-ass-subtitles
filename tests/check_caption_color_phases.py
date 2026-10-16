@@ -206,6 +206,108 @@ with tempfile.TemporaryDirectory() as folder:
    check(variant+' retains uncertain companion phases',len([e for e in es if e.layer=='0'])==4)
   check(variant+' foreground limits remain active',stats['color_phase_captions_limited']==1)
 
+
+# Source fades are evidence for held paint, not extra gaps or color phases.
+def faded_fixture(*,hold=1.2,changes=1,glow=True,split='',variant='',gradient=False):
+ text=glow_fixture(hold=hold,changes=changes,gradient=gradient)
+ records=[]
+ for line in text.splitlines():
+  if not line.startswith('Dialogue:'):records.append(line);continue
+  parts=line.split(',',9);layer=int(parts[0].split(':')[1])
+  if not glow and layer==0:continue
+  start=s.parse_time(parts[1]);end=s.parse_time(parts[2]);index=round((start-1)/hold)
+  fi,fo=150,200
+  if variant=='all fade':fi,fo=hold*500,hold*500
+  if variant=='mismatched glow' and layer==0:fo=100
+  if variant=='overlap':
+   start,end=(1,2.4) if index==0 else (2,3.4)
+   fi,fo=(150,400) if index==0 else (400,200)
+  if variant=='nested fade':
+   start,end=(1,3.8) if index==0 else (2,3.4)
+   fi,fo=(150,1800) if index==0 else (400,200)
+  if variant=='ambiguous overlap':
+   start,end=(1,2.4) if index==0 else (2,3.4)
+   fi,fo=100,100
+  if variant=='gap' and index==1:start+=.2;end+=.2
+  n=2 if (split=='foreground' and layer==2 or split=='glow' and layer==0) else 1
+  pieces=[(start+(end-start)*j/n,start+(end-start)*(j+1)/n,fi if j==0 else 0,fo if j==n-1 else 0) for j in range(n)]
+  if split=='edges both' or split=='edges foreground' and layer==2 or split=='edges glow' and layer==0:
+   pieces=[(start,start+fi/1000,fi,0),(start+fi/1000,end-fo/1000,0,0),(end-fo/1000,end,0,fo)]
+  for a,b,entrance,exit in pieces:
+   fade=rf'{{\fad({entrance:g},{exit:g})}}'
+   if variant=='complex fade':fade=r'{\fade(255,0,255,0,100,1000,1200)}'
+   if variant=='independent opacity' and layer==2:fade+=r'{\1a&H40&}'
+   parts[1:3]=[s.format_time(a),s.format_time(b)]
+   records.append(','.join(parts[:9])+','+fade+parts[9])
+ return '\n'.join(records)+'\n'
+with tempfile.TemporaryDirectory() as folder:
+ folder=Path(folder);a=folder/'source.ass';b=folder/'out.ass';again=folder/'again.ass'
+ for label,options,config,expected in [
+  ('faded single plane',{'glow':False},s.SimplifyConfig(),2),
+  ('faded pair',{},s.SimplifyConfig(),2),
+  ('faded gradient',{'gradient':True},s.SimplifyConfig(),2),
+  ('split fading foreground',{'split':'foreground'},s.SimplifyConfig(),2),
+  ('split fading glow',{'split':'glow'},s.SimplifyConfig(),2),
+  ('isolated foreground fade frames',{'split':'edges foreground'},s.SimplifyConfig(),2),
+  ('isolated glow fade frames',{'split':'edges glow'},s.SimplifyConfig(),2),
+  ('isolated gradient fade frames',{'split':'edges both','gradient':True},s.SimplifyConfig(),2),
+  ('limited faded pair',{'hold':.4,'changes':3},s.SimplifyConfig(),1),
+  ('unlimited faded pair',{'hold':.4,'changes':3},s.SimplifyConfig(color_phase_min_hold=0,color_phase_change_interval=0),4),
+  ('overlapping pair',{'variant':'overlap'},s.SimplifyConfig(),2),
+  ('overlapping single plane',{'variant':'overlap','glow':False},s.SimplifyConfig(),2),
+ ]:
+  text=faded_fixture(**options);a.write_text(text);source=a.read_bytes()
+  with contextlib.redirect_stdout(io.StringIO()):stats=s.simplify_ass(a,b,config,font_metrics=metric)
+  es=s.load_subtitle_events(b)[1];front=[e for e in es if e.layer=='2'];back=[e for e in es if e.layer=='0']
+  check(label+' expected sharp phases',len(front)==expected)
+  check(label+' counts whole captions once',stats['color_phase_captions_limited' if expected==1 else 'color_phase_captions_preserved']==1)
+  check(label+' disjoint shared cutoffs',all(x.end==y.start for x,y in zip(front,front[1:])))
+  check(label+' unchanged outer source interval',front[0].start_s==1 and abs(front[-1].end_s-(3.4 if options.get('variant')=='overlap' else 1+options.get('hold',1.2)*(options.get('changes',1)+1)))<1e-6)
+  if options.get('variant')=='overlap':check(label+' existing readable-core cutoff',front[0].end_s==2.2)
+  if options.get('glow',True):
+   check(label+' glow uses same phases',[(e.start,e.end) for e in front]==[(e.start,e.end) for e in back])
+   check(label+' matching span colors',all([p[1][0] for p in paints(f)]==[p[1][1] for p in paints(g)] for f,g in zip(front,back)))
+   check(label+' retained intrinsic glow alpha',all(p[1][3]==64 for e in back for p in paints(e)))
+  check(label+' source unchanged',a.read_bytes()==source)
+  with contextlib.redirect_stdout(io.StringIO()):s.simplify_ass(b,again,config,font_metrics=metric)
+  records=lambda p:[(e.fields()[:9],s.static_text_paint_geometry(e,set())[0]) for e in s.load_subtitle_events(p)[1]]
+  check(label+' repeat paint/timing/geometry stable',records(b)==records(again))
+ # Clear handoffs render as independent static references, with no opacity dip.
+ a.write_text(faded_fixture(variant='overlap'))
+ with contextlib.redirect_stdout(io.StringIO()):s.simplify_ass(a,b,s.SimplifyConfig(),font_metrics=metric)
+ ref=folder/'ref.ass'
+ reference=glow_fixture(hold=1.2,changes=1)
+ # No fades in the expected source. Outline/blur policies match standard output.
+ ref.write_text(reference)
+ with contextlib.redirect_stdout(io.StringIO()):s.simplify_ass(ref,again,s.SimplifyConfig(),font_metrics=metric)
+ for at in (1.01,1.9,2.19,2.2,2.3,3.39):
+  check(f'native overlap handoff {at}',ImageChops.difference(frame(b,at),frame(again,at)).getbbox() is None)
+ for variant in ('all fade','complex fade','independent opacity','ambiguous overlap','nested fade'):
+  a.write_text(faded_fixture(hold=.4 if variant=='all fade' else 1.2,variant=variant))
+  with contextlib.redirect_stdout(io.StringIO()):stats=s.simplify_ass(a,b,s.SimplifyConfig(),font_metrics=metric)
+  check(variant+' cannot acquire source phase authority',stats['color_phase_changes_removed']==stats['color_phase_changes_preserved']==0)
+ a.write_text(faded_fixture(variant='mismatched glow',hold=.4,changes=3))
+ with contextlib.redirect_stdout(io.StringIO()):stats=s.simplify_ass(a,b,s.SimplifyConfig(),font_metrics=metric)
+ check('different global glow fade stays independent',len([e for e in s.load_subtitle_events(b)[1] if e.layer=='0'])==4 and stats['color_phase_captions_limited']==1)
+ a.write_text(faded_fixture(variant='gap',glow=False))
+ with contextlib.redirect_stdout(io.StringIO()):stats=s.simplify_ass(a,b,s.SimplifyConfig(),font_metrics=metric)
+ front=s.load_subtitle_events(b)[1]
+ check('genuine source gap preserved',[(e.start_s,e.end_s) for e in front]==[(1,2.2),(2.4,3.6)])
+
+ # Same-layer source order decides which plane owns the readable core.
+ def source_profile(start,end,fi,fo,index):
+  e=parse(HEADER+event(r'{\bord2'+rf'\fad({fi},{fo})'+'}Core',2,start=start,end=end))[0]
+  return s._caption_phase_source(s.dataclass_replace(e,source_index=index))
+ left=[source_profile(1,2.4,0,600,1),source_profile(1,2.4,0,400,2)]
+ right=[source_profile(2,3.4,0,0,3),source_profile(2,3.4,400,0,4)]
+ runs=s._caption_phase_runs([left,right])
+ check('coextensive same-layer top planes own cutoff cores',len(runs)==1 and runs[0][1]==(2.2,))
+ # Foreground overlap ownership cannot cross intervening independent ink.
+ text=faded_fixture(variant='overlap',glow=False)+event('Independent caption',2,start=1,end=3.4)
+ a.write_text(text)
+ with contextlib.redirect_stdout(io.StringIO()):stats=s.simplify_ass(a,b,s.SimplifyConfig(),font_metrics=metric)
+ check('intervening ink protects overlapping phase family',stats['color_phase_changes_preserved']==0)
+
 for key in ('color_phase_min_hold','color_phase_change_interval'):
  for v in (-1,float('nan'),float('inf')):
   try:s.SimplifyConfig(**{key:v})

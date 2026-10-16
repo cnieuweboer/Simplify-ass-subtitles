@@ -261,3 +261,110 @@ idempotence: the real-scene runner explicitly records the older fade difference
 and requires every other record's paint, geometry, timing and compositing to
 remain stable. A dedicated source-fade/timeline evidence handoff investigation
 is warranted; it is not a reason to change the accepted duration defaults.
+
+## Fading whole-caption phases — v211
+
+The source timeline producer now admits otherwise static complete-caption phases
+with a simple global entrance/exit fade. `CaptionPhaseSource` borrows the original
+event and owns a separate static paint view, the original fade durations and the
+actual non-fading interval. The complete paint phase must supply a finite positive
+readable hold; isolated fade fragments may borrow that evidence from other parts
+of the same phase. Entirely fading phases remain unproved. Working events and
+original pose/opacity evidence are not rewritten. The existing simple
+fade parser is shared with boundary-glyph handling under its general name,
+`_parse_simple_source_fade`.
+
+Authored adjacent boundaries remain the sharp handoffs: outgoing formatting
+continues through its exit fade until the next phase starts. Genuine gaps split
+the source timeline. Overlapping phases may join only when their readable cores
+leave a safe gap. They reuse the existing centisecond handoff clock, now shared
+with lyric overlap handling. No protected readable interval is cut. Source layer
+and source order choose the actual foreground core of coextensive planes.
+Nested/returning layers, overlapping readable cores, uncertain compositing and
+unrepresentable cutoffs do not acquire handoff authority.
+
+Matched glow planes use the same source views. Their global fade factors must
+agree on every linear segment, independently of their intrinsic transparency
+(for example, opaque foreground over a translucent contour). Different event
+splitting may express the same opacity envelope. Different fades, independent
+contour opacity, stroke changes, missing readable support and incomplete families
+retain the existing route. Uniform-glyph exact-font clearance is shared between
+phase families and glow ownership rather than duplicated. Complex `\fade`,
+opacity transforms, motion and karaoke remain outside this new source-view proof;
+their existing reconstruction policies are unchanged.
+
+Limits are applied once to the resulting static phase intervals. A readable core
+proves that the paint really appeared; it does not shorten the emitted hold or
+change source pose dwell. The existing one-second minimum, two-seconds-per-change
+budget, zero semantics, representative-palette voting and caption-based reporting
+remain unchanged. Accepted phases and glows become ordinary disjoint captions.
+For an overlap, the immutable producer-owned handoff authorizes the consumer to
+replace the retained interval union; the consumer still requires complete source
+lineage, one plane, unchanged glyph geometry and no coverage gaps. It discovers
+no new temporal intent downstream.
+
+The previously noted **2:30.79–2:34.38** Kill la Kill cue now settles in the first
+conversion. With defaults, both “We must be one in spirit” and “omoi wa kitto
+hitotsu” retain one representative appearance and matching glow. With both limits
+disabled, each row retains its five source colors, with sharp shared boundaries
+at **2:31.54, 2:32.17, 2:32.75 and 2:33.17**, ending at **2:34.38**. The foreground
+uses the existing two-unit reconstruction cap, as it previously did on repeat.
+
+### Validation commands
+
+The focused cases remain in `tests/check_caption_color_phases.py`. They cover
+adjacent and overlapping fades, split foreground/glow frames, spatial gradients,
+limits and disabled limits, unchanged source records, genuine gaps, ambiguous
+cores, returning layers, mismatched fades and intervening content. Native checks
+compare sharp overlap handoffs with independently static expected captions.
+
+The shared corpus runner now accepts explicit hash-bound baseline arguments:
+
+```sh
+python validation/run_caption_glow_phase_corpus.py \
+  --baseline-engine validation/faded-color-phase-investigation/simplify_ass_v210.py \
+  --baseline-summary validation/faded-color-phase-investigation/v210-corpus-summary.json \
+  --baseline-sha256 f1d4fc711a89ecab8cb74984f211da05625b35e0a84058060354796dcd06da88 \
+  --output-dir validation/caption-fade-phase-corpus
+ASS_REGRESSION_FONT_BACKEND=windows \
+PYTHONPATH="$PWD/validation/backend_startup:$PWD" \
+python validation/check_faded_caption_phase_scene.py
+```
+
+The original v210 runner defaults remain available. Baseline subtitles, sources
+and fonts are checked for immutability; comparison output cannot overwrite the
+baseline or source. Real-scene references remove only the authored fades, apply
+the established foreground cap, and are independently converted with v210.
+Both default and unlimited full-file repeat behavior are checked without
+excluding the previously unresolved fade family. Assets and reports stay private.
+
+### Fresh v211 results and evaluation
+
+All **90** regression scripts pass with unchanged runtime/harness inputs. The
+**394** focused checks include actual shared opacity-envelope counterexamples,
+isolated entrance/exit frames, same-layer source order and nested returning layers.
+The **63** reporting
+checks and MKV extraction/conversion/remux/font-sync smoke test pass.
+
+All thirteen corpus conversions use exact fonts with unchanged sources and
+baseline outputs. **Twelve outputs are byte-identical to v210.** Kill la Kill
+changes only the two target rows and their two glow styles at **2:30.79–2:34.38**:
+**464 → 448** dialogue events, with peak concurrency still four. The report now
+counts **136 removed changes across 16 captions**, including the newly proved
+eight changes across the two fading rows. Existing warning fields and settings
+remain compatible with production and both test wrappers.
+
+The real-scene runner checks **28 native samples** around all original handoffs
+and both cue edges, against independently held/static v210 references. With
+defaults, each complete row and glow holds one appearance; with limits disabled,
+all five source colors retain exact adjacent clocks. Full-file repeated conversion
+preserves paint, timing, geometry and compositing under both configurations;
+there is no longer an excluded source-fade family. Source records outside this
+cue remain identical.
+
+After-release evaluation: the earlier fade-evidence handoff gap is resolved at
+the producer. Fade parsing, readable-core handoff timing and uniform caption-plane
+clearance are shared; no show-specific conditions, late repairs, matcher
+exceptions or serialized authority tags were introduced. Complex fades and
+unproved opacity/layout animation remain intentionally outside this bounded
+proof. No additional dedicated follow-up review is indicated by this change.

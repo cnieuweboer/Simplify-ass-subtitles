@@ -40,7 +40,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping
 
-__version__ = "2026.10.16.210"
+__version__ = "2026.10.16.211"
 GENERATED_MARKER = "; Simplified by simplify_ass.py"
 # Reconstructed source contours keep thinner/axis-specific widths, but cap each
 # axis in ASS script units. Ordinary retained events are not subject to this cap.
@@ -10935,6 +10935,93 @@ _ROW_TIME_QUANTUM = .011  # ASS row timings have centisecond precision.
 
 
 @dataclass(frozen=True)
+class CaptionPhaseSource:
+    """A borrowed source plus its static paint view and actual non-fading core."""
+    source: Event
+    settled: Event
+    core: tuple[float,float]
+    fade: tuple[float,float]
+
+
+def _caption_phase_source(source: Event) -> CaptionPhaseSource | None:
+    """Borrow readable static paint without stripping fades from working events.
+
+    A simple global fade has one fixed resting appearance. Fade-only fragments
+    remain candidates; the complete paint phase must supply a real readable
+    hold before gaining authority. Independent opacity, karaoke and motion do not.
+    The original record continues to own source pose and visibility evidence.
+    """
+    if _faded_cue_is_scrolling(source):return None
+    tokens=event_override_tokens(source)
+    fading=any(k in {'fad','fade'} for k,v in tokens)
+    fade=_parse_simple_source_fade(tokens) if fading else (0.,0.)
+    if fade is None:return None
+    core=source.start_s+fade[0]/1000,source.end_s-fade[1]/1000
+    if core[1]<core[0]-1e-6:return None
+    text=OVERRIDE_RE.sub(lambda m:'{'+''.join('\\'+k+v for k,v in tokenize_override(m[1]) if k!='fad')+'}',source.text)
+    settled=replace_event(source,text=text,effect='') if fading else dataclass_replace(source,effect='')
+    if static_text_paint_geometry(settled,set(CAPTION_PAINT_TAGS)|{'alpha','c'}) is None:return None
+    settled=dataclass_replace(settled,state=event_evaluation(settled).formatting)
+    return CaptionPhaseSource(source,settled,core,tuple(fade))
+
+
+def _caption_phase_runs(groups: list[list[CaptionPhaseSource]]) -> list[tuple]:
+    """Keep authored adjacency/gaps; resolve only overlaps between readable cores."""
+    runs=[];run=[];handoffs=[]
+    for peers in sorted(groups,key=lambda ps:(ps[0].source.start_s,ps[0].source.end_s)):
+        events=[p.settled for p in peers]
+        if run:
+            previous,previous_sources=run[-1]
+            order=lambda p:(int(p.source.layer) if p.source.layer.lstrip('-').isdigit() else 0,p.source.source_index)
+            left=max(previous_sources,key=order);right=max(peers,key=order)
+            delta=events[0].start_s-previous[0].end_s
+            cutoff=None
+            if delta < -1e-6 and events[0].end_s>previous[0].end_s+1e-6:
+                cutoff=_select_readable_core_handoff((previous[0].start_s,previous[0].end_s),
+                    (events[0].start_s,events[0].end_s),left.core,right.core)
+            if abs(delta)>.001 and cutoff is None:
+                runs.append((run,tuple(handoffs)));run=[];handoffs=[]
+            elif cutoff is not None:
+                run[-1]=([replace_event(e,end=format_time(cutoff),end_s=cutoff) for e in previous],previous_sources)
+                events=[replace_event(e,start=format_time(cutoff),start_s=cutoff) for e in events]
+                handoffs.append(cutoff)
+        run.append((events,peers))
+    if run:runs.append((run,tuple(handoffs)))
+    return runs
+
+
+def _matching_caption_phase_opacity(left: CaptionPhaseSource, right: CaptionPhaseSource,
+                                     start: float, end: float) -> bool:
+    """Compare shared fade factors on each linear segment, not intrinsic alpha."""
+    def factor(source,at):
+        first,last=source.fade
+        return max(0.,min(1.,(at-source.source.start_s)*1000/first if first else 1.,
+                          (source.source.end_s-at)*1000/last if last else 1.))
+    points={start,end,*[t for s in (left,right) for t in s.core if start<t<end]}
+    return all(abs(factor(left,t)-factor(right,t))<1e-6 for t in points)
+
+
+def _caption_phase_family_is_clear(planes: list[Event], interval: tuple[float,float],
+                                    parsed: dict[int,Event], metric: FontMetrics | None) -> bool:
+    """Reuse whole-line exact-font clearance after uniform glyph layout proof."""
+    if metric is None or not metric.available or any(not e.layer.lstrip('-').isdigit() for e in planes):return False
+    probe=min(planes,key=lambda e:int(e.layer))
+    probe,available=_caption_implicit_anchor(probe)
+    if probe is None:return False
+    footprints=[dataclass_replace(e,state=states[0]) for e in planes
+                for literal,states in _literal_paint_ranges([e])]
+    state=probe.state.copy()
+    for k in ('bord','xbord','ybord','blur','be'):
+        state[k]=max(e.state.get(k,e.state.get('bord',0) if k.endswith('bord') else 0) for e in footprints)
+    probe=dataclass_replace(probe,state=state,
+        text='{'+render_tag('pos',get_pos(probe.text))+'}'+OVERRIDE_RE.sub('',probe.text))
+    box=caption_bounds(probe,metric)
+    if box is None or available is not None and box[2]-box[0]>available:return False
+    return _glyph_replacement_row_is_clear(probe,interval,{e.source_index for e in planes},
+        max(int(e.layer) for e in planes),parsed,metric,footprints)
+
+
+@dataclass(frozen=True)
 class CaptionPaintCompanion:
     """A source-proved outer contour whose color follows foreground fill.
 
@@ -10959,6 +11046,7 @@ class CaptionPaintTimeline:
     literal: str
     phases: tuple[tuple[float,float,tuple[SourceCaptionPaint,...]],...]
     companions: tuple[CaptionPaintCompanion,...] = ()
+    overlap_handoffs: tuple[float,...] = ()
 
 
 def _near_caption_palette(a: tuple, b: tuple) -> bool:
@@ -11104,34 +11192,35 @@ def _collect_caption_paint_timelines(data: CollectedSourceText, families: list[T
     claimed.update(index for t in timelines for index in t.members)
     for e in data.events.values():
         if e.kind!='Dialogue' or e.source_index in claimed or e.duration<=0:continue
-        profile=static_text_paint_geometry(dataclass_replace(e,effect=''),paint_tags)
-        if profile is None:continue
+        phase_source=_caption_phase_source(e)
+        if phase_source is None:continue
+        profile=static_text_paint_geometry(phase_source.settled,paint_tags)
         key=(e.style,e.name,e.margin_l,e.margin_r,e.margin_v,profile[0])
-        static.setdefault(key,{}).setdefault((e.start_s,e.end_s),[]).append(e)
+        static.setdefault(key,{}).setdefault((e.start_s,e.end_s),[]).append(phase_source)
     for intervals in static.values():
-        family=sorted(intervals.values(),key=lambda peers:(peers[0].start_s,peers[0].end_s))
-        runs=[];run=[]
-        for peers in family:
-            if run and abs(peers[0].start_s-run[-1][0].end_s)>.001:
-                runs.append(run);run=[]
-            run.append(peers)
-        runs.append(run)
-        for run in runs:
+        for run,handoffs in _caption_phase_runs(list(intervals.values())):
             if len(run)<2:continue
-            samples=[];literal=None;members=set();first=None
-            for peers in run:
+            samples=[];literal=None;members=set();first=None;readable=[]
+            for peers,sources in run:
                 e=max(peers,key=lambda p:(int(p.layer) if p.layer.lstrip('-').isdigit() else 0,p.source_index))
                 row=TextRow(e,[(e,OVERRIDE_RE.sub('',e.text),get_pos(e.text))],paint_rows=[[p] for p in peers],foreground=peers)
                 if not clear(row):break
                 sample=_source_row_palette(row,(e.start_s+e.end_s)/2)
                 if sample is None:break
                 first=first or e;members.update(p.source_index for p in peers)
+                origin=next(p for p in sources if p.source.source_index==e.source_index)
+                readable.append((max(e.start_s,origin.core[0]),min(e.end_s,origin.core[1])))
                 literal=''.join(c for c,p in sample)
                 samples.append((e.start_s,e.end_s,tuple(p for c,p in sample)))
             if len(samples)!=len(run) or not literal or '\\' in literal:continue
-            owner=replace_event(first,end=run[-1][0].end,end_s=run[-1][0].end_s)
+            owner=replace_event(first,end=run[-1][0][0].end,end_s=run[-1][0][0].end_s)
+            faded=any(any(p.fade) for peers,sources in run for p in sources)
+            if (handoffs or faded) and (len(static_text_paint_geometry(first,paint_tags)[0])!=1 or not _caption_phase_family_is_clear(
+                    [e for peers,sources in run for e in peers],(owner.start_s,owner.end_s),retained_by_id,metric)):continue
             timeline=_join_source_paint_phases(owner,frozenset(members),literal,samples)
-            if timeline is not None:timelines.append(timeline)
+            if timeline is not None and faded and any(not any(min(b,end)>max(a,start)+1e-6
+                    for start,end in readable) for a,b,palette in timeline.phases):continue
+            if timeline is not None:timelines.append(dataclass_replace(timeline,overlap_handoffs=handoffs))
     return _attach_caption_paint_companions(tuple(timelines),retained,metric)
 
 
@@ -11148,16 +11237,25 @@ def _attach_caption_paint_companions(timelines: tuple, events: list[Event],
     if not timelines or metric is None or not metric.available:return timelines
     paint=set(CAPTION_PAINT_TAGS)|{'alpha','c'}
     literals={t.literal for t in timelines}
-    profiles={};groups={};by_id={e.source_index:e for e in events}
+    profiles={};groups={};phase_sources={};by_id={e.source_index:e for e in events}
+    original_by_id=by_id.copy()
     for e in events:
         if e.kind!='Dialogue' or ''.join(OVERRIDE_RE.sub('',e.text).split()) not in literals:continue
-        e=dataclass_replace(e,state=event_evaluation(e).formatting)
-        by_id[e.source_index]=e
+        phase_source=_caption_phase_source(e)
+        if phase_source is None:continue
+        phase_sources[e.source_index]=phase_source
+        e=phase_source.settled
         profile=static_text_paint_geometry(e,paint)
         if profile is None or not e.layer.lstrip('-').isdigit():continue
         profiles[e.source_index]=profile[0]
         key=(profile[0],e.name,e.margin_l,e.margin_r,e.margin_v,e.measurement)
-        groups.setdefault(key,{}).setdefault((e.style,e.layer),[]).append(e)
+        groups.setdefault(key,{}).setdefault((e.style,e.layer),[]).append(phase_source)
+    for family in groups.values():
+        for key,sources in family.items():
+            normalized=[e for run,handoffs in _caption_phase_runs([[p] for p in sources])
+                        for peers,originals in run for e in peers]
+            family[key]=normalized
+            by_id.update((e.source_index,e) for e in normalized)
     proposals=[]
     for timeline in timelines:
         owner=timeline.owner
@@ -11186,6 +11284,8 @@ def _attach_caption_paint_companions(timelines: tuple, events: list[Event],
                 fs=[e for e in front if e.start_s<=at<e.end_s]
                 bs=[e for e in back if e.start_s<=at<e.end_s]
                 if len(fs)!=1 or len(bs)!=1:valid=False;break
+                if not _matching_caption_phase_opacity(phase_sources[fs[0].source_index],
+                        phase_sources[bs[0].source_index],a,b):valid=False;break
                 ranges=_literal_paint_ranges([fs[0],bs[0]])
                 if ranges is None:valid=False;break
                 current=[];exposure=[]
@@ -11209,24 +11309,7 @@ def _attach_caption_paint_companions(timelines: tuple, events: list[Event],
                 fill_exposure[phase]=exposure
                 fill_phases.append((a,b,tuple(exposure)))
             if not valid:continue
-            members={e.source_index for e in front+back}
-            # Reuse the existing measured clearance, including implicit rows.
-            # Unknown placement/wrapping cannot authorize a cross-layer rewrite.
-            probe,available=_caption_implicit_anchor(back[0])
-            if probe is None:continue
-            footprints=[dataclass_replace(e,state=states[0]) for e in front+back
-                        for literal,states in _literal_paint_ranges([e])]
-            state=probe.state.copy()
-            for k in ('bord','xbord','ybord','blur','be'):
-                state[k]=max(e.state.get(k,e.state.get('bord',0) if k.endswith('bord') else 0) for e in footprints)
-            # Uniform glyph geometry was proved above. Paint-only span headers
-            # must not prevent the existing whole-line clearance measurement.
-            probe=dataclass_replace(probe,state=state,
-                text='{'+render_tag('pos',get_pos(probe.text))+'}'+OVERRIDE_RE.sub('',probe.text))
-            box=caption_bounds(probe,metric)
-            if box is None or available is not None and box[2]-box[0]>available:continue
-            if not _glyph_replacement_row_is_clear(probe,(owner.start_s,owner.end_s),members,
-                    max(int(e.layer) for e in front),by_id,metric,footprints):continue
+            if not _caption_phase_family_is_clear(front+back,(owner.start_s,owner.end_s),original_by_id,metric):continue
             proposals.append((timeline,CaptionPaintCompanion(back[0],frozenset(e.source_index for e in back),tuple(fill_phases))))
     uses={}
     for t,c in proposals:
@@ -11242,14 +11325,20 @@ def _attach_caption_paint_companions(timelines: tuple, events: list[Event],
 
 
 def _retained_caption_plane(events: list[Event], owner: Event, members: frozenset[int],
-                            start: float, end: float, literal: str) -> list[Event]:
+                            start: float, end: float, literal: str, *, allow_overlaps: bool=False) -> list[Event]:
     """Validate a source-owned plane's complete, unchanged retained interval."""
     matches=sorted([e for e in events if e.kind=='Dialogue' and e.source_index in members and
         e.style==owner.style and e.name==owner.name and
         e.start_s>=start-1e-6 and e.end_s<=end+1e-6 and
         ''.join(OVERRIDE_RE.sub('',e.text).split())==literal],key=lambda e:e.start_s)
-    if (not matches or abs(matches[0].start_s-start)>1e-6 or abs(matches[-1].end_s-end)>1e-6 or
-            any(abs(a.end_s-b.start_s)>1e-6 for a,b in zip(matches,matches[1:]))):return []
+    if not matches or abs(matches[0].start_s-start)>1e-6 or abs(max(e.end_s for e in matches)-end)>1e-6:return []
+    if allow_overlaps:
+        if len({e.layer for e in matches})!=1:return []
+        covered=start
+        for e in matches:
+            if e.start_s>covered+1e-6:return []
+            covered=max(covered,e.end_s)
+    elif any(abs(a.end_s-b.start_s)>1e-6 for a,b in zip(matches,matches[1:])):return []
     paint=set(CAPTION_PAINT_TAGS)|{'alpha','c'}
     layouts=[static_text_paint_geometry(e,paint) for e in matches]
     if any(p is None or p[0]!=layouts[0][0] for p in layouts):return []
@@ -11290,7 +11379,8 @@ def _emit_caption_paint_timelines(events: list[Event], timelines: tuple,
     replacements={}
     for timeline in timelines:
         owner=timeline.owner
-        matches=_retained_caption_plane(events,owner,timeline.members,owner.start_s,owner.end_s,timeline.literal)
+        matches=_retained_caption_plane(events,owner,timeline.members,owner.start_s,owner.end_s,timeline.literal,
+                                       allow_overlaps=bool(timeline.overlap_handoffs))
         if not matches:continue
         paint_tags=set(CAPTION_PAINT_TAGS)|{'alpha','c'}
         event=max(matches,key=lambda e:e.duration)
@@ -11324,7 +11414,7 @@ def _emit_caption_paint_timelines(events: list[Event], timelines: tuple,
         replacements[id(matches[0])]=output
         for companion in timeline.companions:
             peers=_retained_caption_plane(events,companion.owner,companion.members,
-                                          owner.start_s,owner.end_s,timeline.literal)
+                                          owner.start_s,owner.end_s,timeline.literal,allow_overlaps=bool(timeline.overlap_handoffs))
             if not peers or any(id(e) in replacements or e.layer!=companion.owner.layer for e in peers):continue
             if any(static_text_paint_geometry(e,paint_tags)[0]!=static_text_paint_geometry(event,paint_tags)[0] for e in peers):continue
             pieces=[]
@@ -13514,7 +13604,7 @@ def _boundary_glyph_caption_key(e: Event, original: Event, word: str, pos: tuple
     return None
 
 
-def _boundary_glyph_fade(tokens: list):
+def _parse_simple_source_fade(tokens: list):
     """Require exactly one finite nonnegative two-part fad and no fade."""
     fades = [value for tag,value in tokens if tag == 'fad']
     if len(fades) != 1 or any(tag == 'fade' for tag,value in tokens):
@@ -13572,7 +13662,7 @@ def _profile_boundary_glyph_source(original: Event, unit: float):
     if (not opaque_text_effect_state(state) or
             any(abs(state.get(k,0)) > .001 for k in ('fax','fay'))):
         return None
-    fade = _boundary_glyph_fade(tokens)
+    fade = _parse_simple_source_fade(tokens)
     if fade is None:
         return None
     classified = _classify_boundary_glyph_phase(original,state,tokens,fade,unit,continuation=evaluated.continuation)
@@ -15923,13 +16013,10 @@ def _prove_faded_cue_core(context: FadedCueContext, evidence: FadedCueEvidence,
     return _prove_faded_source_core(evidence,key,timing,identities)
 
 
-def _select_faded_cue_handoff(left: tuple, right: tuple, a: tuple | None,
-                               b: tuple | None) -> float | None:
+def _select_readable_core_handoff(left: tuple, right: tuple, a: tuple,
+                                   b: tuple) -> float | None:
     """Choose a representable centisecond inside both the collision and protected gap."""
-    if a is None or b is None or a[1] > b[0]:
-        return None
-    if min(a[3],b[3]) < max(a[2],b[2]):
-        return None
+    if a[1] > b[0]:return None
     # A handoff inside both the collision and the gap between stable cores
     # preserves every stable frame and all exposure outside the collision.
     low,high = max(right[0],a[1]),min(left[1],b[0])
@@ -15942,6 +16029,13 @@ def _select_faded_cue_handoff(left: tuple, right: tuple, a: tuple | None,
         return None
     boundary = min(last/100,max(first/100,round((low+high)/2,2)))
     return boundary
+
+
+def _select_faded_cue_handoff(left: tuple, right: tuple, a: tuple | None,
+                               b: tuple | None) -> float | None:
+    """Require shared row extent before the common readable-core clock proof."""
+    if a is None or b is None or min(a[3],b[3]) < max(a[2],b[2]):return None
+    return _select_readable_core_handoff(left,right,a,b)
 
 
 def synchronize_faded_cue_handoffs(context: FadedCueContext, pairs: list,
