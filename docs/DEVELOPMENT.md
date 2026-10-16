@@ -20,6 +20,9 @@ policy are unchanged. Distribution must include that private package.
 installed ownership; future extractions do not need delivery filename lists.
 [v215 font-outline extraction](FONT_OUTLINE_EXTRACTION.md) moves contour matching
 and cubic fitting behind that delivery contract, retaining engine aliases.
+The next bounded candidate is assessed in
+[OVERRIDE_PARSER_EXTRACTION_ASSESSMENT.md](OVERRIDE_PARSER_EXTRACTION_ASSESSMENT.md);
+that assessment does not perform the extraction.
 
 ## Tools
 
