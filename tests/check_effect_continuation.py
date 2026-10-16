@@ -4,6 +4,7 @@ import test_paths  # Resolve the repository for direct test execution.
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
+from override_module_test_helpers import patch_interpreter_bindings
 import importlib.util,json,math,sys
 import simplify_ass as current
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
@@ -47,7 +48,7 @@ def run(module,target,args):
   result=real(state,name,value,styles,default,continuation,**options)
   if module is current:check('clean effect parser output',not PRIVATE & state.keys())
   return result
- with patch.object(module,'apply_override',watched):return getattr(module,target)(*args)
+ with patch_interpreter_bindings(module,'apply_override',watched):return getattr(module,target)(*args)
 
 def compare(label,target,inputs,*,expected_colour=None):
  global cases

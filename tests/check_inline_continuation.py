@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from unittest.mock import patch
+from override_module_test_helpers import patch_interpreter_bindings
 import importlib.util,json,random,sys
 import simplify_ass as current
 from event_evidence_test_helpers import event_comparison_fields,static_span_comparison_fields,resolve_test_event,override_comparison_state
@@ -57,7 +58,7 @@ def traced(module,action,*,isolated=True,canonical=False):
             check('clean literal successor',not PRIVATE & state.keys())
             trace.append((name,value,before,(deepcopy(state),(successor.reset_style,successor.alignment_set)),event_tags))
             return successor
-        with patch.object(module,'apply_override',watched):
+        with patch_interpreter_bindings(module,'apply_override',watched):
             if isolated:
                 with patch.object(module,'apply_tag',create=True,side_effect=AssertionError('literal reader used compatibility adapter')):out=action()
             else:out=action()

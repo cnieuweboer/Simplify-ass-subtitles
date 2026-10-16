@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
 from unittest.mock import patch
+from override_module_test_helpers import patch_interpreter_bindings
 import ast, hashlib, importlib.util, json, sys
 import simplify_ass as s
 from executable_ast_audit import executable_ast
@@ -33,7 +34,7 @@ for index,text in enumerate(texts):
         before = deepcopy((default,styles))
         tokens = tuple(token for block in s.OVERRIDE_RE.findall(text) for token in s.tokenize_override(block))
         expected = old.evaluate_effective_state(text,default,styles)
-        with patch.object(s,'tokenize_override',side_effect=AssertionError('reparsed stream')):
+        with patch_interpreter_bindings(s,'tokenize_override',side_effect=AssertionError('reparsed stream')):
             actual = s.evaluate_effective_state(text,default,styles,tokens=iter(tokens))
         check(f'formatting parity {index}/{empty_default}',actual.formatting==expected.formatting)
         check(f'continuation parity {index}/{empty_default}',
@@ -55,7 +56,7 @@ for value in values:
             before = changes.copy()
             kwargs = dict(allow_instant=instant,allow_after_end=after)
             expected = old.parse_effect_transform(value,1,{'3c','blur','bord'},**kwargs)
-            with patch.object(s,'tokenize_override',side_effect=AssertionError('reparsed payload')):
+            with patch_interpreter_bindings(s,'tokenize_override',side_effect=AssertionError('reparsed payload')):
                 actual = s.parse_effect_transform(value,1,{'3c','blur','bord'},parsed_changes=changes,**kwargs)
             check(f'transform parity {value}/{instant}/{after}',actual==expected)
             check(f'borrowed changes {value}/{instant}/{after}',changes==before)
@@ -89,7 +90,7 @@ check('replacement retains independent identity',replacement.source_index==sourc
 check('cache retains exact source object',evidence.source_tokens[id(source)][0] is source)
 fresh = s._collect_outline_strip_evidence(chosen,group,context)
 check('next family owns a fresh cache',fresh.source_tokens is not evidence.source_tokens and id(replacement) not in fresh.source_tokens)
-with patch.object(s,'tokenize_override',wraps=s.tokenize_override) as tokenize:
+with patch_interpreter_bindings(s,'tokenize_override',wraps=s.tokenize_override) as tokenize:
     actual = s._profile_outline_strip_transition(source,state,tokens=tokens)
 check('each transform payload parsed once',tokenize.call_count==sum(name=='t' for name,value in tokens))
 check('transition equals old proof',actual==old._profile_outline_strip_transition(source,state))

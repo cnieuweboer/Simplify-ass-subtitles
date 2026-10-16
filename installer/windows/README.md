@@ -19,6 +19,7 @@ C:\Tools\
         simplify_ass.py
         _simplify_ass\
             __init__.py
+            ass_overrides.py
             font_metrics.py
             font_outlines.py
         simplify_subtitles.py
@@ -121,7 +122,8 @@ installer never claims all existing Python files in the installed package.
 ## Upgrading older installations
 
 **Installations with the v214 updater can update normally**, including the new
-`font_outlines.py` in v215. The v214 preparation release kept the same two modules
+`font_outlines.py` in v215 and `ass_overrides.py` in v216. The v214 preparation
+release kept the same two modules
 as v213, allowing the fixed-list v213 updater to install that preparation. Current
 `main` now includes the additional module: clients still running v213 must use
 the complete-repository installer below. Newer updaters discover later module

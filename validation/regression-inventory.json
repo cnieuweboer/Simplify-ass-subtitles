@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.16.213",
+  "version": "2026.10.16.216",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -85,6 +85,11 @@
       "script": "tests/check_freeze_consumers.py",
       "status": "current",
       "category": "ownership/context"
+    },
+    {
+      "script": "tests/check_override_module.py",
+      "status": "current",
+      "category": "general"
     },
     {
       "script": "tests/check_override_continuation.py",

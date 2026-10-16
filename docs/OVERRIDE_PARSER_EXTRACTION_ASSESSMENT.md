@@ -1,5 +1,8 @@
 # Bounded override parser extraction assessment — after v215
 
+The resulting [v216 extraction](OVERRIDE_PARSER_EXTRACTION.md) is documented
+separately. This assessment records the pre-extraction boundary and evidence.
+
 The next extraction is suitable for one implementation release, proposed as
 **v216**. Move the existing ASS style/override interpreter into
 `_simplify_ass/ass_overrides.py`, retaining direct aliases in `simplify_ass.py`.

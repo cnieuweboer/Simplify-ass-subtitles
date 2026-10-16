@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from unittest.mock import patch
+from override_module_test_helpers import patch_interpreter_bindings
 import importlib.util,json,math,random,sys
 import simplify_ass as current
 from event_evidence_test_helpers import selection_comparison_fields,override_comparison_state,override_test_evaluation
@@ -67,7 +68,7 @@ def watched(state,name,value,styles,default,continuation,**options):
 
 sampler_cases=selection_cases=freeze_cases=0
 with (patch.object(current,'apply_tag',create=True,side_effect=AssertionError('migrated freeze path used legacy adapter')),
-      patch.object(current,'apply_override',watched)):
+      patch_interpreter_bindings(current,'apply_override',watched)):
     for empty_style in (False,True):
         styles=deepcopy(STYLES)
         if empty_style:styles['']={**DEFAULT,'fn':'Empty named style','fs':75,'an':8}

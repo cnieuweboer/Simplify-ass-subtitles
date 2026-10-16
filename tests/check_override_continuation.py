@@ -5,7 +5,7 @@ from copy import deepcopy
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from unittest.mock import patch
-import ast,importlib.util,json,math,random,sys
+import ast,inspect,importlib.util,json,math,random,sys
 import simplify_ass as current
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -102,7 +102,7 @@ check('branch independence',left['an']==7 and right['an']==3 and seed.alignment_
 
 check('compatibility adapter removed',not hasattr(current,'apply_tag'))
 
-source=(ROOT/'simplify_ass.py').read_text();tree=ast.parse(source)
+source=inspect.getsource(current.apply_override);tree=ast.parse(source)
 engine=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='apply_override')
 check('canonical evaluator does not read private dictionary keys',not any(
  isinstance(n,ast.Constant) and n.value in PRIVATE for n in ast.walk(engine)))
