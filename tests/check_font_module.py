@@ -1,4 +1,4 @@
-"""Private measurement imports, resource roots and installed-tree execution."""
+"""Private font imports, contour matching, resource roots and installed execution."""
 import test_paths
 from pathlib import Path
 import importlib.util
@@ -10,7 +10,7 @@ import tempfile
 import unittest
 
 import simplify_ass as engine
-from _simplify_ass import font_metrics
+from _simplify_ass import font_metrics, font_outlines
 from stacked_contour_cases import HEADER, event
 from validation.runtime_manifest import runtime_manifest
 
@@ -38,12 +38,15 @@ class FontModuleChecks(unittest.TestCase):
     def test_existing_engine_names_are_the_actual_private_classes(self):
         for name in ('FontFace', 'FontCapabilities', 'FontLineInkMetrics', 'FontMetrics'):
             self.assertIs(getattr(engine, name), getattr(font_metrics, name))
+        self.assertIs(engine.FontOutlineMatcher, font_outlines.FontOutlineMatcher)
+        self.assertIs(engine.fit_cubic_points, font_outlines.fit_cubic_points)
+        self.assertFalse(hasattr(font_outlines, 'Event'))
         self.assertFalse(hasattr(font_metrics, 'Event'))
         self.assertFalse(hasattr(font_metrics, 'recover_font_row'))
 
     def test_private_import_does_not_load_the_engine_or_optional_backends(self):
         with tempfile.TemporaryDirectory() as folder:
-            self.child("import _simplify_ass.font_metrics\n"
+            self.child("import _simplify_ass.font_outlines\n"
                        "assert 'simplify_ass' not in sys.modules\n"
                        "assert not any(n.split('.')[0] in {'PIL','fontTools','uharfbuzz'} for n in sys.modules)\n",
                        folder, ROOT)
@@ -85,16 +88,35 @@ class FontModuleChecks(unittest.TestCase):
             code = (ROOT/'tests/check_font_selection.py').read_text().split('with tempfile.TemporaryDirectory()')[0]
             exec(compile(code, str(ROOT/'tests/check_font_selection.py'), 'exec'), builders)
             builders['master'](fonts/'local.ttf', 'Extraction Local Font')
+            builders['master'](fonts/'outline.ttf', 'Extraction Outline Font')
+            # One encoded contour avoids ambiguity with the builder's identical i.
+            from fontTools.ttLib import TTFont
+            with TTFont(fonts/'outline.ttf') as font:
+                for table in font['cmap'].tables:
+                    if table.isUnicode():
+                        table.cmap.pop(ord('i'), None)
+                font.save(fonts/'outline.ttf')
             unrelated = root/'unrelated working directory'; unrelated.mkdir()
             probe = self.child("from pathlib import Path\nimport simplify_ass as s\n"
-                "from _simplify_ass import font_metrics as m\n"
+                "from _simplify_ass import font_metrics as m, font_outlines as o\n"
                 "assert s.FontMetrics is m.FontMetrics\n"
+                "assert s.FontOutlineMatcher is o.FontOutlineMatcher and s.fit_cubic_points is o.fit_cubic_points\n"
+                "assert Path(o.__file__).resolve().parent==Path(m.__file__).resolve().parent\n"
                 "assert Path(m.__file__).resolve().parent==Path(s.__file__).resolve().parent/'_simplify_ass'\n"
                 "metric=s.FontMetrics()\nf=metric.matching_face('Extraction Local Font',0,False)\n"
                 "assert f is not None\nassert Path(f.path).resolve()==Path(s.__file__).resolve().parent/'fonts/local.ttf'\n"
                 "assert metric.measure(f,'Ai Ai')>0\nassert metric.line_ink_metrics(f,['Ai Ai']) is not None\n"
+                "f=metric.matching_face('Extraction Outline Font',0,False)\nassert f is not None\n"
+                "model,em=metric.cubic_outline(f,'A')\nscale=metric.ass_em_scale(f)*40/em\n"
+                "path=[];axis=0\n"
+                "for value in model:\n"
+                " if isinstance(value,str): path.append(value)\n"
+                " else: path.append(value*scale+(100 if axis%2==0 else 200));axis+=1\n"
+                "matcher=s.FontOutlineMatcher(metric)\n"
+                "assert matcher.decode_cubic_outline(f,tuple(path),40,1,set())=='A'\n"
+                "assert matcher.metrics is metric\n"
                 "import py_compile\n"
-                "for p in (Path(s.__file__),Path(m.__file__),Path(m.__file__).parent/'__init__.py'): py_compile.compile(str(p),doraise=True)\n"
+                "for p in (Path(s.__file__),Path(m.__file__),Path(o.__file__),Path(m.__file__).parent/'__init__.py'): py_compile.compile(str(p),doraise=True)\n"
                 "print('installed exact-font measurement passed')\n", unrelated, tools)
             self.assertIn('measurement passed', probe.stdout)
             source = unrelated/'input.ass'

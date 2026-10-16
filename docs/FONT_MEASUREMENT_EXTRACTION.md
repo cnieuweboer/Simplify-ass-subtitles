@@ -5,6 +5,10 @@ The engine's exact-font measurement owner now lives in
 `FontCapabilities`, `FontLineInkMetrics` and `FontMetrics`. Existing imports such
 as `simplify_ass.FontMetrics` remain direct aliases of those definitions.
 
+The later [v215 outline extraction](FONT_OUTLINE_EXTRACTION.md) extends this
+package. The one-release AST audit and source-layout statements below describe
+v213; they are historical evidence rather than a freeze on subsequent extractions.
+
 This follows the [bounded assessment](FONT_MEASUREMENT_EXTRACTION_ASSESSMENT.md).
 Production scripts remain at the repository root. There is no new shared-tool
 library, processing context, pipeline abstraction or result-type hierarchy.

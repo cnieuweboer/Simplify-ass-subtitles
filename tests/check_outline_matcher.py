@@ -56,7 +56,7 @@ def search_case(label,*,chars='A',path=(0.,),fs=100.,unit=1.,alphabet=(),font_op
    if fit is not None:return fit(model,actual,**kwargs)
    return None if not actual else (1.,actual[0],0.,0.)
   f=face(chars);before=snapshot((path,alphabet,vars(f)))
-  with patch.object(module,'fit_cubic_points',fitted):
+  with patch.object(inspect.getmodule(matcher.decode_cubic_outline),'fit_cubic_points',fitted):
    result=matcher.decode_cubic_outline(f,path,fs,unit,set(alphabet))
   check(label+' borrowed proof unchanged',before==snapshot((path,alphabet,vars(f))))
   results.append((result,snapshot(fonts.calls),snapshot(cache),snapshot(observed)))
@@ -108,7 +108,7 @@ for candidates in (32,33,34):
 # Reuse cache through changed authored geometry, alphabet order and repeated runs.
 for module,(matcher,fonts,cache) in zip((previous,current),pair()):
  f=face('ABé')
- with patch.object(module,'fit_cubic_points',return_value=None):
+ with patch.object(inspect.getmodule(matcher.decode_cubic_outline),'fit_cubic_points',return_value=None):
   matcher.decode_cubic_outline(f,(0.,),100.,1.,{'A','B'})
   initial_keys=set(cache);profile=next(iter(cache.values()));before=len([c for c in fonts.calls if c[0] in ('outline','fragmented')])
   matcher.decode_cubic_outline(f,(99.,),90.,2.,{'B','A',' '})
@@ -200,7 +200,8 @@ from executable_ast_audit import executable_ast
 def definitions(path):return {n.name:n for n in executable_ast(ast.parse(path.read_text())).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
 a=definitions(ROOT/'test-data/simplify_ass-v164-reference.py');b=definitions(ROOT/'simplify_ass.py')
 old_decoder=next(n for n in a['FontSpacing'].body if isinstance(n,ast.FunctionDef) and n.name=='decode_cubic_outline')
-new_decoder=next(n for n in b['FontOutlineMatcher'].body if isinstance(n,ast.FunctionDef) and n.name=='decode_cubic_outline')
+matcher_definition=executable_ast(ast.parse(inspect.getsource(current.FontOutlineMatcher))).body[0]
+new_decoder=next(n for n in matcher_definition.body if isinstance(n,ast.FunctionDef) and n.name=='decode_cubic_outline')
 class Normalize(ast.NodeTransformer):
  def visit_Attribute(self,n):
   n=self.generic_visit(n)

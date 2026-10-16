@@ -9,7 +9,10 @@ proved; avoid guessing text or substituting fonts.
 
 The production entry point is `simplify_subtitles.py` → `simplify_ass.py`.
 The exact-font measurement owner lives in `_simplify_ass/font_metrics.py`;
-the engine re-exports its four classes for existing callers. Ship the private
+the engine re-exports its four classes for existing callers. Exact-font contour
+matching and cubic fitting live in `_simplify_ass/font_outlines.py`, depending
+only on measurements and the standard library; the engine re-exports both names.
+Keep reconstruction, paint, timing and event ownership in the engine. Ship the private
 package with the engine and preserve one-way imports and sibling font discovery.
 The Windows installer/updater discover private Python sources and persist owned
 paths; keep this delivery contract and the older-updater migration documented in

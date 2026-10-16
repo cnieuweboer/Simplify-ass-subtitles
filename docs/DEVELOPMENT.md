@@ -18,6 +18,8 @@ owner moved into `_simplify_ass/`; production script locations and reconstructio
 policy are unchanged. Distribution must include that private package.
 [v214 module delivery](MODULE_DELIVERY.md) discovers its sources and tracks
 installed ownership; future extractions do not need delivery filename lists.
+[v215 font-outline extraction](FONT_OUTLINE_EXTRACTION.md) moves contour matching
+and cubic fitting behind that delivery contract, retaining engine aliases.
 
 ## Tools
 
