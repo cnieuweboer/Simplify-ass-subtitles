@@ -26,6 +26,9 @@ continuation, event-cache and sampling ownership.
 The [v217 glyph-placement extraction](GLYPH_PLACEMENT_EXTRACTION.md) follows its
 [bounded assessment](GLYPH_PLACEMENT_EXTRACTION_ASSESSMENT.md), moving three
 stateless fitting functions; event-based recovery remains in the engine.
+The next [transform-sampling assessment](TRANSFORM_SAMPLING_EXTRACTION_ASSESSMENT.md)
+recommends the closed sampler group, with a test-binding adjustment and no
+preparatory production refactor.
 
 ## Tools
 
