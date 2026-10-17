@@ -29,6 +29,9 @@ stateless fitting functions; event-based recovery remains in the engine.
 The [v218 transform-sampling extraction](TRANSFORM_SAMPLING_EXTRACTION.md) follows
 its [bounded assessment](TRANSFORM_SAMPLING_EXTRACTION_ASSESSMENT.md), retaining
 call-local sampling state and caller-owned selection/evidence.
+The next [core event-record assessment](EVENT_MODEL_EXTRACTION_ASSESSMENT.md)
+recommends a small canonical model boundary before moving event-based consumers,
+with factory identity and existing cache/evidence ownership preserved.
 
 ## Tools
 
