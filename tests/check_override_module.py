@@ -48,6 +48,7 @@ class OverrideModuleChecks(unittest.TestCase):
                 "assert not any(n.split('.')[0] in {'PIL','fontTools','uharfbuzz'} for n in sys.modules)\n"
                 "assert p.effective_state(r'{\\fs30}')['fs']==30\n", folder, ROOT)
 
+
     def test_recognized_syntax_and_output_policy_have_separate_contracts(self):
         self.assertTrue(engine.SAFE_SIMPLE_TAGS <= set(parser.TAG_NAMES))
         self.assertFalse(hasattr(parser, 'SAFE_SIMPLE_TAGS'))
@@ -82,13 +83,47 @@ class OverrideModuleChecks(unittest.TestCase):
             parser.evaluate_effective_state(r'{\\fs30}')
         self.assertEqual(observed.call_count, 1)
 
+    def test_call_instrumentation_includes_sampler_imports_and_restores_bindings(self):
+        from _simplify_ass import transform_sampling as sampler
+        original = engine.apply_override
+        with patch_interpreter_bindings(engine, 'apply_override', wraps=original) as observed:
+            self.assertIs(engine.apply_override, observed)
+            self.assertIs(parser.apply_override, observed)
+            self.assertIs(sampler.apply_override, observed)
+            engine.apply_override({}, 'bord', '2', {}, {}, engine.OverrideContinuation())
+            parser.apply_override({}, 'bord', '2', {}, {}, engine.OverrideContinuation())
+            engine.sample_transform_state({'bord': 0}, [(0, 100, 1, [('bord', '2')])], 50, {}, {})
+            list(engine.sample_transform_states({'bord': 0}, [(0, 100, 1, [('bord', '2')])], [0, 50, 100], {}, {}))
+        self.assertEqual(observed.call_count, 4)
+        for module in (engine, parser, sampler):
+            self.assertIs(module.apply_override, original)
+        # A historical single-file engine owns both its sampler and interpreter.
+        from types import ModuleType
+        import sys
+        historical = ModuleType('historical_binding_probe')
+        sys.modules[historical.__name__] = historical
+        try:
+            exec('def apply_override(*args): return 1\ndef sample_transform_state(*args): return apply_override(*args)', historical.__dict__)
+            with patch_interpreter_bindings(historical, 'apply_override', wraps=historical.apply_override) as observed:
+                self.assertEqual(historical.sample_transform_state(), 1)
+                self.assertEqual(historical.apply_override(), 1)
+            self.assertEqual(observed.call_count, 2)
+        finally:
+            del sys.modules[historical.__name__]
+
     def test_installed_engine_uses_its_interpreter_and_uninstalls_owned_bytecode(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder); target = root/'installed tools with spaces'
             owner = load_installer(); _, tools = owner.install(ROOT, target, individual_launchers=False)
             unrelated = root/'unrelated working directory'; unrelated.mkdir()
             self.child("from pathlib import Path\nimport simplify_ass as s\n"
-                "from _simplify_ass import ass_overrides as p\n"
+                "from _simplify_ass import ass_overrides as p, transform_sampling as t\n"
+                "assert s.sample_transform_state is t.sample_transform_state and s.sample_transform_states is t.sample_transform_states\n"
+                "assert Path(t.__file__).resolve()==Path(s.__file__).resolve().parent/'_simplify_ass/transform_sampling.py'\n"
+                "base={'fs':20,'bord':0}\n"
+                "samples=list(t.sample_transform_states(base,[(0,100,1,[('bord','2')])],[0,50,100],{},base))\n"
+                "assert [v.formatting['bord'] for v in samples]==[0,1,2] and base['bord']==0\n"
+                "assert t.sample_transform_state(base,[(0,100,1,[('fs','+2')])],100,{},base).formatting['fs']==24\n"
                 "assert s.apply_override is p.apply_override\n"
                 "assert s.OverrideContinuation is p.OverrideContinuation\n"
                 "assert Path(p.__file__).resolve()==Path(s.__file__).resolve().parent/'_simplify_ass/ass_overrides.py'\n"

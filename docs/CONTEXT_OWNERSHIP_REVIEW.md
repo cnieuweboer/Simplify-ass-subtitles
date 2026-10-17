@@ -38,6 +38,8 @@ formatting-only projection. None reset history differs from an explicit empty or
 unknown reset. Named resets remain exact and case sensitive. An invalid first
 alignment consumes the latch, which survives resets.
 
+Transform evaluation moved to `_simplify_ass/transform_sampling.py` in v218,
+with engine aliases; selection and event-cache ownership remain in the engine.
 Transform targets own copies. Independent time samples restart from the same
 seed. The sampler's historical commit policy remains explicit: target history
 commits only fields already present in the base history, immediately when active,

@@ -26,9 +26,9 @@ continuation, event-cache and sampling ownership.
 The [v217 glyph-placement extraction](GLYPH_PLACEMENT_EXTRACTION.md) follows its
 [bounded assessment](GLYPH_PLACEMENT_EXTRACTION_ASSESSMENT.md), moving three
 stateless fitting functions; event-based recovery remains in the engine.
-The next [transform-sampling assessment](TRANSFORM_SAMPLING_EXTRACTION_ASSESSMENT.md)
-recommends the closed sampler group, with a test-binding adjustment and no
-preparatory production refactor.
+The [v218 transform-sampling extraction](TRANSFORM_SAMPLING_EXTRACTION.md) follows
+its [bounded assessment](TRANSFORM_SAMPLING_EXTRACTION_ASSESSMENT.md), retaining
+call-local sampling state and caller-owned selection/evidence.
 
 ## Tools
 
@@ -79,7 +79,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 93 current scripts. The runner uses three workers for
+The suite inventory lists 94 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.

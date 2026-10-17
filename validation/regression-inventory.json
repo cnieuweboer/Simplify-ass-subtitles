@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.17.217",
+  "version": "2026.10.17.218",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -93,6 +93,11 @@
     },
     {
       "script": "tests/check_override_module.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "tests/check_transform_sampling_module.py",
       "status": "current",
       "category": "general"
     },

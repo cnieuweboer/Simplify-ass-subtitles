@@ -1,5 +1,8 @@
 # Transform sampling — bounded extraction assessment
 
+Historical assessment of v217. The proposed boundary was implemented in
+[v218](TRANSFORM_SAMPLING_EXTRACTION.md); the evidence below describes the assessment.
+
 The recommended next implementation is **v218: extract transform sampling** into
 `_simplify_ass/transform_sampling.py`, retaining direct engine aliases. Six
 functions form a 177-line dependency boundary; no preparatory production release
