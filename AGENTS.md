@@ -16,8 +16,12 @@ The exact-font measurement owner lives in `_simplify_ass/font_metrics.py`;
 the engine re-exports its four classes for existing callers. Exact-font contour
 matching and cubic fitting live in `_simplify_ass/font_outlines.py`, depending
 only on measurements and the standard library; the engine re-exports both names.
-Keep reconstruction, paint, timing and event ownership in the engine. Ship the private
-package with the engine and preserve one-way imports and sibling font discovery.
+Exact-font fragment fitting and authored glyph placement live in
+`_simplify_ass/glyph_placement.py`, depending only on measurements and the standard
+library, with direct engine aliases. Event-based row recovery and reports remain
+in the engine. Keep reconstruction, paint, timing and event ownership in the
+engine. Ship the private package with the engine and preserve one-way imports
+and sibling font discovery.
 The Windows installer/updater discover private Python sources and persist owned
 paths; keep this delivery contract and the older-updater migration documented in
 `docs/MODULE_DELIVERY.md`. New modules must not need a delivery filename list.
@@ -59,7 +63,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-92-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+93-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it

@@ -65,7 +65,7 @@ def measurement_fonts(metric):
 
 def row_test_call(metric,name,*args,**kwargs):
     if hasattr(metric,name):return getattr(metric,name)(*args,**kwargs)
-    # Row algorithms belong to the engine, independently of the font owner's
+    # Row calls use engine exports, independently of the font owner's
     # defining module. Historical owners still dispatch their methods above.
     import simplify_ass as module
     function=getattr(module,ROW_NAMES[name])

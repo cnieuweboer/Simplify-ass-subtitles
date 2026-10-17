@@ -98,14 +98,20 @@ class FontModuleChecks(unittest.TestCase):
                 font.save(fonts/'outline.ttf')
             unrelated = root/'unrelated working directory'; unrelated.mkdir()
             probe = self.child("from pathlib import Path\nimport simplify_ass as s\n"
-                "from _simplify_ass import font_metrics as m, font_outlines as o\n"
+                "from _simplify_ass import font_metrics as m, font_outlines as o, glyph_placement as g\n"
                 "assert s.FontMetrics is m.FontMetrics\n"
+                "assert s.authored_glyph_positions is g.authored_glyph_positions\n"
+                "assert Path(g.__file__).resolve().parent==Path(m.__file__).resolve().parent\n"
                 "assert s.FontOutlineMatcher is o.FontOutlineMatcher and s.fit_cubic_points is o.fit_cubic_points\n"
                 "assert Path(o.__file__).resolve().parent==Path(m.__file__).resolve().parent\n"
                 "assert Path(m.__file__).resolve().parent==Path(s.__file__).resolve().parent/'_simplify_ass'\n"
                 "metric=s.FontMetrics()\nf=metric.matching_face('Extraction Local Font',0,False)\n"
                 "assert f is not None\nassert Path(f.path).resolve()==Path(s.__file__).resolve().parent/'fonts/local.ttf'\n"
                 "assert metric.measure(f,'Ai Ai')>0\nassert metric.line_ink_metrics(f,['Ai Ai']) is not None\n"
+                "state={'fn':'Extraction Local Font','fs':40,'an':5}\n"
+                "positions=g.authored_glyph_positions(metric,state,'AA',100,.01)\n"
+                "assert positions is not None and len(positions)==2\n"
+                "assert s.matches_authored_glyph_positions(metric,state,[x for c,x in positions],'AA',100,.01)\n"
                 "f=metric.matching_face('Extraction Outline Font',0,False)\nassert f is not None\n"
                 "model,em=metric.cubic_outline(f,'A')\nscale=metric.ass_em_scale(f)*40/em\n"
                 "path=[];axis=0\n"
@@ -116,7 +122,7 @@ class FontModuleChecks(unittest.TestCase):
                 "assert matcher.decode_cubic_outline(f,tuple(path),40,1,set())=='A'\n"
                 "assert matcher.metrics is metric\n"
                 "import py_compile\n"
-                "for p in (Path(s.__file__),Path(m.__file__),Path(o.__file__),Path(m.__file__).parent/'__init__.py'): py_compile.compile(str(p),doraise=True)\n"
+                "for p in (Path(s.__file__),*Path(m.__file__).parent.rglob('*.py')): py_compile.compile(str(p),doraise=True)\n"
                 "print('installed exact-font measurement passed')\n", unrelated, tools)
             self.assertIn('measurement passed', probe.stdout)
             source = unrelated/'input.ass'

@@ -1,5 +1,8 @@
 # Exact-font row fitting and glyph placement — extraction assessment
 
+Historical assessment of v216. The smaller boundary was implemented in
+[v217](GLYPH_PLACEMENT_EXTRACTION.md); the evidence below describes the assessment.
+
 After examining all six functions, the recommended next implementation is
 **v217: extract the three independent glyph-placement functions** into
 `_simplify_ass/glyph_placement.py`, with direct engine aliases. They form a

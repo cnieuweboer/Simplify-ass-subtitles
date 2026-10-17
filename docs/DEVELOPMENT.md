@@ -23,9 +23,9 @@ and cubic fitting behind that delivery contract, retaining engine aliases.
 The [v216 override interpreter extraction](OVERRIDE_PARSER_EXTRACTION.md) follows
 its [bounded assessment](OVERRIDE_PARSER_EXTRACTION_ASSESSMENT.md), preserving
 continuation, event-cache and sampling ownership.
-The next [glyph-placement assessment](GLYPH_PLACEMENT_EXTRACTION_ASSESSMENT.md)
-recommends three stateless fitting functions; event-based recovery stays in the
-engine pending a separate dependency boundary.
+The [v217 glyph-placement extraction](GLYPH_PLACEMENT_EXTRACTION.md) follows its
+[bounded assessment](GLYPH_PLACEMENT_EXTRACTION_ASSESSMENT.md), moving three
+stateless fitting functions; event-based recovery remains in the engine.
 
 ## Tools
 
@@ -76,7 +76,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 92 current scripts. The runner uses three workers for
+The suite inventory lists 93 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
