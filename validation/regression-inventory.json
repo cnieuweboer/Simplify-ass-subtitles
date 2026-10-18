@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.17.218",
+  "version": "2026.10.18.219",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -150,6 +150,11 @@
       "script": "tests/check_event_evidence.py",
       "status": "current",
       "category": "ownership/context"
+    },
+    {
+      "script": "tests/check_event_model_module.py",
+      "status": "current",
+      "category": "general"
     },
     {
       "script": "tests/check_source_visibility.py",

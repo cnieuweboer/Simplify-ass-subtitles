@@ -11,6 +11,11 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v219 the three core event records moved to `_simplify_ass/event_model.py`,
+with engine aliases. This changes their defining location; document ownership,
+cache installation, replacement/invalidation and measurement policy stay with
+the existing engine producers and consumers.
+
 | Object | Owner / permitted sharing | Lifetime and edits |
 | --- | --- | --- |
 | Parsed styles | Document owns catalog and each style dictionary; events borrow them read-only | Text preparation shares the catalog. Measurement preparation copies the map and each style. Native values are immutable scalars. |

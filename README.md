@@ -112,7 +112,7 @@ python simplify_ass.py input.ass --fonts-dir fonts
 python simplify_ass.py input.ass --font-mkv episode.mkv
 ```
 
-Default output: `input.simple.ass`. Current converter version: **2026.10.17.218**.
+Default output: `input.simple.ass`. Current converter version: **2026.10.18.219**.
 
 ## Subtitle properties
 

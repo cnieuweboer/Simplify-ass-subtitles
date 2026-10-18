@@ -1,5 +1,8 @@
 # Core event records — bounded extraction assessment
 
+Historical assessment of v218. The proposed boundary was implemented in
+[v219](EVENT_MODEL_EXTRACTION.md); the evidence below describes the assessment.
+
 The recommended next release is **v219: move `Event`, `EventEvidence` and
 `DocumentMeasurementContext` into `_simplify_ass/event_model.py`**, preserving
 direct engine aliases. Their unchanged definitions and decorators total 82 lines.

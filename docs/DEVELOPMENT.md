@@ -29,9 +29,9 @@ stateless fitting functions; event-based recovery remains in the engine.
 The [v218 transform-sampling extraction](TRANSFORM_SAMPLING_EXTRACTION.md) follows
 its [bounded assessment](TRANSFORM_SAMPLING_EXTRACTION_ASSESSMENT.md), retaining
 call-local sampling state and caller-owned selection/evidence.
-The next [core event-record assessment](EVENT_MODEL_EXTRACTION_ASSESSMENT.md)
-recommends a small canonical model boundary before moving event-based consumers,
-with factory identity and existing cache/evidence ownership preserved.
+The [v219 core event-record extraction](EVENT_MODEL_EXTRACTION.md) follows its
+[bounded assessment](EVENT_MODEL_EXTRACTION_ASSESSMENT.md), preserving canonical
+factory/default identity and caller-owned cache/evidence policy.
 
 ## Tools
 
@@ -82,7 +82,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 94 current scripts. The runner uses three workers for
+The suite inventory lists 95 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.

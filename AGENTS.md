@@ -8,6 +8,10 @@ Keep uncertain content when ownership, geometry, timing or exact fonts cannot be
 proved; avoid guessing text or substituting fonts.
 
 The production entry point is `simplify_subtitles.py` → `simplify_ass.py`.
+Core `Event`, `EventEvidence` and `DocumentMeasurementContext` records live in
+`_simplify_ass/event_model.py`, with direct engine aliases. Import those aliases
+before dependent factories/defaults. Parsing, replacement, cache installation and
+evidence/measurement policy remain with their existing engine owners.
 ASS style/override interpretation lives in `_simplify_ass/ass_overrides.py`, with
 engine aliases for existing callers. Its recognized vocabulary is independent
 of the engine's output whitelist. Transform sampling lives in
@@ -66,7 +70,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-94-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+95-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it
