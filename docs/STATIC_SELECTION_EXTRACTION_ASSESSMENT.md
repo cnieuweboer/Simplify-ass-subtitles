@@ -1,5 +1,8 @@
 # Static-state selection — bounded extraction assessment
 
+Historical assessment of v219. Implemented in
+[v220](STATIC_SELECTION_EXTRACTION.md); the evidence below describes the assessment.
+
 Assessed against v219 (`2026.10.18.219`). The recommended next release is
 **v220: extract static-state selection into `_simplify_ass/static_selection.py`**.
 This moves a complete processing responsibility: ranking transform intervals,

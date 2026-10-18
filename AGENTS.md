@@ -16,9 +16,12 @@ ASS style/override interpretation lives in `_simplify_ass/ass_overrides.py`, wit
 engine aliases for existing callers. Its recognized vocabulary is independent
 of the engine's output whitelist. Transform sampling lives in
 `_simplify_ass/transform_sampling.py`, depending on the interpreter and standard
-library, with direct engine aliases and call-local caches. Event caches, static
-selection and effect-admission policy remain in the engine; preserve the explicit
-continuation contracts.
+library, with direct engine aliases and call-local caches. Static-state geometry
+and representative paint selection live in `_simplify_ass/static_selection.py`,
+with their five existing records and direct engine aliases. Selection owns its
+call-local votes/samples, borrows input evidence and preserves the unchanged-state
+identity contract. Event caches, serialization and effect-admission policy remain
+in the engine; preserve the explicit continuation contracts.
 The exact-font measurement owner lives in `_simplify_ass/font_metrics.py`;
 the engine re-exports its four classes for existing callers. Exact-font contour
 matching and cubic fitting live in `_simplify_ass/font_outlines.py`, depending
@@ -70,7 +73,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-95-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+96-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it

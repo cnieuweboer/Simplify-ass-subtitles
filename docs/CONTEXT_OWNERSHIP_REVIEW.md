@@ -11,6 +11,14 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v220 static-state selection and its five existing records moved to
+`_simplify_ass/static_selection.py`, with canonical engine aliases. Base/style
+buffers and seed snapshots remain borrowed; sample/vote buffers and rotation
+search caches remain call-local. The unchanged early result still returns its
+input formatting dictionary. Continuation, pose evidence and serialization
+handoffs retain their existing ownership. See
+[STATIC_SELECTION_EXTRACTION.md](STATIC_SELECTION_EXTRACTION.md).
+
 In v219 the three core event records moved to `_simplify_ass/event_model.py`,
 with engine aliases. This changes their defining location; document ownership,
 cache installation, replacement/invalidation and measurement policy stay with

@@ -32,9 +32,10 @@ call-local sampling state and caller-owned selection/evidence.
 The [v219 core event-record extraction](EVENT_MODEL_EXTRACTION.md) follows its
 [bounded assessment](EVENT_MODEL_EXTRACTION_ASSESSMENT.md), preserving canonical
 factory/default identity and caller-owned cache/evidence policy.
-The next [static-state selection assessment](STATIC_SELECTION_EXTRACTION_ASSESSMENT.md)
-recommends a cohesive processing extraction for v220, including geometry selection,
-representative paint voting and their existing evidence records.
+The [v220 static-state selection extraction](STATIC_SELECTION_EXTRACTION.md)
+follows its [bounded assessment](STATIC_SELECTION_EXTRACTION_ASSESSMENT.md), moving
+geometry selection, representative paint voting and their existing evidence
+records while retaining caller-owned inputs, caches and serialization.
 
 ## Tools
 
@@ -85,7 +86,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 95 current scripts. The runner uses three workers for
+The suite inventory lists 96 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.

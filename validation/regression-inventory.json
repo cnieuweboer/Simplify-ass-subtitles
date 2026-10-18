@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.18.219",
+  "version": "2026.10.18.220",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -155,6 +155,11 @@
       "script": "tests/check_event_model_module.py",
       "status": "current",
       "category": "general"
+    },
+    {
+      "script": "tests/check_static_selection_module.py",
+      "status": "current",
+      "category": "static selection module boundary"
     },
     {
       "script": "tests/check_source_visibility.py",

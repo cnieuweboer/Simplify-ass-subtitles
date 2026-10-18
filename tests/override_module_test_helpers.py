@@ -8,17 +8,17 @@ from unittest.mock import patch
 def patch_interpreter_bindings(engine, name, *args, **kwargs):
     """Patch the defining binding and known consumers with one replacement.
 
-    Samplers import interpreter functions directly. Resolve their actual owner
-    through engine exports so historical single-file engines still need only
-    one binding; do not make production forward calls for test instrumentation.
+    Samplers and static selection import interpreter functions directly. Resolve
+    their actual owners through engine exports so historical single-file engines
+    still need only one binding; do not add production forwarding for test spies.
     """
     original = getattr(engine, name)
     owner = inspect.getmodule(original)
     assert owner is not None and getattr(owner, name, None) is original, name
     bindings = []
     consumers = [engine, owner, *(
-        inspect.getmodule(getattr(engine, sampler, None))
-        for sampler in ('sample_transform_state', 'sample_transform_states'))]
+        inspect.getmodule(getattr(engine, entry, None))
+        for entry in ('sample_transform_state', 'sample_transform_states', 'select_static_state'))]
     for consumer in consumers:
         if (consumer is not None and consumer not in bindings and
                 getattr(consumer, name, None) is original):
