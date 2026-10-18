@@ -32,6 +32,9 @@ call-local sampling state and caller-owned selection/evidence.
 The [v219 core event-record extraction](EVENT_MODEL_EXTRACTION.md) follows its
 [bounded assessment](EVENT_MODEL_EXTRACTION_ASSESSMENT.md), preserving canonical
 factory/default identity and caller-owned cache/evidence policy.
+The next [static-state selection assessment](STATIC_SELECTION_EXTRACTION_ASSESSMENT.md)
+recommends a cohesive processing extraction for v220, including geometry selection,
+representative paint voting and their existing evidence records.
 
 ## Tools
 
