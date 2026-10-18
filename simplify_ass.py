@@ -59,6 +59,10 @@ from _simplify_ass.transform_sampling import (
 )
 
 from _simplify_ass.event_model import Event, EventEvidence, DocumentMeasurementContext
+from _simplify_ass.caption_rendering import (
+    MAX_PROVED_CAPTION_BORDER, SourceCaptionPaint, _source_caption_paint,
+    render_simplified_caption, render_tag,
+)
 from _simplify_ass.subtitle_document import (
     SubtitleDocument, EVENT_FIELDS, GENERATED_MARKER, parse_time, format_time,
     peak_concurrent_events, parse_dialogue, read_subtitle, script_resolution,
@@ -78,11 +82,7 @@ from _simplify_ass.static_selection import (
     _apply_static_state_colour_vote, select_static_state,
 )
 
-__version__ = "2026.10.18.221"
-# Reconstructed source contours keep thinner/axis-specific widths, but cap each
-# axis in ASS script units. Ordinary retained events are not subject to this cap.
-# Coverage uses the emitted state; source grouping still uses original extents.
-MAX_PROVED_CAPTION_BORDER = 2.
+__version__ = "2026.10.18.222"
 
 
 class _FontTimestampFilter(logging.Filter):
@@ -592,15 +592,6 @@ class StackedTextResult:
 
 
 @dataclass(frozen=True)
-class SourceCaptionPaint:
-    """Proved representative subtitle-only paint, borrowed by caption rendering."""
-    fill: str
-    outline: str
-    outline_alpha: int
-    border: tuple[float,float] = (2.,2.)
-
-
-@dataclass(frozen=True)
 class BackingFadePhase:
     """Candidate paint planes; the family must still prove a readable fade."""
     foreground: Event
@@ -1070,157 +1061,6 @@ def replace_event(event: Event, **changes) -> Event:
         successor = dataclass_replace(successor,evidence=dataclass_replace(
             successor.evidence,frame_pose_intervals=None))
     return successor
-
-
-def render_tag(name: str, value) -> str:
-    if name in {"1c", "2c", "3c", "4c"}:
-        return f"\\{name}&H{value}&"
-    if name in {"1a", "2a", "3a", "4a"}:
-        return f"\\{name}&H{round(value):02X}&"
-    if isinstance(value, tuple):
-        return "\\" + name + "(" + ",".join(f"{x:g}" for x in value) + ")"
-    return "\\" + name + (f"{value:g}" if isinstance(value, (float, int)) else str(value))
-
-
-def _source_caption_paint(state: dict, sources: Iterable[dict]) -> SourceCaptionPaint | None:
-    """Resolve complete producer-owned contour evidence, never guess missing paint.
-
-    Producers supply their whole compatible paint family after geometry/ownership
-    proofs. One visible authored contour is authoritative even at low contrast.
-    Borderless evidence requires visible foreground-only sources, with no shadow
-    support. Hidden, clipped, conflicting or unsupported paint remains uncertain.
-    """
-    selected = {**DEFAULT_STATE,**state}
-    fill = str(selected.get('1c','')).upper()
-    if (selected.get('1a',0) >= 255 or any(k in selected for k in ('clip','iclip')) or
-            not re.fullmatch(r'[0-9A-F]{6}',fill)):
-        return None
-    sources = [{**DEFAULT_STATE,**source} for source in sources]
-    if not sources:
-        return None
-    contours = set()
-    for source in sources:
-        if (source.get('borderstyle',1) != 1 or source.get('p',0) or
-                any(k in source for k in ('clip','iclip')) or
-                any(source.get(k) != selected.get(k) for k in
-                    ('fn','fs','b','i','frz','frx','fry','fax','fay'))):
-            return None
-        widths = tuple(source.get(k,source.get('bord',0)) for k in ('xbord','ybord'))
-        alpha = source.get('3a',0)
-        if (not all(isinstance(w,(int,float)) and math.isfinite(w) and w >= 0 for w in widths) or
-                not isinstance(alpha,(int,float)) or not math.isfinite(alpha) or not 0<=alpha<=255):
-            return None
-        if max(widths)>0 and alpha<255:
-            color = str(source.get('3c','')).upper()
-            if not re.fullmatch(r'[0-9A-F]{6}',color):
-                return None
-            # The renderer already freezes fill opacity to opaque. A coupled
-            # fill/outline fade must not make held and fading phases choose
-            # different contours. Independent contour opacity remains authored.
-            fill_alpha = source.get('1a',0)
-            if 0 <= fill_alpha < 255 and fill_alpha == alpha:
-                alpha = 0
-            contours.add((color,round(alpha),widths))
-    if len(contours)==1:
-        color,alpha,widths = next(iter(contours))
-        return SourceCaptionPaint(fill,color,alpha,tuple(min(MAX_PROVED_CAPTION_BORDER,w) for w in widths))
-    if contours or any(source.get('1a',0) >= 255 or
-                       str(source.get('1c','')).upper() != fill or
-                       any(source.get(k,source.get('shad',0)) for k in ('xshad','yshad'))
-                       for source in sources):
-        return None
-    return SourceCaptionPaint(fill,'000000',0,(0.,0.))
-
-
-def render_simplified_caption(state: dict, text: str,
-                       outline_states: Iterable[dict] | None = None, *,
-                       measurement: DocumentMeasurementContext = DocumentMeasurementContext(),
-                       source_paint: SourceCaptionPaint | None = None,
-                       **layout) -> str:
-    """Preserve proved source paint; contrast repair is for uncertain reconstruction.
-
-    Unclipped visible primary paint supplies the fill; transparent or masked
-    textures cannot. Producer-owned source contours preserve authored color, alpha and width.
-    Uncertain contours use the neutral contrast fallback; selected state alone
-    does not prove that discarded support was unnecessary.
-    Explicit source paint bypasses the fallback without changing layout.
-    Preserve explicit wrapping in the selected layout. Document wrapping stays
-    in measurement context; absence of q does not create an authored override.
-    """
-    state = {**state,**layout}
-    transferred_shadow = False
-    canvas, pos = measurement.canvas,state.get("pos")
-    if (canvas is not None and pos is not None and state.get("borderstyle",1) == 1 and
-            "clip" not in state and "iclip" not in state and
-            state.get("4a",DEFAULT_STATE.get("4a",0)) < 255 and
-            not str(state.get("fn","")).startswith("@") and
-            all(abs(state.get(k,0)) <= .001 for k in ("frz","frx","fry","fax","fay"))):
-        # Generated text can be parked off-canvas while its offset shadow is
-        # the actual visible caption. Transfer that paint and position before
-        # removing shadows. An on-canvas foreground keeps its own position.
-        height = abs(state.get("fs",20)*state.get("fscy",100)/100)
-        width_bound = 4*abs(state.get("fs",20)*state.get("fscx",100)/100)*max(1,len(text))
-        dx = state.get("xshad",state.get("shad",0))
-        dy = state.get("yshad",state.get("shad",0))
-        shadow = (pos[0]+dx,pos[1]+dy)
-        foreground_outside = (pos[1] < -2*height or pos[1] > canvas[1]+2*height or
-                              pos[0] < -width_bound or pos[0] > canvas[0]+width_bound)
-        if (foreground_outside and 0 <= shadow[0] <= canvas[0] and
-                0 <= shadow[1] <= canvas[1] and (dx or dy)):
-            transferred_shadow = True
-            state.update(pos=shadow,**{"1c":state.get("4c","FFFFFF"),
-                                     "1a":state.get("4a",0)})
-    fill = str(state.get("1c","FFFFFF")).upper()
-    if (state.get("1a",0) >= 255 or "clip" in state or "iclip" in state or
-            not re.fullmatch(r"[0-9A-F]{6}",fill)):
-        fill = "FFFFFF"
-    def luminance(color):
-        # ASS colors are BGR; convert sRGB channels to linear luminance.
-        rgb = [int(color[i:i+2],16)/255 for i in (4,2,0)]
-        linear = [v/12.92 if v <= .04045 else ((v+.055)/1.055)**2.4 for v in rgb]
-        return sum(v*w for v,w in zip(linear,(.2126,.7152,.0722)))
-    fill_luma = luminance(fill)
-    colors = set()
-    for source in ([state] if outline_states is None else outline_states):
-        # Resolve defaults too: callers normally supply effective ASS state.
-        source = {**DEFAULT_STATE, **source}
-        if (source.get("borderstyle",1) != 1 or source.get("3a",0) != 0 or
-                max(source.get("xbord",source.get("bord",0)),
-                    source.get("ybord",source.get("bord",0))) <= 0 or
-                "clip" in source or "iclip" in source or
-                any(source.get(k,DEFAULT_STATE.get(k)) !=
-                    state.get(k,DEFAULT_STATE.get(k))
-                    for k in ("fn","fs","b","i","frz","frx","fry","fax","fay"))):
-            continue
-        color = str(source.get("3c","000000")).upper()
-        if re.fullmatch(r"[0-9A-F]{6}",color):
-            colors.add(color)
-    # Choose the more legible neutral outline when source contours conflict.
-    outline = "000000" if (fill_luma+.05)/.05 >= 1.05/(fill_luma+.05) else "FFFFFF"
-    if len(colors) == 1:
-        candidate = next(iter(colors))
-        outline_luma = luminance(candidate)
-        if (max(fill_luma,outline_luma)+.05)/(min(fill_luma,outline_luma)+.05) >= 3:
-            outline = candidate
-    # Proved source paint supplies settled RGBA, including subdued contour
-    # strength. Ordinary/ambiguous captions keep the neutral fallback.
-    outline_alpha = 0
-    border = (2.,2.)
-    if source_paint is not None and not transferred_shadow:
-        fill,outline = source_paint.fill,source_paint.outline
-        outline_alpha = min(255,max(0,int(source_paint.outline_alpha)))
-        border = source_paint.border
-    state = {**DEFAULT_STATE, **state,
-             "1c":fill, "3c":outline, "1a":0,
-             "3a":outline_alpha,
-             "bord":max(border), "shad":0, "blur":0, "be":0}
-    state.pop('xbord',None);state.pop('ybord',None)
-    if border[0] != border[1]:
-        state.update(xbord=border[0],ybord=border[1])
-    keys = ("an","pos","org","q","fn","fs","fscx","fscy","fsp","b","i",
-            "u","s","frz","frx","fry","fax","fay",
-            "1c","3c","1a","3a","bord","xbord","ybord","shad","blur","be")
-    return "{"+"".join(render_tag(k,state[k]) for k in keys if k in state)+"}"+text
 
 
 def safe_override(block: str, max_blur: float = 0.0) -> str:

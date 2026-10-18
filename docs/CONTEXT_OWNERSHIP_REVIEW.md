@@ -11,6 +11,13 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v222 caption paint resolution and rendering moved with the frozen
+`SourceCaptionPaint` record to `_simplify_ass/caption_rendering.py`, retaining
+engine aliases. Inputs remain borrowed read-only; working state is call-local.
+Source-family, timing, geometry, compositing proofs and evidence lifetime remain
+producer-owned. No cache or diagnostic owner changed. See
+[CAPTION_RENDERING_EXTRACTION.md](CAPTION_RENDERING_EXTRACTION.md).
+
 In v221 document decoding, parsing, resolved views and rendering moved with
 `SubtitleDocument` to `_simplify_ass/subtitle_document.py`, retaining engine
 aliases. Resolved views still produce independent styles/events/formatting and

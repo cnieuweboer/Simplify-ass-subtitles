@@ -40,10 +40,10 @@ The [v221 subtitle document extraction](SUBTITLE_DOCUMENT_EXTRACTION.md) follows
 its [bounded assessment](SUBTITLE_DOCUMENT_EXTRACTION_ASSESSMENT.md), moving
 decoding, document parsing/resolution and rendering while retaining engine-owned
 stage transitions and proof-lifetime decisions.
-The next recommended boundary is the
-[caption rendering assessment](CAPTION_RENDERING_EXTRACTION_ASSESSMENT.md):
-a proposed v222 extraction of source-paint resolution and reconstructed caption
-rendering, retaining caller-owned family proofs and the current paint policy.
+The [v222 caption rendering extraction](CAPTION_RENDERING_EXTRACTION.md) follows
+its [bounded assessment](CAPTION_RENDERING_EXTRACTION_ASSESSMENT.md), moving
+source-paint resolution and reconstructed caption rendering while retaining
+caller-owned family proofs and the current paint policy.
 
 ## Tools
 
@@ -94,7 +94,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 97 current scripts. The runner uses three workers for
+The suite inventory lists 98 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.

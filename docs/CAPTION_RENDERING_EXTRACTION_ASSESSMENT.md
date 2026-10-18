@@ -1,5 +1,8 @@
 # Caption rendering — bounded extraction assessment
 
+Historical assessment of v221. Implemented in
+[v222](CAPTION_RENDERING_EXTRACTION.md); the evidence below describes the assessment.
+
 Assessed against v221 (`2026.10.18.221`). Recommend **v222: extract the existing
 caption rendering boundary into `_simplify_ass/caption_rendering.py`**, retaining
 direct engine aliases. One implementation release should suffice; no preparatory

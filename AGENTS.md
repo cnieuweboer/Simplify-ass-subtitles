@@ -16,6 +16,10 @@ live in `_simplify_ass/subtitle_document.py`, with direct engine aliases. Preser
 canonical document factories and the shared fallback field list. Resolved views
 own new styles/events/formatting while borrowing source lines/field order;
 pipeline callers still choose stage transitions and proof-lifetime boundaries.
+Reconstructed caption rendering and its source-paint resolver/record live in
+`_simplify_ass/caption_rendering.py`, with direct engine aliases. Callers retain
+source-family, timing, geometry and compositing proofs; the module borrows those
+inputs and preserves the established contrast, contour and shadow-transfer policy.
 ASS style/override interpretation lives in `_simplify_ass/ass_overrides.py`, with
 engine aliases for existing callers. Its recognized vocabulary is independent
 of the engine's output whitelist. Transform sampling lives in
@@ -33,9 +37,9 @@ only on measurements and the standard library; the engine re-exports both names.
 Exact-font fragment fitting and authored glyph placement live in
 `_simplify_ass/glyph_placement.py`, depending only on measurements and the standard
 library, with direct engine aliases. Event-based row recovery and reports remain
-in the engine. Keep reconstruction, paint, timing and event ownership in the
-engine. Ship the private package with the engine and preserve one-way imports
-and sibling font discovery.
+in the engine. Keep reconstruction-family proofs, timing and event ownership
+with their engine producers. Ship the private package with the engine and preserve
+one-way imports and sibling font discovery.
 The Windows installer/updater discover private Python sources and persist owned
 paths; keep this delivery contract and the older-updater migration documented in
 `docs/MODULE_DELIVERY.md`. New modules must not need a delivery filename list.
@@ -77,7 +81,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-97-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+98-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it
