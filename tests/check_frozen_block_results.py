@@ -6,6 +6,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 from unittest.mock import patch
 import importlib.util
+import inspect
 import json
 import sys
 import simplify_ass as current
@@ -101,7 +102,7 @@ check('frozen selection state is not borrowed initial state',freeze.selection.st
 calls=[];original=current.select_static_state
 def recorded(*args,**kwargs):
     selection=original(*args,**kwargs);calls.append((args[0],selection));return selection
-with patch.object(current,'select_static_state',side_effect=recorded):
+with patch.object(inspect.getmodule(current.freeze_block),'select_static_state',side_effect=recorded):
     frozen=current.freeze_block('',1,base,base,{},0)
 check('freeze passes through exact selection record',frozen.selection is calls[0][1])
 check('freeze early selection retains parsed base identity',frozen.selection.state is calls[0][0])

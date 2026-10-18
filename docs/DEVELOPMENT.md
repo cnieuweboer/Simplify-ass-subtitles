@@ -44,10 +44,9 @@ The [v222 caption rendering extraction](CAPTION_RENDERING_EXTRACTION.md) follows
 its [bounded assessment](CAPTION_RENDERING_EXTRACTION_ASSESSMENT.md), moving
 source-paint resolution and reconstructed caption rendering while retaining
 caller-owned family proofs and the current paint policy.
-The next recommended boundary is the
-[text freezing assessment](TEXT_FREEZING_EXTRACTION_ASSESSMENT.md): a proposed
-v223 extraction retaining selector evidence, parser continuation and caller-owned
-event processing/reporting.
+The [v223 text freezing extraction](TEXT_FREEZING_EXTRACTION.md) follows its
+[bounded assessment](TEXT_FREEZING_EXTRACTION_ASSESSMENT.md), retaining selector
+evidence, parser continuation and caller-owned event processing/reporting.
 
 ## Tools
 
@@ -98,7 +97,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 98 current scripts. The runner uses three workers for
+The suite inventory lists 99 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.

@@ -11,6 +11,14 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v223 static override/text freezing moved with `FrozenBlock` and its shared
+output whitelist to `_simplify_ass/text_freezing.py`, retaining engine aliases.
+Stream buffers stay call-local; initial/default/style inputs and source seeds
+remain borrowed. Selection passes through unchanged, then freezing clamps its
+selected formatting while retaining pre-clamp settled snapshots. Event cache
+installation, evidence lifetime and report aggregation stay caller-owned. See
+[TEXT_FREEZING_EXTRACTION.md](TEXT_FREEZING_EXTRACTION.md).
+
 In v222 caption paint resolution and rendering moved with the frozen
 `SourceCaptionPaint` record to `_simplify_ass/caption_rendering.py`, retaining
 engine aliases. Inputs remain borrowed read-only; working state is call-local.

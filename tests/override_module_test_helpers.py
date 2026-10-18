@@ -8,7 +8,7 @@ from unittest.mock import patch
 def patch_interpreter_bindings(engine, name, *args, **kwargs):
     """Patch the defining binding and known consumers with one replacement.
 
-    Samplers and static selection import interpreter functions directly. Resolve
+    Samplers, selection and freezing import interpreter functions directly. Resolve
     their actual owners through engine exports so historical single-file engines
     still need only one binding; do not add production forwarding for test spies.
     """
@@ -18,7 +18,7 @@ def patch_interpreter_bindings(engine, name, *args, **kwargs):
     bindings = []
     consumers = [engine, owner, *(
         inspect.getmodule(getattr(engine, entry, None))
-        for entry in ('sample_transform_state', 'sample_transform_states', 'select_static_state'))]
+        for entry in ('sample_transform_state', 'sample_transform_states', 'select_static_state', 'freeze_block'))]
     for consumer in consumers:
         if (consumer is not None and consumer not in bindings and
                 getattr(consumer, name, None) is original):

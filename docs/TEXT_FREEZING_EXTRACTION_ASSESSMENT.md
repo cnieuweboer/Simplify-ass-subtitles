@@ -1,5 +1,8 @@
 # Text freezing — bounded extraction assessment
 
+Historical assessment of v222. Implemented in
+[v223](TEXT_FREEZING_EXTRACTION.md); the evidence below describes the assessment.
+
 Assessed against v222 (`2026.10.18.222`). Recommend **v223: extract text freezing
 into `_simplify_ass/text_freezing.py`**, retaining direct engine aliases. One
 implementation release should suffice, with no intended behavior change or
