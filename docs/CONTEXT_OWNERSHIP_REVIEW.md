@@ -52,7 +52,8 @@ unknown reset. Named resets remain exact and case sensitive. An invalid first
 alignment consumes the latch, which survives resets.
 
 Transform evaluation moved to `_simplify_ass/transform_sampling.py` in v218,
-with engine aliases; selection and event-cache ownership remain in the engine.
+with engine aliases. Selection moved to `_simplify_ass/static_selection.py` in
+v220; event-cache installation remains with its engine owners.
 Transform targets own copies. Independent time samples restart from the same
 seed. The sampler's historical commit policy remains explicit: target history
 commits only fields already present in the base history, immediately when active,

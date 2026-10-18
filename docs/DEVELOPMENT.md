@@ -36,6 +36,9 @@ The [v220 static-state selection extraction](STATIC_SELECTION_EXTRACTION.md)
 follows its [bounded assessment](STATIC_SELECTION_EXTRACTION_ASSESSMENT.md), moving
 geometry selection, representative paint voting and their existing evidence
 records while retaining caller-owned inputs, caches and serialization.
+The next [subtitle document assessment](SUBTITLE_DOCUMENT_EXTRACTION_ASSESSMENT.md)
+recommends v221 extract decoding, document parsing/resolution and rendering as
+one closed subsystem, with stage transitions retained by the engine.
 
 ## Tools
 
