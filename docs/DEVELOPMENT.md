@@ -44,6 +44,10 @@ The [v222 caption rendering extraction](CAPTION_RENDERING_EXTRACTION.md) follows
 its [bounded assessment](CAPTION_RENDERING_EXTRACTION_ASSESSMENT.md), moving
 source-paint resolution and reconstructed caption rendering while retaining
 caller-owned family proofs and the current paint policy.
+The next recommended boundary is the
+[text freezing assessment](TEXT_FREEZING_EXTRACTION_ASSESSMENT.md): a proposed
+v223 extraction retaining selector evidence, parser continuation and caller-owned
+event processing/reporting.
 
 ## Tools
 
