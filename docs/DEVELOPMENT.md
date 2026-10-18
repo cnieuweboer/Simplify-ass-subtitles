@@ -36,9 +36,10 @@ The [v220 static-state selection extraction](STATIC_SELECTION_EXTRACTION.md)
 follows its [bounded assessment](STATIC_SELECTION_EXTRACTION_ASSESSMENT.md), moving
 geometry selection, representative paint voting and their existing evidence
 records while retaining caller-owned inputs, caches and serialization.
-The next [subtitle document assessment](SUBTITLE_DOCUMENT_EXTRACTION_ASSESSMENT.md)
-recommends v221 extract decoding, document parsing/resolution and rendering as
-one closed subsystem, with stage transitions retained by the engine.
+The [v221 subtitle document extraction](SUBTITLE_DOCUMENT_EXTRACTION.md) follows
+its [bounded assessment](SUBTITLE_DOCUMENT_EXTRACTION_ASSESSMENT.md), moving
+decoding, document parsing/resolution and rendering while retaining engine-owned
+stage transitions and proof-lifetime decisions.
 
 ## Tools
 
@@ -89,7 +90,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 96 current scripts. The runner uses three workers for
+The suite inventory lists 97 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.

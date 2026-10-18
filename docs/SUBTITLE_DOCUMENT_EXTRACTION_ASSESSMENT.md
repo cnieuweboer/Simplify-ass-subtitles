@@ -1,5 +1,8 @@
 # Subtitle documents — bounded extraction assessment
 
+Historical assessment of v220. Implemented in
+[v221](SUBTITLE_DOCUMENT_EXTRACTION.md); the evidence below describes the assessment.
+
 Assessed against v220 (`2026.10.18.220`). Recommend **v221: extract the existing
 subtitle document subsystem into `_simplify_ass/subtitle_document.py`**, retaining
 direct engine aliases. This is one implementation release, with no intended

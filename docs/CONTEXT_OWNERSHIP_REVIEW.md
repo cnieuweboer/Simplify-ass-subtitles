@@ -11,6 +11,14 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v221 document decoding, parsing, resolved views and rendering moved with
+`SubtitleDocument` to `_simplify_ass/subtitle_document.py`, retaining engine
+aliases. Resolved views still produce independent styles/events/formatting and
+borrow source lines/field order. The engine still chooses preparation and
+serialize/reparse boundaries; cache/evidence lifetimes and diagnostics retain
+their existing contracts. See
+[SUBTITLE_DOCUMENT_EXTRACTION.md](SUBTITLE_DOCUMENT_EXTRACTION.md).
+
 In v220 static-state selection and its five existing records moved to
 `_simplify_ass/static_selection.py`, with canonical engine aliases. Base/style
 buffers and seed snapshots remain borrowed; sample/vote buffers and rotation
@@ -21,8 +29,8 @@ handoffs retain their existing ownership. See
 
 In v219 the three core event records moved to `_simplify_ass/event_model.py`,
 with engine aliases. This changes their defining location; document ownership,
-cache installation, replacement/invalidation and measurement policy stay with
-the existing engine producers and consumers.
+cache installation, replacement/invalidation and measurement policy retain
+their existing producer/consumer boundaries.
 
 | Object | Owner / permitted sharing | Lifetime and edits |
 | --- | --- | --- |

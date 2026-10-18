@@ -8,6 +8,7 @@ import contextlib
 from copy import deepcopy
 import hashlib
 import importlib.util
+import inspect
 from io import StringIO
 import json
 import sys
@@ -126,7 +127,7 @@ with tempfile.TemporaryDirectory() as directory:
     def tracked_write(path,*args,**kwargs):
         write_calls.append(path)
         return write(path,*args,**kwargs)
-    with patch.object(current,'read_subtitle',tracked_read), \
+    with patch.object(inspect.getmodule(current.read_subtitle),'read_subtitle',tracked_read), \
          patch.object(Path,'write_text',tracked_write), \
          patch.object(tempfile,'TemporaryDirectory',side_effect=AssertionError('Unexpected ASS disk roundtrip')), \
          contextlib.redirect_stdout(StringIO()):
