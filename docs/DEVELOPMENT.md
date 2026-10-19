@@ -51,6 +51,10 @@ The [v224 caption geometry extraction](CAPTION_GEOMETRY_EXTRACTION.md) follows
 its [bounded assessment](CAPTION_GEOMETRY_EXTRACTION_ASSESSMENT.md), retaining
 caller-owned proofs, pass caches and font measurements.
 
+The proposed [v225 event operations extraction](EVENT_OPERATIONS_EXTRACTION_ASSESSMENT.md)
+assesses resolved evaluation, event replacement and their shared pose-validity
+key, preserving cache/history and source-evidence contracts without adapters.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
