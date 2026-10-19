@@ -81,6 +81,11 @@ follows its [bounded assessment](EVENT_COMPARISON_EXTRACTION_ASSESSMENT.md),
 placing layout and resolved-state helpers in existing private owners while
 preserving their distinct matching and evidence contracts.
 
+The proposed [v231 scrolling-block extraction](SCROLLING_BLOCKS_EXTRACTION_ASSESSMENT.md)
+assesses the now-closed recognition/limit/reporting subsystem while retaining
+pipeline configuration and aggregate counters. It separately records an existing
+single-use-iterator contract issue; production supplies lists.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
