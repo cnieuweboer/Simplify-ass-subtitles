@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import get_type_hints
 import subprocess
+import pickle
 import sys
 import tempfile
 import unittest
@@ -13,7 +14,7 @@ import simplify_ass as engine
 from _simplify_ass import event_operations as operations
 from check_windows_installer import load_installer, ROOT
 
-NAMES = ('event_evaluation', 'replace_event', '_frame_pose_key')
+NAMES = ('event_evaluation', 'replace_event', '_frame_pose_key', 'state_key')
 
 
 def source():
@@ -37,6 +38,7 @@ class EventOperationsModuleChecks(unittest.TestCase):
         for name in NAMES:
             self.assertIs(getattr(engine, name), getattr(operations, name))
             get_type_hints(getattr(operations, name))
+            self.assertIs(pickle.loads(('csimplify_ass\n'+name+'\n.').encode()), getattr(operations, name))
         self.assertIs(operations.Event, engine.Event)
         self.assertIs(operations.EventEvidence, engine.EventEvidence)
         self.assertIs(get_type_hints(operations.replace_event)['return'], engine.Event)
@@ -112,6 +114,24 @@ class EventOperationsModuleChecks(unittest.TestCase):
         plain = operations.replace_event(event, text=event.text + 'B')
         self.assertNotEqual(operations._frame_pose_key(inline), operations._frame_pose_key(plain))
 
+    def test_state_key_reads_resolved_cache_without_mutating_or_parsing(self):
+        event = source()
+        state = {'number': 1.123456789, 'clip': ('m', 1.123456789, 2.),
+                 'name': 'A', '_scratch': 'private'}
+        event = replace(event, state=state); before = deepcopy(vars(event)); omit = {'name'}
+        self.assertEqual(operations.state_key(event, omit),
+                         (('clip', ('m', 1.123457, 2.)), ('number', 1.123457)))
+        self.assertEqual(omit, {'name'})
+        self.assertEqual(operations.state_key(event, set()), operations.state_key(event))
+        self.assertEqual(vars(event), before)
+        empty = replace(event, state={})
+        self.assertEqual(operations.state_key(empty), ())
+        self.assertEqual(empty.state, {})
+        first = replace(event, state={'fs': .0000012345})
+        second = replace(first, state={'fs': .0000014321})
+        self.assertEqual(operations.state_key(first), operations.state_key(second))
+        self.assertNotEqual(operations._frame_pose_key(first), operations._frame_pose_key(second))
+
     def test_cold_and_installed_operation_and_owned_uninstall(self):
         code = r'''
 from pathlib import Path
@@ -127,10 +147,13 @@ assert read.formatting is event.state and read.continuation is event.continuatio
 edited=o.replace_event(event,text=r'{\fs20}B')
 assert edited.state['fs']==20. and event.state['fs']==40.
 assert o.replace_event(event,state={}).continuation==o.OverrideContinuation()
+assert dict(o.state_key(event))['fs']==40.
+assert 'fs' not in dict(o.state_key(event,{'fs'}))
+assert o.state_key(replace(event,state={}))==()
 assert 'simplify_ass' not in sys.modules
 import simplify_ass as e
 assert Path(o.__file__).resolve()==Path(e.__file__).resolve().parent/'_simplify_ass/event_operations.py'
-for name in ('event_evaluation','replace_event','_frame_pose_key'):assert getattr(e,name) is getattr(o,name)
+for name in ('event_evaluation','replace_event','_frame_pose_key','state_key'):assert getattr(e,name) is getattr(o,name)
 import py_compile
 py_compile.compile(o.__file__,doraise=True)
 '''

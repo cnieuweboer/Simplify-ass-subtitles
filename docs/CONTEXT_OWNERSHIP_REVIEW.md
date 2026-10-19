@@ -11,6 +11,14 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v230 the four shared layout helpers moved unchanged into caption geometry,
+and `state_key()` moved into event operations, with direct engine aliases. All
+read supplied resolved formatting without parsing or caching. Their exact,
+tolerant, nominal-height and rounded-state contracts remain distinct from
+complete-span identity and pose validity. Passes retain indexes, measurements,
+evidence, diagnostics and comparison selection. See
+[EVENT_COMPARISON_EXTRACTION.md](EVENT_COMPARISON_EXTRACTION.md).
+
 In v229 conservative drawing geometry, alignment/stroke normalization, exterior
 sliver removal and bounded contour reduction moved unchanged into
 `_simplify_ass/drawing_geometry.py`, retaining direct engine aliases. Working

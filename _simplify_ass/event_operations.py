@@ -72,3 +72,11 @@ def _frame_pose_key(e: Event) -> tuple:
     return (OVERRIDE_RE.sub('',e.text),e.measurement,e.unit,e.margin_l,e.margin_r,e.margin_v,
             inline_layout_key(e),
             tuple((k,numeric(e.state.get(k,DEFAULT_STATE.get(k)))) for k in tags))
+
+
+def state_key(e: Event, omit: set[str] | None = None) -> tuple:
+    """Compare resolved state; vector clip tuples also contain command strings."""
+    omit = omit or set()
+    return tuple(sorted((k,tuple(round(x,6) if isinstance(x,(int,float)) else x for x in v) if isinstance(v,tuple)
+                         else round(v,6) if isinstance(v,(int,float)) else v)
+                        for k,v in e.state.items() if k not in omit and not k.startswith("_")))

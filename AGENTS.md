@@ -19,6 +19,12 @@ engine aliases and call-local working buffers. Candidate admission, initial
 evidence capture, output paint selection, pipeline transitions and reporting
 remain with their producers. Keep the canonical pose-validity key in event
 operations; do not duplicate it or import the engine from private modules.
+Shared layout comparisons (`text_height`, `placement_key`, `text_layout_key`,
+`compatible_text_layout`) live in `_simplify_ass/caption_geometry.py`; resolved
+`state_key` lives in event operations, with direct engine aliases. Read supplied
+formatting without parsing/caching. Keep nominal height, exact/tolerant layout,
+resolved-state rounding, complete-span identity and pose-validity proofs distinct.
+Callers retain the choice of comparison, pass indexes, evidence and diagnostics.
 Complete static-span identity, the frozen `StaticSpanSignature` record and ordered
 static-phase merging live in `_simplify_ass/static_objects.py`, with direct engine
 aliases. Keep parsing/grouping/bounds buffers call-local, borrow document inputs
@@ -51,8 +57,8 @@ Reconstructed caption rendering and its source-paint resolver/record live in
 source-family, timing, geometry and compositing proofs; the module borrows those
 inputs and preserves the established contrast, contour and shadow-transfer policy.
 Explicit caption anchors and conservative measured bounds live in
-`_simplify_ass/caption_geometry.py`, with direct engine aliases for the four
-functions and shared position patterns. Geometry borrows event inputs and the
+`_simplify_ass/caption_geometry.py`, with direct engine aliases
+for its anchor/bounds functions and shared position patterns. Geometry borrows event inputs and the
 supplied metrics owner. Keep font caches, pass bounds caches, source-span extent
 proofs and reporting with their existing owners. Preserve
 unknown bounds, adjacency distinctions and the separate anchor precisions.

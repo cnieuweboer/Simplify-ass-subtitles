@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 import re
 
-from .ass_overrides import OVERRIDE_RE
+from .ass_overrides import DEFAULT_STATE, OVERRIDE_RE
 from .event_model import Event
 from .font_metrics import FontMetrics
 
@@ -146,3 +146,34 @@ def caption_bounds(event, metric: FontMetrics | None, *, adjacency=False):
     xs, ys = zip(*transformed)
     box = (min(xs), min(ys), max(xs), max(ys))
     return box if all(math.isfinite(v) for v in box) else None
+
+
+def text_height(e: Event) -> float:
+    return max(e.unit, abs(e.state.get("fs",20) * e.state.get("fscy",100) / 100))
+
+
+def placement_key(e: Event) -> tuple:
+    return (tuple(float(v) if float(v) else e.state.get(k, 0)
+                  for v,k in ((e.margin_l,"marginl"),(e.margin_r,"marginr"),(e.margin_v,"marginv"))),
+            e.state.get("clip"), e.state.get("iclip"), inline_layout_key(e))
+
+
+def text_layout_key(e: Event) -> tuple:
+    return tuple((key,e.state.get(key,DEFAULT_STATE.get(key))) for key in
+                 ("fn","fs","fscx","fscy","fsp","an","frz","frx","fry","fax","fay",
+                  "b","i","u","s","q","org","pbo","borderstyle","encoding"))
+
+
+def compatible_text_layout(a: Event, b: Event) -> bool:
+    if placement_key(a) != placement_key(b):
+        return False
+    if str(a.state.get("fn","")).casefold()!=str(b.state.get("fn","")).casefold():
+        return False
+    for key in ("an","frz","frx","fry","fax","fay"):
+        if a.state.get(key,DEFAULT_STATE.get(key))!=b.state.get(key,DEFAULT_STATE.get(key)):
+            return False
+    for key in ("fs","fscx","fscy"):
+        x,y=a.state.get(key,DEFAULT_STATE[key]),b.state.get(key,DEFAULT_STATE[key])
+        if abs(x-y)>.05*max(abs(x),abs(y),1e-6):
+            return False
+    return True

@@ -1,10 +1,12 @@
 """Caption geometry identity, borrowed measurements, uncertainty and installed use."""
 import test_paths
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import get_type_hints
 import subprocess
+import pickle
 import sys
 import tempfile
 import unittest
@@ -13,7 +15,8 @@ import simplify_ass as engine
 from _simplify_ass import caption_geometry as geometry
 from check_windows_installer import load_installer, ROOT
 
-NAMES = ('NUM', 'POS_RE', 'get_pos', 'set_pos', 'inline_layout_key', 'caption_bounds')
+NAMES = ('NUM', 'POS_RE', 'get_pos', 'set_pos', 'inline_layout_key', 'caption_bounds',
+         'text_height', 'placement_key', 'text_layout_key', 'compatible_text_layout')
 
 
 class Metric:
@@ -45,6 +48,12 @@ def event(**changes):
         measurement=engine.DocumentMeasurementContext(script_wrap_mode=2))
 
 
+def layout_event():
+    raw = ('[Events]\n' + r'Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,'
+           r'{\pos(100,100)\fs100\fnArial}A' + '\n')
+    return next(iter(engine._resolve_document_state(engine.parse_subtitle_document(raw)).events.values()))
+
+
 def child(code, cwd, tools):
     code = 'import sys\nsys.path.insert(0,' + repr(str(tools)) + ')\n' + code
     return subprocess.run([sys.executable, '-I', '-c', code], cwd=cwd,
@@ -57,9 +66,11 @@ class CaptionGeometryModuleChecks(unittest.TestCase):
             self.assertIs(getattr(engine, name), getattr(geometry, name))
             if callable(getattr(geometry, name)):
                 get_type_hints(getattr(geometry, name))
+                self.assertIs(pickle.loads(('csimplify_ass\n'+name+'\n.').encode()), getattr(geometry, name))
         self.assertIs(geometry.Event, engine.Event)
         self.assertIs(geometry.FontMetrics, engine.FontMetrics)
         self.assertIs(geometry.OVERRIDE_RE, engine.OVERRIDE_RE)
+        self.assertIs(geometry.DEFAULT_STATE, engine.DEFAULT_STATE)
         self.assertIs(get_type_hints(geometry.inline_layout_key)['e'], engine.Event)
         self.assertEqual(get_type_hints(geometry.caption_bounds)['metric'], engine.FontMetrics | None)
 
@@ -106,6 +117,45 @@ class CaptionGeometryModuleChecks(unittest.TestCase):
         self.assertIsNotNone(geometry.caption_bounds(projective, metric, adjacency=True))
         self.assertEqual(projective, before)
 
+    def test_placement_inheritance_inline_guards_and_borrowed_inputs(self):
+        source = layout_event()
+        source = replace(source, state={**source.state, 'marginl': 17., 'marginr': 18.,
+                                       'marginv': 19., 'clip': (0., 1., 20., 30.)})
+        before = deepcopy(vars(source))
+        self.assertEqual(geometry.placement_key(source)[:3],
+                         ((17., 18., 19.), (0., 1., 20., 30.), None))
+        self.assertEqual(geometry.placement_key(replace(source, margin_l='9', margin_r='-2'))[0],
+                         (9., -2., 19.))
+        inline = engine.replace_event(source, text=source.text+r'{\bord1}B')
+        self.assertEqual(geometry.placement_key(inline)[-1], inline.text)
+        self.assertEqual(vars(source), before)
+
+    def test_exact_layout_and_tolerant_compatibility_keep_distinct_contracts(self):
+        source = layout_event(); before = deepcopy(vars(source))
+        compatible = replace(source, state={**source.state, 'fn': 'arial', 'fs': 105.})
+        self.assertNotEqual(geometry.text_layout_key(source), geometry.text_layout_key(compatible))
+        self.assertTrue(geometry.compatible_text_layout(source, compatible))
+        self.assertFalse(geometry.compatible_text_layout(source,
+            replace(compatible, state={**compatible.state, 'fs': 106.})))
+        for field in ('frz', 'frx', 'fry', 'fax', 'fay', 'an'):
+            changed = replace(source, state={**source.state, field: source.state.get(field, 0)+1})
+            self.assertFalse(geometry.compatible_text_layout(source, changed))
+        self.assertFalse(geometry.compatible_text_layout(source, replace(source, margin_l='10')))
+        empty = replace(source, state={})
+        self.assertEqual(dict(geometry.text_layout_key(empty))['fs'], engine.DEFAULT_STATE['fs'])
+        self.assertEqual(empty.state, {})
+        self.assertEqual(vars(source), before)
+
+    def test_nominal_height_uses_supplied_cache_without_parsing_or_measurement(self):
+        source = layout_event(); before = deepcopy(vars(source))
+        self.assertEqual(geometry.text_height(source), 100.)
+        self.assertEqual(geometry.text_height(replace(source, state={'fs': -40., 'fscy': 50.})), 20.)
+        self.assertEqual(geometry.text_height(replace(source, unit=2., state={'fs': 0.})), 2.)
+        empty = replace(source, state={})
+        self.assertEqual(geometry.text_height(empty), 20.)
+        self.assertEqual(empty.state, {})
+        self.assertEqual(vars(source), before)
+
     def test_cold_processing_without_engine_or_optional_backends(self):
         code = r'''
 from types import SimpleNamespace
@@ -115,6 +165,11 @@ assert not any(n.split('.')[0] in {'PIL','fontTools','uharfbuzz'} for n in sys.m
 assert g.get_pos(r'{\pos(10.5,-2)}A')==(10.5,-2.)
 assert g.set_pos('A',(1.,2.))==r'{\pos(1.00,2.00)}A'
 assert g.caption_bounds(SimpleNamespace(text='A',state={}),None) is None
+source=SimpleNamespace(text='A',state={'fs':-40.,'fscy':50.,'marginl':17.},unit=1.,margin_l='0',margin_r='0',margin_v='0')
+assert g.text_height(source)==20.
+assert g.placement_key(source)[0]==(17.,0.,0.)
+assert dict(g.text_layout_key(source))['fs']==-40.
+assert g.compatible_text_layout(source,source)
 assert 'simplify_ass' not in sys.modules
 '''
         with tempfile.TemporaryDirectory() as folder:
@@ -149,6 +204,10 @@ event=next(iter(doc.events.values()));before=deepcopy(event)
 box=e.caption_bounds(event,metrics)
 assert box is not None and box[0]<320.<box[2] and event==before
 assert g.get_pos(event.text)==(320.,100.)
+assert g.text_height(event)==40.
+assert g.placement_key(event)[0]==(event.state.get('marginl',0),event.state.get('marginr',0),event.state.get('marginv',0))
+assert dict(g.text_layout_key(event))['fs']==40.
+assert g.compatible_text_layout(event,event)
 py_compile.compile(g.__file__,doraise=True)
 '''.replace('NAMES', repr(NAMES))
             result = child(code, unrelated, tools)

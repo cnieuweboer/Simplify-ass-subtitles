@@ -76,9 +76,10 @@ follows its [bounded assessment](DRAWING_GEOMETRY_EXTRACTION_ASSESSMENT.md),
 retaining supporting-drawing admission, source evidence, measurements and
 reporting with their producers.
 
-The proposed [v230 shared event comparison ownership step](EVENT_COMPARISON_EXTRACTION_ASSESSMENT.md)
-places layout and resolved-state helpers in existing private owners as bounded
-preparation for later subsystem extractions, preserving their distinct proofs.
+The [v230 shared event comparison ownership step](EVENT_COMPARISON_EXTRACTION.md)
+follows its [bounded assessment](EVENT_COMPARISON_EXTRACTION_ASSESSMENT.md),
+placing layout and resolved-state helpers in existing private owners while
+preserving their distinct matching and evidence contracts.
 
 ## Tools
 

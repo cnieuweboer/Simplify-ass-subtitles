@@ -69,7 +69,7 @@ from _simplify_ass.static_compaction import (
     _finished_static_key, _join_finished_static_headers, compact_static_overrides
 )
 from _simplify_ass.event_operations import (
-    event_evaluation, replace_event, _frame_pose_key,
+    event_evaluation, replace_event, _frame_pose_key, state_key,
 )
 from _simplify_ass.frame_pose import (
     _frame_paint_alphas, _frame_pose_intervals, _visible_pose_support,
@@ -81,6 +81,7 @@ from _simplify_ass.static_objects import (
 )
 from _simplify_ass.caption_geometry import (
     NUM, POS_RE, caption_bounds, get_pos, inline_layout_key, set_pos,
+    text_height, placement_key, text_layout_key, compatible_text_layout,
 )
 from _simplify_ass.text_freezing import (
     FrozenBlock, SAFE_SIMPLE_TAGS, _freeze_inputs, freeze_block, safe_override,
@@ -109,7 +110,7 @@ from _simplify_ass.static_selection import (
     _apply_static_state_colour_vote, select_static_state,
 )
 
-__version__ = "2026.10.19.229"
+__version__ = "2026.10.19.230"
 
 
 class _FontTimestampFilter(logging.Filter):
@@ -1028,10 +1029,6 @@ def animated_shadow_painted_source(e: Event, sources: dict[int,Event] | None,
                    for tag,_ in tokenize_override(value.strip('()')))
 
 
-def text_height(e: Event) -> float:
-    return max(e.unit, abs(e.state.get("fs",20) * e.state.get("fscy",100) / 100))
-
-
 def positioned_row_geometry(ordered: list[Event], *,
                               min_x_step: float | None = None
                               ) -> tuple[list[float],list[float]] | None:
@@ -1117,33 +1114,6 @@ def assign_layout(events: list[Event], visible_map: dict[int, str]) -> None:
                 text = visible_map.get(e.source_index, "")
                 e.lyric = any(min(e.end_s, seed.end_s) > max(e.start_s, seed.start_s)
                     for seed in evidence.get((x_key(e), text), ()))
-
-
-def placement_key(e: Event) -> tuple:
-    return (tuple(float(v) if float(v) else e.state.get(k, 0)
-                  for v,k in ((e.margin_l,"marginl"),(e.margin_r,"marginr"),(e.margin_v,"marginv"))),
-            e.state.get("clip"), e.state.get("iclip"), inline_layout_key(e))
-
-
-def text_layout_key(e: Event) -> tuple:
-    return tuple((key,e.state.get(key,DEFAULT_STATE.get(key))) for key in
-                 ("fn","fs","fscx","fscy","fsp","an","frz","frx","fry","fax","fay",
-                  "b","i","u","s","q","org","pbo","borderstyle","encoding"))
-
-
-def compatible_text_layout(a: Event, b: Event) -> bool:
-    if placement_key(a) != placement_key(b):
-        return False
-    if str(a.state.get("fn","")).casefold()!=str(b.state.get("fn","")).casefold():
-        return False
-    for key in ("an","frz","frx","fry","fax","fay"):
-        if a.state.get(key,DEFAULT_STATE.get(key))!=b.state.get(key,DEFAULT_STATE.get(key)):
-            return False
-    for key in ("fs","fscx","fscy"):
-        x,y=a.state.get(key,DEFAULT_STATE[key]),b.state.get(key,DEFAULT_STATE[key])
-        if abs(x-y)>.05*max(abs(x),abs(y),1e-6):
-            return False
-    return True
 
 
 def event_identity_for_dedup(e: Event, visible: str) -> tuple:
@@ -1972,14 +1942,6 @@ def freeze_vector_sequences(events: list[Event], short_duration: float = 0.16,
                 has_hold |= is_hold
             emit(run)
     return sorted(output, key=lambda e: e.source_index), removed
-
-
-def state_key(e: Event, omit: set[str] | None = None) -> tuple:
-    """Compare resolved state; vector clip tuples also contain command strings."""
-    omit = omit or set()
-    return tuple(sorted((k,tuple(round(x,6) if isinstance(x,(int,float)) else x for x in v) if isinstance(v,tuple)
-                         else round(v,6) if isinstance(v,(int,float)) else v)
-                        for k,v in e.state.items() if k not in omit and not k.startswith("_")))
 
 
 def reduce_vector_layers(events: list[Event]) -> tuple[list[Event], int]:
