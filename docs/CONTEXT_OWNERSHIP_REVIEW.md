@@ -11,6 +11,16 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v231 residual scrolling-track recognition, motion/edge proof and optional
+block-local concurrency removal moved unchanged to `_simplify_ass/scrolling_blocks.py`.
+Events, styles, continuations, evidence and caller metrics remain borrowed.
+Tracks/profiles, common proof intervals, confirmed/removal sets and ordered
+per-block diagnostics stay call-local. The frozen match record retains its
+mutable list of profile indices. The engine retains the late residual-stage
+invocation, configuration, resolution lookup and aggregate counters. See
+[SCROLLING_BLOCKS_EXTRACTION.md](SCROLLING_BLOCKS_EXTRACTION.md), including the
+separate existing single-use iterator-contract follow-up.
+
 In v230 the four shared layout helpers moved unchanged into caption geometry,
 and `state_key()` moved into event operations, with direct engine aliases. All
 read supplied resolved formatting without parsing or caching. Their exact,

@@ -46,6 +46,14 @@ coordinates, opaque-cover eligibility, conservative refusal and original-contour
 returns. Supporting-drawing producers retain stage order, admission, movement,
 measured coverage, evidence attachment and counters. Do not move those owners
 or duplicate the canonical `geometry_key()` to close a drawing dependency.
+Residual scrolling-track recognition, coherent block/edge proofs and optional
+concurrency removal live in `_simplify_ass/scrolling_blocks.py`, with direct
+engine aliases. Borrow events and caller metrics; keep tracks, profile indices,
+match intervals, removal sets and per-block reports call-local. Preserve measured
+edge refusal, spatial voters and block-local concurrency. The engine retains
+late-stage placement, configuration and aggregate counters. An existing single-use
+iterator exhaustion issue remains a separate contract review; production supplies
+lists. Do not silently change that contract during extraction.
 Document decoding,
 parsing, resolved views and rendering
 live in `_simplify_ass/subtitle_document.py`, with direct engine aliases. Preserve
@@ -128,7 +136,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-105-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+106-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it

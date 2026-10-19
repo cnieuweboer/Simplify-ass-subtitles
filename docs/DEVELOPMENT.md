@@ -81,8 +81,9 @@ follows its [bounded assessment](EVENT_COMPARISON_EXTRACTION_ASSESSMENT.md),
 placing layout and resolved-state helpers in existing private owners while
 preserving their distinct matching and evidence contracts.
 
-The proposed [v231 scrolling-block extraction](SCROLLING_BLOCKS_EXTRACTION_ASSESSMENT.md)
-assesses the now-closed recognition/limit/reporting subsystem while retaining
+The [v231 scrolling-block extraction](SCROLLING_BLOCKS_EXTRACTION.md) follows its
+[bounded assessment](SCROLLING_BLOCKS_EXTRACTION_ASSESSMENT.md), moving the
+recognition/limit/reporting subsystem unchanged while retaining
 pipeline configuration and aggregate counters. It separately records an existing
 single-use-iterator contract issue; production supplies lists.
 
@@ -135,7 +136,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 105 current scripts. The runner uses three workers for
+The suite inventory lists 106 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
