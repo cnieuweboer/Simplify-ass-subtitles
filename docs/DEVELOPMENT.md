@@ -56,6 +56,10 @@ its [bounded assessment](EVENT_OPERATIONS_EXTRACTION_ASSESSMENT.md), moving reso
 evaluation, event replacement and their shared pose-validity key while preserving
 cache/history and source-evidence contracts without adapters.
 
+The proposed [v226 representative frame-pose extraction](FRAME_POSE_EXTRACTION_ASSESSMENT.md)
+assesses source exposure, duplicate-safe pose selection and compatible evidence
+handoff, keeping route-specific paint selection and admission with callers.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
