@@ -71,6 +71,10 @@ follows its [bounded assessment](STATIC_COMPACTION_EXTRACTION_ASSESSMENT.md),
 preserving both serialization modes and caller-owned stage/evidence boundaries.
 Interpreter observers and the freezer stub follow the defining consumer.
 
+The proposed [v229 drawing geometry and contour normalization extraction](DRAWING_GEOMETRY_EXTRACTION_ASSESSMENT.md)
+assesses a closed eight-function subsystem while retaining supporting-drawing
+admission, source evidence, measurements and reporting with their producers.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
