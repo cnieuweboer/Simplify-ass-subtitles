@@ -13,8 +13,13 @@ Core `Event`, `EventEvidence` and `DocumentMeasurementContext` records live in
 before dependent factories/defaults. Resolved reads, event replacement and the
 shared pose-validity key live in
 `_simplify_ass/event_operations.py`, with direct engine aliases. Keep cache/history
-sharing and edit invalidation there; source-proof admission, exposure selection,
-pipeline transitions and reporting remain with their producers. Document decoding,
+sharing and edit invalidation there. Source-frame exposure, support handoff and
+representative-pose selection live in `_simplify_ass/frame_pose.py`, with direct
+engine aliases and call-local working buffers. Candidate admission, initial
+evidence capture, output paint selection, pipeline transitions and reporting
+remain with their producers. Keep the canonical pose-validity key in event
+operations; do not duplicate it or import the engine from private modules.
+Document decoding,
 parsing, resolved views and rendering
 live in `_simplify_ass/subtitle_document.py`, with direct engine aliases. Preserve
 canonical document factories and the shared fallback field list. Resolved views
@@ -96,7 +101,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-101-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+102-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it

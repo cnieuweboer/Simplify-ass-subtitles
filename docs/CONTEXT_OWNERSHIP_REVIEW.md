@@ -11,6 +11,14 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v226 source-frame exposure, representative-pose selection and compatible
+support handoff moved to `_simplify_ass/frame_pose.py`, with canonical engine
+aliases. Inputs remain borrowed and working buffers stay call-local; selection
+returns an existing candidate. Callers retain candidate admission, initial
+evidence capture, route-specific paint selection and diagnostics. The shared
+pose-validity key remains in event operations. See
+[FRAME_POSE_EXTRACTION.md](FRAME_POSE_EXTRACTION.md).
+
 In v225 resolved event reads, replacement and their pose-validity key moved to
 `_simplify_ass/event_operations.py`, with canonical engine aliases. Cache/history
 sharing and edit invalidation remain unchanged. Callers retain proof admission,
