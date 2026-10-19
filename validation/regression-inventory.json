@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.19.226",
+  "version": "2026.10.19.227",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -190,6 +190,11 @@
       "script": "tests/check_frame_pose_module.py",
       "status": "current",
       "category": "frame pose module boundary"
+    },
+    {
+      "script": "tests/check_static_objects_module.py",
+      "status": "current",
+      "category": "static object module boundary"
     },
     {
       "script": "tests/check_source_visibility.py",

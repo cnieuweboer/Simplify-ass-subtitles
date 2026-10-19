@@ -61,9 +61,10 @@ its [bounded assessment](FRAME_POSE_EXTRACTION_ASSESSMENT.md), moving source
 exposure, duplicate-safe pose selection and compatible evidence handoff while
 keeping route-specific paint selection and admission with callers.
 
-The proposed [v227 static-object matching and phase-merging extraction](STATIC_OBJECTS_EXTRACTION_ASSESSMENT.md)
-assesses the shared complete-span representation and its ordered merger, retaining
-caller-owned stage roles, evidence lifetime and reporting.
+The [v227 static-object matching and phase-merging extraction](STATIC_OBJECTS_EXTRACTION.md)
+follows its [bounded assessment](STATIC_OBJECTS_EXTRACTION_ASSESSMENT.md), moving
+the complete-span representation and ordered merger while retaining caller-owned
+stage roles, evidence lifetime and reporting.
 
 ## Tools
 
@@ -114,7 +115,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 102 current scripts. The runner uses three workers for
+The suite inventory lists 103 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.

@@ -19,6 +19,13 @@ engine aliases and call-local working buffers. Candidate admission, initial
 evidence capture, output paint selection, pipeline transitions and reporting
 remain with their producers. Keep the canonical pose-validity key in event
 operations; do not duplicate it or import the engine from private modules.
+Complete static-span identity, the frozen `StaticSpanSignature` record and ordered
+static-phase merging live in `_simplify_ass/static_objects.py`, with direct engine
+aliases. Keep parsing/grouping/bounds buffers call-local, borrow document inputs
+and supplied metrics, and preserve continuation-sensitive identity and actual
+list-slot ordering. Callers still own both stage invocations, row eligibility,
+evidence boundaries and reporting. Interpreter trace helpers must watch the
+defining consumer binding; do not introduce production forwarding for spies.
 Document decoding,
 parsing, resolved views and rendering
 live in `_simplify_ass/subtitle_document.py`, with direct engine aliases. Preserve
@@ -101,7 +108,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-102-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+103-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it

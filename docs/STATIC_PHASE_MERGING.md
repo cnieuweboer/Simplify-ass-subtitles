@@ -1,5 +1,10 @@
 # Consolidated static phase merging — v186
 
+In v227 the unchanged identity record, static-object keys and shared merger moved
+to `_simplify_ass/static_objects.py`, retaining direct engine aliases and all
+contracts below. See [STATIC_OBJECTS_EXTRACTION.md](STATIC_OBJECTS_EXTRACTION.md)
+for the extraction and current validation evidence.
+
 `merge_static_timed_copies()` now owns both text-stage and final static phase
 merging. Its single `_merge_static_phase_round()` implementation replaces the
 separate v185 late merger and the older merger's duplicate matching algorithm.

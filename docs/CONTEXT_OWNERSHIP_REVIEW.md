@@ -11,6 +11,14 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v227 complete static-span identity, `StaticSpanSignature` and ordered static
+phase merging moved to `_simplify_ass/static_objects.py`, retaining canonical
+engine aliases and the frozen record. Parser/group/slot/bounds buffers stay local;
+styles/events and supplied metrics remain borrowed. Callers retain both stage
+invocations, row eligibility, evidence lifetime and reporting. The existing trace
+helper now observes the static-object interpreter consumer. See
+[STATIC_OBJECTS_EXTRACTION.md](STATIC_OBJECTS_EXTRACTION.md).
+
 In v226 source-frame exposure, representative-pose selection and compatible
 support handoff moved to `_simplify_ass/frame_pose.py`, with canonical engine
 aliases. Inputs remain borrowed and working buffers stay call-local; selection
