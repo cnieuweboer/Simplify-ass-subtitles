@@ -61,6 +61,10 @@ its [bounded assessment](FRAME_POSE_EXTRACTION_ASSESSMENT.md), moving source
 exposure, duplicate-safe pose selection and compatible evidence handoff while
 keeping route-specific paint selection and admission with callers.
 
+The proposed [v227 static-object matching and phase-merging extraction](STATIC_OBJECTS_EXTRACTION_ASSESSMENT.md)
+assesses the shared complete-span representation and its ordered merger, retaining
+caller-owned stage roles, evidence lifetime and reporting.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
