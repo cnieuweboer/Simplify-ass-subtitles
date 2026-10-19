@@ -66,6 +66,10 @@ follows its [bounded assessment](STATIC_OBJECTS_EXTRACTION_ASSESSMENT.md), movin
 the complete-span representation and ordered merger while retaining caller-owned
 stage roles, evidence lifetime and reporting.
 
+The proposed [v228 static override compaction extraction](STATIC_COMPACTION_EXTRACTION_ASSESSMENT.md)
+assesses both serialization modes, caller-owned stage/evidence boundaries and the
+two test bindings that must follow the defining consumer. Production remains v227.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
