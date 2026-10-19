@@ -138,7 +138,7 @@ for i,text in enumerate(bodies[:27]):
     outputs=[]
     for module in (previous,current):
         e=event(module,text,STYLES);before=deepcopy(snapshot(e))
-        with patch.object(module,'simplify_visual_text',return_value=(text,0,0)):
+        with patch_interpreter_bindings(module,'simplify_visual_text',return_value=(text,0,0)):
             out,trace=traced(module,lambda:module.compact_static_overrides([e],2),isolated=False)
         outputs.append((snapshot(out),trace))
         check(str(i)+' compaction input ownership',before==snapshot(e))

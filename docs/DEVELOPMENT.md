@@ -66,9 +66,10 @@ follows its [bounded assessment](STATIC_OBJECTS_EXTRACTION_ASSESSMENT.md), movin
 the complete-span representation and ordered merger while retaining caller-owned
 stage roles, evidence lifetime and reporting.
 
-The proposed [v228 static override compaction extraction](STATIC_COMPACTION_EXTRACTION_ASSESSMENT.md)
-assesses both serialization modes, caller-owned stage/evidence boundaries and the
-two test bindings that must follow the defining consumer. Production remains v227.
+The [v228 static override compaction extraction](STATIC_COMPACTION_EXTRACTION.md)
+follows its [bounded assessment](STATIC_COMPACTION_EXTRACTION_ASSESSMENT.md),
+preserving both serialization modes and caller-owned stage/evidence boundaries.
+Interpreter observers and the freezer stub follow the defining consumer.
 
 ## Tools
 
@@ -119,7 +120,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 103 current scripts. The runner uses three workers for
+The suite inventory lists 104 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.

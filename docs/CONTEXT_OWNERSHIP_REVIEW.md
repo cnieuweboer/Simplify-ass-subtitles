@@ -11,6 +11,14 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v228 early and final override compaction moved together into
+`_simplify_ass/static_compaction.py`, retaining direct engine aliases. Inputs
+remain borrowed; buffers are call-local. Early edits use ordinary replacement
+invalidation, while final shorter/equivalent edits explicitly retain evidence.
+Callers retain all seven invocations, stage order, configuration and reporting.
+Test tracing/stubbing follows the defining consumer without production adapters.
+See [STATIC_COMPACTION_EXTRACTION.md](STATIC_COMPACTION_EXTRACTION.md).
+
 In v227 complete static-span identity, `StaticSpanSignature` and ordered static
 phase merging moved to `_simplify_ass/static_objects.py`, retaining canonical
 engine aliases and the frozen record. Parser/group/slot/bounds buffers stay local;

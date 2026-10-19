@@ -1,5 +1,9 @@
 # Final static-tag compaction — v189
 
+The unchanged early/final compaction implementation moved to
+`_simplify_ass/static_compaction.py` in [v228](STATIC_COMPACTION_EXTRACTION.md),
+with direct engine aliases and the same caller-owned invocation points.
+
 Standard conversion now invokes the existing `compact_static_overrides()` once
 more at final serialization, after support ownership/layering, shadow lettering,
 color normalization, redundant copies and static phases have finished. It
