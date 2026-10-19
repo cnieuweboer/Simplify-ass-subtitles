@@ -71,9 +71,10 @@ follows its [bounded assessment](STATIC_COMPACTION_EXTRACTION_ASSESSMENT.md),
 preserving both serialization modes and caller-owned stage/evidence boundaries.
 Interpreter observers and the freezer stub follow the defining consumer.
 
-The proposed [v229 drawing geometry and contour normalization extraction](DRAWING_GEOMETRY_EXTRACTION_ASSESSMENT.md)
-assesses a closed eight-function subsystem while retaining supporting-drawing
-admission, source evidence, measurements and reporting with their producers.
+The [v229 drawing geometry and contour normalization extraction](DRAWING_GEOMETRY_EXTRACTION.md)
+follows its [bounded assessment](DRAWING_GEOMETRY_EXTRACTION_ASSESSMENT.md),
+retaining supporting-drawing admission, source evidence, measurements and
+reporting with their producers.
 
 ## Tools
 
@@ -124,7 +125,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 104 current scripts. The runner uses three workers for
+The suite inventory lists 105 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.

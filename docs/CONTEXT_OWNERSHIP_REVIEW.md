@@ -11,6 +11,15 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v229 conservative drawing geometry, alignment/stroke normalization, exterior
+sliver removal and bounded contour reduction moved unchanged into
+`_simplify_ass/drawing_geometry.py`, retaining direct engine aliases. Working
+buffers remain local; document/event inputs remain borrowed. The producer still
+stores original-contour returns in its pass-local map and finalization attaches
+them after group/sequence reduction. Admission, movement, measured caption
+coverage, compositing, counts and stage order remain caller-owned. See
+[DRAWING_GEOMETRY_EXTRACTION.md](DRAWING_GEOMETRY_EXTRACTION.md).
+
 In v228 early and final override compaction moved together into
 `_simplify_ass/static_compaction.py`, retaining direct engine aliases. Inputs
 remain borrowed; buffers are call-local. Early edits use ordinary replacement

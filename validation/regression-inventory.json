@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.19.228",
+  "version": "2026.10.19.229",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -200,6 +200,11 @@
       "script": "tests/check_static_compaction_module.py",
       "status": "current",
       "category": "static compaction module boundary"
+    },
+    {
+      "script": "tests/check_drawing_geometry_module.py",
+      "status": "current",
+      "category": "drawing geometry module boundary"
     },
     {
       "script": "tests/check_source_visibility.py",
