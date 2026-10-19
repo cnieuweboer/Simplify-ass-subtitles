@@ -47,6 +47,10 @@ caller-owned family proofs and the current paint policy.
 The [v223 text freezing extraction](TEXT_FREEZING_EXTRACTION.md) follows its
 [bounded assessment](TEXT_FREEZING_EXTRACTION_ASSESSMENT.md), retaining selector
 evidence, parser continuation and caller-owned event processing/reporting.
+The next recommended boundary is the
+[caption geometry assessment](CAPTION_GEOMETRY_EXTRACTION_ASSESSMENT.md): a
+proposed v224 extraction of explicit anchors and conservative measured bounds,
+retaining caller-owned proofs, pass caches and font measurements.
 
 ## Tools
 
