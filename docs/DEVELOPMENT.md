@@ -76,6 +76,10 @@ follows its [bounded assessment](DRAWING_GEOMETRY_EXTRACTION_ASSESSMENT.md),
 retaining supporting-drawing admission, source evidence, measurements and
 reporting with their producers.
 
+The proposed [v230 shared event comparison ownership step](EVENT_COMPARISON_EXTRACTION_ASSESSMENT.md)
+places layout and resolved-state helpers in existing private owners as bounded
+preparation for later subsystem extractions, preserving their distinct proofs.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
