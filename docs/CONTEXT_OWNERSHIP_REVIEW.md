@@ -11,6 +11,12 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v225 resolved event reads, replacement and their pose-validity key moved to
+`_simplify_ass/event_operations.py`, with canonical engine aliases. Cache/history
+sharing and edit invalidation remain unchanged. Callers retain proof admission,
+absolute exposure production/clipping, pipeline transitions and diagnostics.
+See [EVENT_OPERATIONS_EXTRACTION.md](EVENT_OPERATIONS_EXTRACTION.md).
+
 In v224 explicit anchors, the inline-layout guard and conservative measured
 bounds moved to `_simplify_ass/caption_geometry.py`, with canonical engine
 aliases for functions and position patterns. Inputs remain borrowed; font

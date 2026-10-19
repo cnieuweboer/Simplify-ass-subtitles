@@ -51,9 +51,10 @@ The [v224 caption geometry extraction](CAPTION_GEOMETRY_EXTRACTION.md) follows
 its [bounded assessment](CAPTION_GEOMETRY_EXTRACTION_ASSESSMENT.md), retaining
 caller-owned proofs, pass caches and font measurements.
 
-The proposed [v225 event operations extraction](EVENT_OPERATIONS_EXTRACTION_ASSESSMENT.md)
-assesses resolved evaluation, event replacement and their shared pose-validity
-key, preserving cache/history and source-evidence contracts without adapters.
+The [v225 event operations extraction](EVENT_OPERATIONS_EXTRACTION.md) follows
+its [bounded assessment](EVENT_OPERATIONS_EXTRACTION_ASSESSMENT.md), moving resolved
+evaluation, event replacement and their shared pose-validity key while preserving
+cache/history and source-evidence contracts without adapters.
 
 ## Tools
 
@@ -104,7 +105,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 100 current scripts. The runner uses three workers for
+The suite inventory lists 101 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
