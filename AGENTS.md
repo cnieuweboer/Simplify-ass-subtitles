@@ -20,6 +20,12 @@ Reconstructed caption rendering and its source-paint resolver/record live in
 `_simplify_ass/caption_rendering.py`, with direct engine aliases. Callers retain
 source-family, timing, geometry and compositing proofs; the module borrows those
 inputs and preserves the established contrast, contour and shadow-transfer policy.
+Explicit caption anchors and conservative measured bounds live in
+`_simplify_ass/caption_geometry.py`, with direct engine aliases for the four
+functions and shared position patterns. Geometry borrows event inputs and the
+supplied metrics owner. Keep font caches, pass bounds caches, source-span extent
+proofs, event replacement and reporting with their existing owners. Preserve
+unknown bounds, adjacency distinctions and the separate anchor precisions.
 ASS style/override interpretation lives in `_simplify_ass/ass_overrides.py`, with
 engine aliases for existing callers. Its recognized vocabulary is independent
 of the text freezer's output whitelist. Transform sampling lives in
@@ -86,7 +92,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-99-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+100-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it

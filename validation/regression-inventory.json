@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.18.223",
+  "version": "2026.10.19.224",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -175,6 +175,11 @@
       "script": "tests/check_text_freezing_module.py",
       "status": "current",
       "category": "text freezing module boundary"
+    },
+    {
+      "script": "tests/check_caption_geometry_module.py",
+      "status": "current",
+      "category": "caption geometry module boundary"
     },
     {
       "script": "tests/check_source_visibility.py",

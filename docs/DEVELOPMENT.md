@@ -47,10 +47,9 @@ caller-owned family proofs and the current paint policy.
 The [v223 text freezing extraction](TEXT_FREEZING_EXTRACTION.md) follows its
 [bounded assessment](TEXT_FREEZING_EXTRACTION_ASSESSMENT.md), retaining selector
 evidence, parser continuation and caller-owned event processing/reporting.
-The next recommended boundary is the
-[caption geometry assessment](CAPTION_GEOMETRY_EXTRACTION_ASSESSMENT.md): a
-proposed v224 extraction of explicit anchors and conservative measured bounds,
-retaining caller-owned proofs, pass caches and font measurements.
+The [v224 caption geometry extraction](CAPTION_GEOMETRY_EXTRACTION.md) follows
+its [bounded assessment](CAPTION_GEOMETRY_EXTRACTION_ASSESSMENT.md), retaining
+caller-owned proofs, pass caches and font measurements.
 
 ## Tools
 
@@ -101,7 +100,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 99 current scripts. The runner uses three workers for
+The suite inventory lists 100 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.

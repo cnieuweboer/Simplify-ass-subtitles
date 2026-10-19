@@ -1,5 +1,8 @@
 # Caption geometry — bounded extraction assessment
 
+Historical assessment of v223. Implemented in
+[v224](CAPTION_GEOMETRY_EXTRACTION.md); the evidence below describes the assessment.
+
 Assessed against v223 (`2026.10.18.223`). Recommend **v224: extract explicit
 caption anchors and conservative measured bounds into
 `_simplify_ass/caption_geometry.py`**, retaining direct engine aliases. One

@@ -11,6 +11,13 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v224 explicit anchors, the inline-layout guard and conservative measured
+bounds moved to `_simplify_ass/caption_geometry.py`, with canonical engine
+aliases for functions and position patterns. Inputs remain borrowed; font
+measurements/caches stay with the supplied metrics owner. Bounds caches, source
+versus output extent decisions, adjacency/coverage proofs and diagnostics stay
+with callers. See [CAPTION_GEOMETRY_EXTRACTION.md](CAPTION_GEOMETRY_EXTRACTION.md).
+
 In v223 static override/text freezing moved with `FrozenBlock` and its shared
 output whitelist to `_simplify_ass/text_freezing.py`, retaining engine aliases.
 Stream buffers stay call-local; initial/default/style inputs and source seeds
