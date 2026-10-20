@@ -111,6 +111,10 @@ The [v237 masked-glyph extraction](MASKED_GLYPH_EXTRACTION.md) follows its
 [bounded assessment](MASKED_GLYPH_EXTRACTION_ASSESSMENT.md), moving the complete
 operation while preserving pass-owned caches/fonts and caller-owned reporting.
 
+The [next bounded assessment](KARAOKE_COMPLETION_EXTRACTION_ASSESSMENT.md)
+recommends v238 karaoke completion extraction, retaining the existing outline
+producer and both caller-owned handoffs. No production preparation is needed.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
