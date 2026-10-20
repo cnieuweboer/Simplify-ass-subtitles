@@ -3,7 +3,7 @@ import test_paths
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import get_type_hints
 import subprocess
 import pickle
@@ -16,7 +16,7 @@ from _simplify_ass import caption_geometry as geometry
 from check_windows_installer import load_installer, ROOT
 
 NAMES = ('NUM', 'POS_RE', 'get_pos', 'set_pos', 'inline_layout_key', 'caption_bounds',
-         'text_height', 'placement_key', 'text_layout_key', 'compatible_text_layout')
+         'text_height', 'placement_key', 'text_layout_key', 'compatible_text_layout', 'rectangle_clip')
 
 
 class Metric:
@@ -61,6 +61,21 @@ def child(code, cwd, tools):
 
 
 class CaptionGeometryModuleChecks(unittest.TestCase):
+    def test_rectangle_clip_reads_borrowed_source_coordinates_without_resolving(self):
+        for value,expected in (('(0,0,1920,1080)',(0.,0.,1920.,1080.)),
+                               ('( -2.5 , +.5, 3.25, 6 )',(-2.5,.5,3.25,6.)),
+                               ('(3,0,2,9)',None),('(0,3,2,3)',None),
+                               ('(m 0 0 l 2 0 2 9)',None),('(1,2,3)',None),
+                               ('(1,2,3,4,5)',None),('(nan,0,2,9)',None),
+                               ('(0,0,inf,9)',None),('(1,2,3,4)junk',None)):
+            state = MappingProxyType({'clip':value})
+            with self.subTest(value=value):
+                self.assertEqual(geometry.rectangle_clip(SimpleNamespace(state=state)),expected)
+                self.assertEqual(dict(state),{'clip':value})
+        self.assertIsNone(geometry.rectangle_clip(SimpleNamespace(state=MappingProxyType({}))))
+        self.assertIsNone(geometry.rectangle_clip(SimpleNamespace(state=MappingProxyType(
+            {'clip':'(0,0,2,9)','iclip':None}))))
+
     def test_canonical_aliases_types_and_patterns(self):
         for name in NAMES:
             self.assertIs(getattr(engine, name), getattr(geometry, name))

@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 import re
 
-from .ass_overrides import DEFAULT_STATE, OVERRIDE_RE
+from .ass_overrides import DEFAULT_STATE, OVERRIDE_RE, NUMBER
 from .event_model import Event
 from .font_metrics import FontMetrics
 
@@ -177,3 +177,11 @@ def compatible_text_layout(a: Event, b: Event) -> bool:
         if abs(x-y)>.05*max(abs(x),abs(y),1e-6):
             return False
     return True
+
+
+def rectangle_clip(e: Event):
+    value = e.state.get("clip", "")
+    if "iclip" in e.state or not re.fullmatch(r"\(\s*" + NUMBER + r"(?:\s*,\s*" + NUMBER + r"){3}\s*\)", value):
+        return None
+    coords = tuple(map(float, re.findall(NUMBER, value)))
+    return coords if coords[0] < coords[2] and coords[1] < coords[3] else None

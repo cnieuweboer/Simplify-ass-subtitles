@@ -205,6 +205,8 @@ from _simplify_ass.moving_glyphs import (
     MovingGlyphChain,
 )
 
+from _simplify_ass.caption_geometry import rectangle_clip
+
 __version__ = "2026.10.20.242"
 
 
@@ -1960,12 +1962,6 @@ def cap_vector_cues(events: list[Event], limit: int) -> tuple[list[Event], int]:
     return sorted(result,key=lambda e:e.source_index),len(events)-len(result)
 
 
-def rectangle_clip(e: Event):
-    value = e.state.get("clip", "")
-    if "iclip" in e.state or not re.fullmatch(r"\(\s*" + NUMBER + r"(?:\s*,\s*" + NUMBER + r"){3}\s*\)", value):
-        return None
-    coords = tuple(map(float, re.findall(NUMBER, value)))
-    return coords if coords[0] < coords[2] and coords[1] < coords[3] else None
 
 
 def join_text_clip_tiles(events: list[Event]) -> tuple[list[Event], int]:
