@@ -8,8 +8,9 @@ from unittest.mock import patch
 def patch_interpreter_bindings(engine, name, *args, **kwargs):
     """Patch the defining binding and known consumers with one replacement.
 
-    Samplers, selection, freezing, static objects, compaction and karaoke completion import interpreter functions
-    directly. Resolve their actual owners through engine exports so historical
+    Sampling, selection, freezing, static objects, compaction and karaoke
+    consumers import interpreter functions directly. Resolve their actual owners
+    through engine exports so historical
     single-file engines still need only one binding; do not add production
     forwarding for test spies.
     """
@@ -19,7 +20,10 @@ def patch_interpreter_bindings(engine, name, *args, **kwargs):
     bindings = []
     consumers = [engine, owner, *(
         inspect.getmodule(getattr(engine, entry, None))
-        for entry in ('sample_transform_state', 'sample_transform_states', 'select_static_state', 'freeze_block', 'static_object_key', 'compact_static_overrides', 'normalize_karaoke_completion_paint'))]
+        for entry in ('sample_transform_state', 'sample_transform_states',
+                      'select_static_state', 'freeze_block', 'static_object_key',
+                      'compact_static_overrides', 'normalize_karaoke_completion_paint',
+                      '_settled_caption_paint_samples'))]
     for consumer in consumers:
         if (consumer is not None and consumer not in bindings and
                 getattr(consumer, name, None) is original):

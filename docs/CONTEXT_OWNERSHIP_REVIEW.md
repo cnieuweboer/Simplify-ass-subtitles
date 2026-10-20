@@ -11,6 +11,16 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v239 shared settled paint estimation and row pooling moved unchanged to
+`_simplify_ass/caption_paint_sampling.py`, with direct engine aliases. Source
+records, plane lists, accepted samples and metrics remain borrowed; masks and
+weighted accumulators stay call-local. Metrics retains font caches and caption
+rendering retains the canonical `SourceCaptionPaint`. Both producers still prove
+ownership, geometry, timing and compositing before accepting whole-row paint;
+fallback decisions, evidence lifetime and reporting stay with those producers.
+Pillow remains function-local. See
+[CAPTION_PAINT_SAMPLING_EXTRACTION.md](CAPTION_PAINT_SAMPLING_EXTRACTION.md).
+
 In v238 karaoke completion moved unchanged with two frozen records to
 `_simplify_ass/karaoke_completion.py`, with direct engine aliases. Events,
 visibility, source maps, supplied profiles and their paint dictionaries remain

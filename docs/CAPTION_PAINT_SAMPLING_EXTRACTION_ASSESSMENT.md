@@ -1,5 +1,8 @@
 # Settled caption paint sampling — bounded extraction assessment
 
+Implemented in [v239](CAPTION_PAINT_SAMPLING_EXTRACTION.md). The evidence below
+describes the historical assessment.
+
 Assessed against v238 (`2026.10.20.238`, commit `aea576a`). Recommended next
 release: **v239 — Establish shared settled-paint sampling ownership** in
 `_simplify_ass/caption_paint_sampling.py`, with no intended behavior changes.

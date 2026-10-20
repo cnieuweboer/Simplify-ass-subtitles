@@ -108,6 +108,15 @@ for its frozen result, shared output whitelist and five functions. It owns local
 stream state and serialization; selectors retain their sampling/evidence work.
 Preserve borrowed inputs, canonical continuation/selection identity, the visible-only
 bypass and post-selection blur clamping with pre-clamp settled snapshots.
+Shared settled-plane paint estimation and complete-row pooling live in
+`_simplify_ass/caption_paint_sampling.py`, with direct engine aliases for both
+helpers. Events, styles, continuations, plane lists and accepted samples remain
+borrowed; raster buffers and accumulators are call-local. Metrics retains font
+caches, and `caption_rendering` retains the canonical `SourceCaptionPaint` record.
+Keep Pillow lazy and preserve approximation, ordering, bounds and refusal policy.
+Glow/backed-glyph producers retain source-family, timing, geometry, compositing
+and row-completeness proof, fallback decisions and reporting. Sampling grants no
+removal authority. Interpreter observers must include the defining consumer.
 Ordered karaoke-completion matching, sweep proof and destination paint replacement
 live in `_simplify_ass/karaoke_completion.py`, with direct engine aliases for
 thirteen functions and two frozen records. Borrow source/working events,
@@ -177,7 +186,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-111-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+112-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it
