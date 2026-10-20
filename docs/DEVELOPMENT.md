@@ -107,6 +107,10 @@ retaining caller-owned source selection, word-echo ownership handoff and reporti
 The [v236 masked-font cleanup fix](MASKED_FONT_RESOURCE_CLEANUP.md) closes the
 separately identified resource-lifetime gap without changing matching policy.
 
+The [next bounded assessment](MASKED_GLYPH_EXTRACTION_ASSESSMENT.md) recommends
+v237 masked-glyph extraction: the complete processing operation and its pass-owned
+font lifetime can move without another preparatory production release.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
