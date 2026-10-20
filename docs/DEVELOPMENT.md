@@ -130,9 +130,9 @@ The [v242 moving-glyph extraction](MOVING_GLYPH_EXTRACTION.md) follows its
 [bounded assessment](MOVING_GLYPH_EXTRACTION_ASSESSMENT.md), retaining caller
 orchestration while establishing independent shared source-read owners.
 
-The [next bounded assessment](SLICED_TEXT_EXTRACTION_ASSESSMENT.md) recommends
-v243 extraction of complete sliced-text sequence processing, with the shared
-rectangular-clip read moving to caption geometry as preparation in the same release.
+The [v243 sliced-text extraction](SLICED_TEXT_EXTRACTION.md) follows its
+[bounded assessment](SLICED_TEXT_EXTRACTION_ASSESSMENT.md), retaining source-fragment
+orchestration while establishing shared rectangular-clip geometry ownership.
 
 ## Tools
 

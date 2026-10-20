@@ -1,5 +1,8 @@
 # Sliced-text sequences — bounded extraction assessment
 
+Implemented in [v243](SLICED_TEXT_EXTRACTION.md). The evidence below describes
+the historical assessment.
+
 Assessed against v242 (`2026.10.20.242`, commit `08e9b25`). Recommended next
 release: **v243 — Extract complete sliced-text sequence processing** into
 `_simplify_ass/sliced_text.py`, with no intended behavior changes.

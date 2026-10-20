@@ -11,6 +11,18 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v243 complete sliced-text admission, coverage/paint proof, proposal arbitration
+and authored timing moved unchanged with two frozen records to
+`_simplify_ass/sliced_text.py`. Events, catalogs, evidence and measurement context
+remain borrowed; resolved source successors, token lists, indexes, coverage
+groups and timing/proposal buffers belong to one call. Preserve shallow sharing,
+complete incoming/outgoing proof, unanimous held paint, untouched identity,
+source-index ordering and actual list-slot counts. The source-fragment caller
+retains isolation, backing-pulse handoff, row adoption and aggregate reporting.
+Shared `rectangle_clip()` reads belong to caption geometry and retain source
+coordinates/refusal without parsing or caching events. See
+[SLICED_TEXT_EXTRACTION.md](SLICED_TEXT_EXTRACTION.md).
+
 In v242 complete moving-glyph source indexing, chain/fade proof and replacement
 moved unchanged with two frozen records to `_simplify_ass/moving_glyphs.py`.
 Borrow source/retained events, visible maps and optional metrics; own resolved
