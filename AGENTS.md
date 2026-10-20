@@ -108,6 +108,16 @@ for its frozen result, shared output whitelist and five functions. It owns local
 stream state and serialization; selectors retain their sampling/evidence work.
 Preserve borrowed inputs, canonical continuation/selection identity, the visible-only
 bypass and post-selection blur clamping with pre-clamp settled snapshots.
+Complete backed-glyph pulse admission, row/coverage/return proofs, exit handling,
+paint selection and ordered replacement live in `_simplify_ass/backed_glyph_pulses.py`,
+with direct engine aliases for eighteen functions and two frozen records. Borrow
+source events, word/position maps and optional metrics; keep resolved indexes,
+continuations, row evidence and proposal/removal buffers call-local. Preserve
+shallow record sharing, complete-row/conflict refusal, source-ID application,
+original list placement, untouched identity and actual list-length reduction.
+The caller retains source-fragment isolation, stage order before sliced text,
+row handoffs and reporting. Sampling/rendering and later full-row assembly keep
+their existing owners. Interpreter observers follow the defining consumer.
 Shared settled-plane paint estimation and complete-row pooling live in
 `_simplify_ass/caption_paint_sampling.py`, with direct engine aliases for both
 helpers. Events, styles, continuations, plane lists and accepted samples remain
@@ -186,7 +196,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-112-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+113-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it

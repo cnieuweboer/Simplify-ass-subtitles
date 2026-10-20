@@ -119,9 +119,9 @@ The [v239 shared paint-sampling extraction](CAPTION_PAINT_SAMPLING_EXTRACTION.md
 follows its [bounded assessment](CAPTION_PAINT_SAMPLING_EXTRACTION_ASSESSMENT.md),
 retaining separate producer proofs while giving their shared estimator an owner.
 
-The [next bounded assessment](BACKED_GLYPH_PULSES_EXTRACTION_ASSESSMENT.md)
-recommends v240 extraction of complete backed-glyph pulse processing. V239 closed
-its shared-paint dependencies; no further production preparation is needed.
+The [v240 backed-glyph pulse extraction](BACKED_GLYPH_PULSES_EXTRACTION.md)
+follows its [bounded assessment](BACKED_GLYPH_PULSES_EXTRACTION_ASSESSMENT.md),
+retaining caller orchestration, shared paint sampling and later row assembly.
 
 ## Tools
 

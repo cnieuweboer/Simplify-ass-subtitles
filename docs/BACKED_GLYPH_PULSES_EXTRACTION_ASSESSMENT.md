@@ -1,5 +1,8 @@
 # Backed-glyph pulses — bounded extraction assessment
 
+Implemented in [v240](BACKED_GLYPH_PULSES_EXTRACTION.md). The evidence below
+describes the historical assessment.
+
 Assessed against v239 (`2026.10.20.239`, commit `9af1e8f`). Recommended next
 release: **v240 — Extract backed-glyph pulse processing** into
 `_simplify_ass/backed_glyph_pulses.py`, with no intended behavior changes.

@@ -11,6 +11,17 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v240 complete backed-glyph pulse processing moved unchanged with two frozen
+records to `_simplify_ass/backed_glyph_pulses.py`, with direct engine aliases.
+Events, word/position maps and optional metrics remain borrowed. Resolved-detail
+and continuation maps, local row proof, proposals and ordered application buffers
+belong to one call. Preserve shallow record sharing, cached versus uncached
+state ownership, refusal, untouched identity and actual list-slot counts.
+Source-fragment orchestration retains input isolation, sliced-text stage order,
+row adoption and aggregate statistics. Shared sampling, rendering and later
+row assembly retain their owners. See
+[BACKED_GLYPH_PULSES_EXTRACTION.md](BACKED_GLYPH_PULSES_EXTRACTION.md).
+
 In v239 shared settled paint estimation and row pooling moved unchanged to
 `_simplify_ass/caption_paint_sampling.py`, with direct engine aliases. Source
 records, plane lists, accepted samples and metrics remain borrowed; masks and
