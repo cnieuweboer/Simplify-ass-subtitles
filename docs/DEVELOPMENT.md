@@ -92,6 +92,10 @@ its [bounded assessment](EFFECT_VALIDATION_EXTRACTION_ASSESSMENT.md), giving str
 effect validation and raw event-token access shared private owners while retaining
 caller-owned source proofs and caches.
 
+The proposed [v233 frame-echo extraction](FRAME_ECHO_EXTRACTION_ASSESSMENT.md)
+assesses the now-closed processing subsystem, including its cache/source ownership,
+replacement-test bindings and current-policy behavioral coverage. Production remains v232.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
