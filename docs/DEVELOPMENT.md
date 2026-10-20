@@ -101,6 +101,10 @@ The [v234 effect-endpoint rounding fix](EFFECT_ENDPOINT_ROUNDING.md) resolves th
 shared move/transform boundary issue found during v233, without retiming sources
 or changing the caller-owned effect proofs.
 
+The [next bounded assessment](COMPLETE_LINE_JITTER_EXTRACTION_ASSESSMENT.md)
+recommends v235 complete-line jitter extraction with no preparatory production
+change, and records a separate masked-font resource-lifetime follow-up.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
