@@ -126,6 +126,10 @@ retaining caller orchestration, shared paint sampling and later row assembly.
 The [v241 Pillow compatibility fix](PILLOW_PIXEL_ACCESS.md) resolves the deprecated
 pixel-read follow-up without changing sampled paint or raising Pillow requirements.
 
+The [next bounded assessment](MOVING_GLYPH_EXTRACTION_ASSESSMENT.md) recommends
+v242 extraction of complete moving-glyph sequence processing, with two small
+shared-helper ownership moves as preparation within the same release.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
