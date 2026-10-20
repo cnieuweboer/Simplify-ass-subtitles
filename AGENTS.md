@@ -108,6 +108,10 @@ for its frozen result, shared output whitelist and five functions. It owns local
 stream state and serialization; selectors retain their sampling/evidence work.
 Preserve borrowed inputs, canonical continuation/selection identity, the visible-only
 bypass and post-selection blur clamping with pre-clamp settled snapshots.
+Masked-glyph font handles remain pass-owned in the engine. Close a newly opened
+handle locally if glyph-set initialization fails; register only initialized
+handles and close them in pass-level `finally`. Keep per-glyph negative caching
+and conservative outline refusal unchanged; the supplied metrics owner is borrowed.
 The exact-font measurement owner lives in `_simplify_ass/font_metrics.py`;
 the engine re-exports its four classes for existing callers. Exact-font contour
 matching and cubic fitting live in `_simplify_ass/font_outlines.py`, depending

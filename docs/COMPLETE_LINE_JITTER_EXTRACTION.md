@@ -88,3 +88,7 @@ No preparatory production release, workaround, local runtime exception, duplicat
 proof or downstream repair was needed. No new dedicated follow-up was identified.
 The previously reproduced masked-font initialization cleanup failure and scrolling
 single-use iterator contract remain independent work; neither is changed here.
+
+The masked-font cleanup follow-up was subsequently resolved in
+[v236](MASKED_FONT_RESOURCE_CLEANUP.md); the scrolling iterator contract remains
+independent work.

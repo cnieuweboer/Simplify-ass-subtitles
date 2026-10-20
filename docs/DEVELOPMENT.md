@@ -104,7 +104,8 @@ or changing the caller-owned effect proofs.
 The [v235 complete-line jitter extraction](COMPLETE_LINE_JITTER_EXTRACTION.md)
 follows its [bounded assessment](COMPLETE_LINE_JITTER_EXTRACTION_ASSESSMENT.md),
 retaining caller-owned source selection, word-echo ownership handoff and reporting.
-The separately identified masked-font resource-lifetime follow-up remains open.
+The [v236 masked-font cleanup fix](MASKED_FONT_RESOURCE_CLEANUP.md) closes the
+separately identified resource-lifetime gap without changing matching policy.
 
 ## Tools
 

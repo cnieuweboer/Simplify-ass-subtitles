@@ -11,6 +11,14 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v236 masked-glyph processing retains local ownership of each freshly opened
+font until glyph-set initialization succeeds. Failures close that handle before
+ordinary unsupported-outline refusal or interruption propagation. Initialized
+handles enter the existing pass cache and close in pass-level `finally`, including
+unexpected proof failures. The metrics owner remains borrowed, and per-glyph
+negative caching, source ownership and matching results are unchanged. See
+[MASKED_FONT_RESOURCE_CLEANUP.md](MASKED_FONT_RESOURCE_CLEANUP.md).
+
 In v235 complete-line jitter processing moved unchanged with its two frozen
 records to `_simplify_ass/complete_line_jitter.py`, with direct engine aliases.
 Inputs remain borrowed; family/group/removal/replacement state remains local to

@@ -88,6 +88,9 @@ separate bounded reliability change before extracting masked-glyph processing;
 it is not a prerequisite for the jitter extraction. No runtime change is made
 for it in this assessment.
 
+The masked-font resource follow-up is resolved separately in
+[v236](MASKED_FONT_RESOURCE_CLEANUP.md).
+
 ## Fresh assessment evidence and implementation acceptance
 
 The isolated prototype moves all nine definition ASTs unchanged and uses direct

@@ -154,7 +154,7 @@ from _simplify_ass.complete_line_jitter import (
     _render_complete_line_jitter, flatten_complete_line_jitter,
 )
 
-__version__ = "2026.10.20.235"
+__version__ = "2026.10.20.236"
 
 
 class _FontTimestampFilter(logging.Filter):
@@ -4093,7 +4093,12 @@ def _masked_glyph_outline(context: MaskedGlyphContext, base: Event) -> tuple | N
             from fontTools.pens.qu2cuPen import Qu2CuPen
             if face.key not in context.fonts:
                 font = context.metric.open_face(face)
-                context.fonts[face.key] = (font,font.getGlyphSet())
+                # Transfer only fully initialized handles into the pass cache.
+                try:
+                    context.fonts[face.key] = (font,font.getGlyphSet())
+                except BaseException:
+                    font.close()
+                    raise
             font,glyphs = context.fonts[face.key]
             pen = DecomposingRecordingPen(glyphs)
             glyphs[font.getBestCmap()[ord(glyph)]].draw(pen)
@@ -4276,20 +4281,22 @@ def remove_masked_glyph_effects(events: list[Event],
     """
     context = _prepare_masked_glyphs(events,visible_map,metric,animated_sources)
     removed, replacements, valid_shadow_masks = set(), {}, set()
-    _index_masked_texture_peers(events,context)
-    for e in events:
-        pos = context.positions[e.source_index]
-        if (e.kind != "Dialogue" or pos is None or context.inline_layouts[e.source_index] or
-                "iclip" in e.state or "clip" not in e.state):
-            continue
-        mask = _parse_glyph_mask(e)
-        if mask is None:
-            continue
-        _match_masked_shadow_texture(context,e,mask,removed,valid_shadow_masks)
-        proof = _match_masked_glyph_bases(context,e,mask,removed)
-        _apply_masked_glyph_proof(context,e,mask,proof,removed,replacements)
-    _follow_proven_shadow_mask_phases(context,valid_shadow_masks,removed)
-    _close_masked_glyph_fonts(context)
+    try:
+        _index_masked_texture_peers(events,context)
+        for e in events:
+            pos = context.positions[e.source_index]
+            if (e.kind != "Dialogue" or pos is None or context.inline_layouts[e.source_index] or
+                    "iclip" in e.state or "clip" not in e.state):
+                continue
+            mask = _parse_glyph_mask(e)
+            if mask is None:
+                continue
+            _match_masked_shadow_texture(context,e,mask,removed,valid_shadow_masks)
+            proof = _match_masked_glyph_bases(context,e,mask,removed)
+            _apply_masked_glyph_proof(context,e,mask,proof,removed,replacements)
+        _follow_proven_shadow_mask_phases(context,valid_shadow_masks,removed)
+    finally:
+        _close_masked_glyph_fonts(context)
     return [replacements.get(e.source_index,e) for e in events
             if e.source_index not in removed],len(removed)
 

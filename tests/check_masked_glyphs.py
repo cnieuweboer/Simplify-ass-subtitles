@@ -15,6 +15,7 @@ import math
 import sys
 import tempfile
 import trace
+from unittest.mock import patch
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.pens.recordingPen import DecomposingRecordingPen,RecordingPen
@@ -112,6 +113,8 @@ class FontProxy:
     def __getitem__(self,key):return self.font[key]
     def getBestCmap(self):return self.font.getBestCmap()
     def getGlyphSet(self):
+        if self.mode=='glyphset_failure':raise RuntimeError('unsupported glyph set')
+        if self.mode=='glyphset_interrupt':raise KeyboardInterrupt('glyph-set initialization interrupted')
         glyphs=self.font.getGlyphSet()
         if self.mode=='draw_failure':
             class BrokenGlyph:
@@ -134,7 +137,10 @@ class RecordingMetric:
     def open_face(self,face):
         self.calls.append(('open',face.key))
         if self.mode=='open_failure':raise RuntimeError('corrupt font')
-        return FontProxy(self.engine.open_face(face),self.calls,self.mode)
+        mode=self.mode
+        if mode=='glyphset_failure_once':
+            mode='glyphset_failure' if sum(c[0]=='open' for c in self.calls)==1 else 'real'
+        return FontProxy(self.engine.open_face(face),self.calls,mode)
 
 def event(text='A',x=160,y=100,start=1,end=5,layer=0,tags='',clip=None,**options):
     return dict(text=text,x=x,y=y,start=start,end=end,layer=layer,tags=tags,clip=clip,**options)
@@ -155,7 +161,7 @@ def inputs(module,descriptors,animation):
     animated={e.source_index for e in events if e.kind=='Dialogue'} if animation else set()
     return events,visible,animated
 
-tracer=trace.Trace(count=True,trace=False);checks=[]
+tracer=trace.Trace(count=True,trace=False);checks=[];resource_checks=[]
 with tempfile.TemporaryDirectory() as directory:
     font_path=Path(directory)/'MaskGeometryTest.ttf';make_font(font_path)
     mask=authored_mask(font_path)
@@ -245,6 +251,49 @@ with tempfile.TemporaryDirectory() as directory:
     assert all(c['opened']==1 and c['closed']==0 for c in checks if c['case']=='cached_same_glyph' and c['mode']=='open_failure')
     assert all(c['opened']==1 and c['closed']==1 and c['removed']==0 for c in checks if c['case']=='cached_same_glyph' and c['mode']=='draw_failure')
 
+    # Current resource contracts are separate from historical output/call comparisons.
+    # These initialization failures intentionally close more handles than v123.
+    repeated = [event(), event(x=200), texture(mask), texture(authored_mask(font_path,x=200))]
+    distinct = [event(), event('B',x=200), texture(mask), texture(authored_mask(font_path,'B',x=200))]
+    resource_cases = [
+        ('cached success', 'real', repeated, None, None, 1, 1, 2),
+        ('cached draw failure', 'draw_failure', repeated, None, None, 1, 1, 0),
+        ('open failure', 'open_failure', repeated, None, None, 1, 0, 0),
+        ('cached initialization failure', 'glyphset_failure', repeated, None, None, 1, 1, 0),
+        ('distinct failed glyphs', 'glyphset_failure', distinct, None, None, 2, 2, 0),
+        ('later glyph recovers', 'glyphset_failure_once', distinct, None, None, 2, 2, 1),
+        ('initialization interrupt', 'glyphset_interrupt', repeated, None, KeyboardInterrupt, 1, 1, None),
+        ('later proof failure', 'real', repeated, RuntimeError, RuntimeError, 1, 1, None),
+        ('later proof interrupt', 'real', repeated, KeyboardInterrupt, KeyboardInterrupt, 1, 1, None),
+    ]
+    for name,mode,descriptors,fault,expected_error,opened,closed,removed in resource_cases:
+        events,visible,animated=inputs(current,descriptors,False)
+        before=deepcopy(snapshot((events,visible,animated)))
+        metric=RecordingMetric(engines[current],mode)
+        raised=None;result=None
+        guard=(patch.object(current,'_apply_masked_glyph_proof',side_effect=fault('proof interrupted'))
+               if fault else contextlib.nullcontext())
+        try:
+            with guard:
+                result=tracer.runfunc(current.remove_masked_glyph_effects,events,visible,metric,animated)
+        except BaseException as error:
+            raised=type(error)
+        assert raised is expected_error,(name,raised,expected_error)
+        actual_opened=sum(c[0]=='open' for c in metric.calls)
+        actual_closed=sum(c[0]=='close' for c in metric.calls)
+        assert (actual_opened,actual_closed)==(opened,closed),(name,metric.calls)
+        assert before==snapshot((events,visible,animated)),(name,'input mutation')
+        if removed is not None:
+            assert result[1]==removed,(name,result[1],removed)
+        if name in ('cached initialization failure','distinct failed glyphs'):
+            assert len(result[0])==len(events) and all(a is b for a,b in zip(result[0],events)),name
+        if name=='later glyph recovers':
+            # A failed glyph remains unproved while the other glyph can still match.
+            masks=[e for e in result[0] if 'clip' in e.state]
+            assert len(masks)==1 and masks[0].state['clip']==events[2].state['clip'],name
+        resource_checks.append(dict(case=name,open_attempts=actual_opened,closed=actual_closed,
+                                    propagated_error=raised.__name__ if raised else None))
+
 # Compare real target-pass inputs and edits during two complete focused conversions.
 focused=[]
 for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass'):
@@ -286,6 +335,6 @@ for node in ast.parse(Path(current.__file__).read_text()).body:
             unexecuted_lines=sorted(statements-executed))
 assert all(item['exercised'] for item in coverage.values()),coverage
 report=dict(reference='v123',comparisons=len(checks),font_calls_and_closure_contour_independent_contract_identical=True,
-    focused_conversions=focused,helper_coverage=coverage,checks=checks)
+    focused_conversions=focused,helper_coverage=coverage,checks=checks,resource_checks=resource_checks)
 (ROOT/'validation/masked-glyph-checks.json').write_text(json.dumps(report,indent=2)+'\n')
-print(f'{len(checks)} masked-glyph comparisons; font calls and closure identical; 2 focused conversions; all 17 helpers exercised')
+print(f'{len(checks)} masked-glyph comparisons; font calls and closure identical; 2 focused conversions; all 17 helpers exercised; {len(resource_checks)} resource lifecycle cases passed')
