@@ -107,9 +107,9 @@ retaining caller-owned source selection, word-echo ownership handoff and reporti
 The [v236 masked-font cleanup fix](MASKED_FONT_RESOURCE_CLEANUP.md) closes the
 separately identified resource-lifetime gap without changing matching policy.
 
-The [next bounded assessment](MASKED_GLYPH_EXTRACTION_ASSESSMENT.md) recommends
-v237 masked-glyph extraction: the complete processing operation and its pass-owned
-font lifetime can move without another preparatory production release.
+The [v237 masked-glyph extraction](MASKED_GLYPH_EXTRACTION.md) follows its
+[bounded assessment](MASKED_GLYPH_EXTRACTION_ASSESSMENT.md), moving the complete
+operation while preserving pass-owned caches/fonts and caller-owned reporting.
 
 ## Tools
 

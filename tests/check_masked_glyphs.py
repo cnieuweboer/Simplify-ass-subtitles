@@ -15,6 +15,7 @@ import math
 import sys
 import tempfile
 import trace
+import inspect
 from unittest.mock import patch
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
@@ -22,6 +23,7 @@ from fontTools.pens.recordingPen import DecomposingRecordingPen,RecordingPen
 from fontTools.pens.qu2cuPen import Qu2CuPen
 from fontTools.ttLib import TTFont
 import simplify_ass as current
+MASK_OWNER=inspect.getmodule(current.remove_masked_glyph_effects)
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
 install_row_test_doubles(current, historical_fade_timing=True)
 
@@ -271,7 +273,7 @@ with tempfile.TemporaryDirectory() as directory:
         before=deepcopy(snapshot((events,visible,animated)))
         metric=RecordingMetric(engines[current],mode)
         raised=None;result=None
-        guard=(patch.object(current,'_apply_masked_glyph_proof',side_effect=fault('proof interrupted'))
+        guard=(patch.object(MASK_OWNER,'_apply_masked_glyph_proof',side_effect=fault('proof interrupted'))
                if fault else contextlib.nullcontext())
         try:
             with guard:
@@ -323,9 +325,9 @@ for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass')
 audit=json.loads((ROOT/'validation/masked-extraction-blocks.json').read_text())
 helpers={entry['helper'] for entry in audit}
 executed={line for (filename,line),count in tracer.results().counts.items()
-          if Path(filename).resolve()==Path(current.__file__).resolve() and count}
+          if Path(filename).resolve()==Path(MASK_OWNER.__file__).resolve() and count}
 coverage={}
-for node in ast.parse(Path(current.__file__).read_text()).body:
+for node in ast.parse(Path(MASK_OWNER.__file__).read_text()).body:
     if isinstance(node,ast.FunctionDef) and node.name in helpers:
         statements={n.lineno for n in ast.walk(node) if isinstance(n,ast.stmt)
             and not isinstance(n,ast.FunctionDef) and not (isinstance(n,ast.Expr) and

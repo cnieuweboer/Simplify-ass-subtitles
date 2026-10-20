@@ -11,6 +11,15 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v237 masked-glyph processing moved unchanged with its four frozen records to
+`_simplify_ass/masked_glyphs.py`, with direct engine aliases. Caller data and
+metrics remain borrowed; geometry/outline caches, font handles, proof/removal
+state and replacement maps remain pass-local. Temporary-to-cache font ownership
+and `finally` cleanup from v236 are preserved. The caller retains source selection,
+pass order and `masked_decorations` aggregation. Test fault injection and helper
+coverage follow the defining owner. See
+[MASKED_GLYPH_EXTRACTION.md](MASKED_GLYPH_EXTRACTION.md).
+
 In v236 masked-glyph processing retains local ownership of each freshly opened
 font until glyph-set initialization succeeds. Failures close that handle before
 ordinary unsupported-outline refusal or interruption propagation. Initialized

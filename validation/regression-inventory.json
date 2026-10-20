@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.20.236",
+  "version": "2026.10.20.237",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -270,6 +270,11 @@
       "script": "tests/check_frame_echo_replacements.py",
       "status": "current",
       "category": "extended final review"
+    },
+    {
+      "script": "tests/check_masked_glyph_module.py",
+      "status": "current",
+      "category": "general"
     },
     {
       "script": "tests/check_complete_line_jitter_module.py",

@@ -1,5 +1,8 @@
 # Masked-glyph processing — bounded extraction assessment
 
+Implemented in [v237](MASKED_GLYPH_EXTRACTION.md). The evidence below describes
+the historical assessment.
+
 Assessed against v236 (`2026.10.20.236`, commit `13e2eae`). Recommended next
 release: **v237 — Extract masked-glyph processing** into
 `_simplify_ass/masked_glyphs.py`. V236 resolved the independent font-resource

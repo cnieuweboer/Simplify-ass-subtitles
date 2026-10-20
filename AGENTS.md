@@ -108,10 +108,15 @@ for its frozen result, shared output whitelist and five functions. It owns local
 stream state and serialization; selectors retain their sampling/evidence work.
 Preserve borrowed inputs, canonical continuation/selection identity, the visible-only
 bypass and post-selection blur clamping with pre-clamp settled snapshots.
-Masked-glyph font handles remain pass-owned in the engine. Close a newly opened
-handle locally if glyph-set initialization fails; register only initialized
-handles and close them in pass-level `finally`. Keep per-glyph negative caching
-and conservative outline refusal unchanged; the supplied metrics owner is borrowed.
+Masked-glyph indexing, exact contour/text proofs and ordered replacement live in
+`_simplify_ass/masked_glyphs.py`, with direct engine aliases for eighteen functions
+and four frozen records. Borrow working events, visibility, animation evidence and
+metrics; keep geometry/proof caches and font handles pass-local. Close temporary
+handles if initialization fails; register only initialized handles and close them
+in pass-level `finally`. Preserve per-glyph negative caching, conservative refusal,
+retained identity, source-ID counts and original list order. The caller retains
+stage placement and `masked_decorations` aggregation. Test fault injection and
+helper coverage follow the defining owner; pipeline observers use the caller alias.
 The exact-font measurement owner lives in `_simplify_ass/font_metrics.py`;
 the engine re-exports its four classes for existing callers. Exact-font contour
 matching and cubic fitting live in `_simplify_ass/font_outlines.py`, depending
@@ -163,7 +168,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-109-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+110-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it
