@@ -5,7 +5,7 @@ from dataclasses import replace as dataclass_replace
 
 from .ass_overrides import (
     DEFAULT_STATE, OVERRIDE_RE, OverrideContinuation, OverrideEvaluation,
-    evaluate_effective_state, resolve_event_style,
+    evaluate_effective_state, resolve_event_style, tokenize_override,
 )
 from .caption_geometry import inline_layout_key
 from .event_model import Event, EventEvidence
@@ -80,3 +80,8 @@ def state_key(e: Event, omit: set[str] | None = None) -> tuple:
     return tuple(sorted((k,tuple(round(x,6) if isinstance(x,(int,float)) else x for x in v) if isinstance(v,tuple)
                          else round(v,6) if isinstance(v,(int,float)) else v)
                         for k,v in e.state.items() if k not in omit and not k.startswith("_")))
+
+
+def event_override_tokens(e: Event) -> list[tuple[str,str]]:
+    return [token for block in OVERRIDE_RE.findall(e.text)
+            for token in tokenize_override(block)]

@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.20.231",
+  "version": "2026.10.20.232",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -183,6 +183,11 @@
     },
     {
       "script": "tests/check_event_operations_module.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "tests/check_effect_validation_module.py",
       "status": "current",
       "category": "general"
     },

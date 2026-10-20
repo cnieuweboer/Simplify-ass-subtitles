@@ -11,6 +11,15 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v232 strict transform/move proof validators moved unchanged to
+`_simplify_ass/effect_validation.py`; raw `event_override_tokens()` moved into event
+operations. Engine names remain direct aliases. Raw reads create fresh lists and
+never resolve formatting or install caches. Supplied parsed-change lists remain
+borrowed and retain identity. `OutlineStripEvidence` keeps exact-object-identity
+source-token reuse for its family lifetime. Callers retain source maps, allowed
+tags, timing opt-ins, proof/measurement caches, diagnostics, counters and stage
+placement. See [EFFECT_VALIDATION_EXTRACTION.md](EFFECT_VALIDATION_EXTRACTION.md).
+
 In v231 residual scrolling-track recognition, motion/edge proof and optional
 block-local concurrency removal moved unchanged to `_simplify_ass/scrolling_blocks.py`.
 Events, styles, continuations, evidence and caller metrics remain borrowed.

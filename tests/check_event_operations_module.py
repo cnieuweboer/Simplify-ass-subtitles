@@ -9,12 +9,13 @@ import pickle
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import simplify_ass as engine
 from _simplify_ass import event_operations as operations
 from check_windows_installer import load_installer, ROOT
 
-NAMES = ('event_evaluation', 'replace_event', '_frame_pose_key', 'state_key')
+NAMES = ('event_evaluation', 'replace_event', '_frame_pose_key', 'state_key', 'event_override_tokens')
 
 
 def source():
@@ -132,6 +133,40 @@ class EventOperationsModuleChecks(unittest.TestCase):
         self.assertEqual(operations.state_key(first), operations.state_key(second))
         self.assertNotEqual(operations._frame_pose_key(first), operations._frame_pose_key(second))
 
+    def test_raw_override_tokens_preserve_order_and_never_resolve_or_cache(self):
+        text = r'{\rMissing\fnA\fnB}A{\t(0,1000,\alpha&H80&)}B{\fn}'
+        expected = [('r', 'Missing'), ('fn', 'A'), ('fn', 'B'),
+                    ('t', r'(0,1000,\alpha&H80&)'), ('fn', '')]
+        for state in ({}, {'fn': 'Stale cache'}):
+            event = replace(source(), text=text, state=state,
+                            continuation=engine.OverrideContinuation('Historical', True))
+            before = deepcopy(vars(event))
+            with patch.object(operations, 'evaluate_effective_state',
+                              side_effect=AssertionError('Raw read resolved formatting')):
+                first = operations.event_override_tokens(event)
+                self.assertEqual(first, expected)
+                first.clear()
+                self.assertEqual(operations.event_override_tokens(event), expected)
+            self.assertEqual(vars(event), before)
+        self.assertEqual(operations.event_override_tokens(replace(source(), text='Plain text')), [])
+
+    def test_outline_family_keeps_exact_source_identity_and_its_own_cache(self):
+        first = source()
+        second = replace(first, text=r'{\fnOther}B')
+        family = engine.OutlineStripEvidence((), ())
+        before = deepcopy((vars(first), vars(second)))
+        with patch.object(engine, 'event_override_tokens', wraps=engine.event_override_tokens) as read:
+            tokens = family.tokens_for(first)
+            self.assertIs(family.tokens_for(first), tokens)
+            self.assertEqual(read.call_count, 1)
+            self.assertEqual(family.tokens_for(second), (('fn', 'Other'),))
+            self.assertEqual(read.call_count, 2)
+        self.assertEqual(first.source_index, second.source_index)
+        self.assertIs(family.source_tokens[id(first)][0], first)
+        self.assertIs(family.source_tokens[id(second)][0], second)
+        self.assertEqual((vars(first), vars(second)), before)
+        self.assertEqual(engine.OutlineStripEvidence((), ()).source_tokens, {})
+
     def test_cold_and_installed_operation_and_owned_uninstall(self):
         code = r'''
 from pathlib import Path
@@ -150,10 +185,16 @@ assert o.replace_event(event,state={}).continuation==o.OverrideContinuation()
 assert dict(o.state_key(event))['fs']==40.
 assert 'fs' not in dict(o.state_key(event,{'fs'}))
 assert o.state_key(replace(event,state={}))==()
+assert o.event_override_tokens(event)==[('fs','40')]
+tokens=o.event_override_tokens(event)
+tokens.clear()
+assert o.event_override_tokens(event)==[('fs','40')]
+empty=replace(event,state={})
+assert o.event_override_tokens(empty)==[('fs','40')] and empty.state=={}
 assert 'simplify_ass' not in sys.modules
 import simplify_ass as e
 assert Path(o.__file__).resolve()==Path(e.__file__).resolve().parent/'_simplify_ass/event_operations.py'
-for name in ('event_evaluation','replace_event','_frame_pose_key','state_key'):assert getattr(e,name) is getattr(o,name)
+for name in ('event_evaluation','replace_event','_frame_pose_key','state_key','event_override_tokens'):assert getattr(e,name) is getattr(o,name)
 import py_compile
 py_compile.compile(o.__file__,doraise=True)
 '''

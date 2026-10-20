@@ -19,6 +19,13 @@ engine aliases and call-local working buffers. Candidate admission, initial
 evidence capture, output paint selection, pipeline transitions and reporting
 remain with their producers. Keep the canonical pose-validity key in event
 operations; do not duplicate it or import the engine from private modules.
+Strict source-effect timing validators live in `_simplify_ass/effect_validation.py`;
+raw `event_override_tokens()` lives in event operations, with direct engine aliases.
+Keep strict validation distinct from permissive freezer parsing. Borrow allowed
+sets and supplied parsed-change lists, preserving list identity and caller opt-ins.
+Raw token reads return fresh lists without resolving/caching formatting. Family-local
+source-token reuse stays with `OutlineStripEvidence` and its exact-object identity;
+callers retain source lifetimes, proof state, diagnostic ownership and reporting.
 Shared layout comparisons (`text_height`, `placement_key`, `text_layout_key`,
 `compatible_text_layout`) live in `_simplify_ass/caption_geometry.py`; resolved
 `state_key` lives in event operations, with direct engine aliases. Read supplied
@@ -136,7 +143,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-106-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+107-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it

@@ -59,6 +59,8 @@ from _simplify_ass.transform_sampling import (
 )
 
 from _simplify_ass.event_model import Event, EventEvidence, DocumentMeasurementContext
+from _simplify_ass.effect_validation import parse_effect_transform, parse_effect_move
+from _simplify_ass.event_operations import event_override_tokens
 from _simplify_ass.scrolling_blocks import (
     ScrollingBlockMatch,
     _match_scrolling_block,
@@ -122,7 +124,7 @@ from _simplify_ass.static_selection import (
     _apply_static_state_colour_vote, select_static_state,
 )
 
-__version__ = "2026.10.20.231"
+__version__ = "2026.10.20.232"
 
 
 class _FontTimestampFilter(logging.Filter):
@@ -4705,11 +4707,6 @@ def upright_text_holds(candidates: list[Event], source_events: dict[int,Event]) 
     return holds
 
 
-def event_override_tokens(e: Event) -> list[tuple[str,str]]:
-    return [token for block in OVERRIDE_RE.findall(e.text)
-            for token in tokenize_override(block)]
-
-
 def without_inert_spacing_tail(e: Event) -> Event:
     """Ignore a tracking reset after the last literal glyph, with no ink.
 
@@ -4755,38 +4752,6 @@ def literal_font_spans(e: Event) -> tuple[tuple[str,str],...] | None:
     return tuple(spans)
 
 
-def parse_effect_transform(value: str, duration: float,
-                           allowed: set[str], *, allow_instant: bool = False,
-                           allow_after_end: bool = False,
-                           parsed_changes: list[tuple[str,str]] | None = None
-                           ) -> tuple[float,float,list[tuple[str,str]]] | None:
-    """Validate one transform used as evidence for an effect family.
-
-    Resolve all four ASS timing forms, requiring forward finite timing and
-    positive acceleration. Instant alpha handoffs can opt into equal endpoints.
-    These proofs allow at most 50 ms of endpoint
-    rounding; the general static freezer retains its more permissive parsing.
-    Geometry-only paint proofs may allow transforms ending after the cue.
-    Each matcher supplies the tags that its own effect can safely change.
-    A caller that has already parsed this exact payload may lend its changes;
-    all timing and allowed-tag checks still run, without modifying that list.
-    """
-    prefix,sep,tail = value[1:-1].partition('\\')
-    try:
-        args = [float(v.strip()) for v in prefix.rstrip(', ').split(',') if v.strip()]
-    except ValueError:
-        return None
-    changes = tokenize_override('\\'+tail) if parsed_changes is None else parsed_changes
-    begin,end = args[:2] if len(args) >= 2 else (0,1000*duration)
-    if (not sep or len(args) > 3 or not all(math.isfinite(v) for v in args) or
-            not 0 <= begin <= end or not allow_after_end and end > 1000*duration+50 or
-            not allow_instant and begin == end or
-            len(args) in (1,3) and args[-1] <= 0 or
-            any(tag not in allowed for tag,value in changes)):
-        return None
-    return begin,end,changes
-
-
 def opaque_text_effect_state(state: dict) -> bool:
     """Recognize unmasked opaque glyph effects with ordinary outlines."""
     return (not state.get('p',0) and state.get('1a',0) == 0 and
@@ -4794,19 +4759,6 @@ def opaque_text_effect_state(state: dict) -> bool:
             not any(k in state for k in ('clip','iclip','org')) and
             not any(abs(state.get(k,state.get('shad',0))) > .001
                     for k in ('xshad','yshad')))
-
-
-def parse_effect_move(value: str, duration: float, *,
-                      endpoint_slack: float = 0) -> list[float] | None:
-    """Validate an effect's original move, retaining its source coordinates."""
-    try:
-        nums = [float(v) for v in value.strip('()').split(',')]
-    except ValueError:
-        return None
-    if (len(nums) not in (4,6) or not all(math.isfinite(v) for v in nums) or
-            len(nums) == 6 and not 0 <= nums[4] < nums[5] <= 1000*duration+endpoint_slack):
-        return None
-    return nums
 
 
 def _eligible_shrinking_row_families(events: dict[int,Event]) -> set:
