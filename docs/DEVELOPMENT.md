@@ -115,6 +115,10 @@ The [v238 karaoke completion extraction](KARAOKE_COMPLETION_EXTRACTION.md) follo
 its [bounded assessment](KARAOKE_COMPLETION_EXTRACTION_ASSESSMENT.md), retaining
 the outline-profile producer and both caller-owned handoffs.
 
+The [next bounded assessment](CAPTION_PAINT_SAMPLING_EXTRACTION_ASSESSMENT.md)
+recommends v239 shared settled-paint sampling ownership, preparing a clean
+boundary for backed-glyph pulse processing without coupling it to glow proofs.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
