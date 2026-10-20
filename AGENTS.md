@@ -19,6 +19,13 @@ engine aliases and call-local working buffers. Candidate admission, initial
 evidence capture, output paint selection, pipeline transitions and reporting
 remain with their producers. Keep the canonical pose-validity key in event
 operations; do not duplicate it or import the engine from private modules.
+Complete-line jitter admission, readable-core/layer ownership and caption
+replacement live in `_simplify_ass/complete_line_jitter.py`, with direct engine
+aliases for seven functions and two frozen records. Borrow working/original
+events, visibility and styles; keep buckets and replacement buffers call-local.
+Preserve accepted-caption object identity for the subsequent word-echo proof.
+The caller retains pass order, original-source selection and aggregate frame/stack
+counts; rendering, paint policy and source-pose support keep their existing owners.
 Frame-exit echo admission, source-motion/paint proofs and ordered replacement live
 in `_simplify_ass/frame_echoes.py`, with direct engine aliases for all functions
 and five frozen records. Borrow working events and original source maps; keep
@@ -152,7 +159,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-108-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+109-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it

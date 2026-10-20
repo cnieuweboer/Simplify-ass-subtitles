@@ -101,9 +101,10 @@ The [v234 effect-endpoint rounding fix](EFFECT_ENDPOINT_ROUNDING.md) resolves th
 shared move/transform boundary issue found during v233, without retiming sources
 or changing the caller-owned effect proofs.
 
-The [next bounded assessment](COMPLETE_LINE_JITTER_EXTRACTION_ASSESSMENT.md)
-recommends v235 complete-line jitter extraction with no preparatory production
-change, and records a separate masked-font resource-lifetime follow-up.
+The [v235 complete-line jitter extraction](COMPLETE_LINE_JITTER_EXTRACTION.md)
+follows its [bounded assessment](COMPLETE_LINE_JITTER_EXTRACTION_ASSESSMENT.md),
+retaining caller-owned source selection, word-echo ownership handoff and reporting.
+The separately identified masked-font resource-lifetime follow-up remains open.
 
 ## Tools
 

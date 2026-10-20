@@ -11,6 +11,15 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v235 complete-line jitter processing moved unchanged with its two frozen
+records to `_simplify_ass/complete_line_jitter.py`, with direct engine aliases.
+Inputs remain borrowed; family/group/removal/replacement state remains local to
+one call. Accepted caption objects are shared between the output list and the
+explicit word-echo ownership tuple. `_consolidate_text_events()` retains that
+handoff, original-source selection, configuration and aggregate frame/stack
+counts. Existing paint, source-pose and event replacement owners are unchanged.
+See [COMPLETE_LINE_JITTER_EXTRACTION.md](COMPLETE_LINE_JITTER_EXTRACTION.md).
+
 In v233 the complete frame-echo operation and its five frozen records moved
 unchanged to `_simplify_ass/frame_echoes.py`, with direct engine aliases. Original
 source maps, working frames and measurement context remain borrowed; movement

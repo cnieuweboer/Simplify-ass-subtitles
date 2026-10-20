@@ -1,5 +1,8 @@
 # Complete-line jitter — bounded extraction assessment
 
+Implemented in [v235](COMPLETE_LINE_JITTER_EXTRACTION.md). The evidence below
+describes the historical assessment.
+
 Assessed against v234 (`2026.10.20.234`, commit `3b95357`). Recommended next
 release: **v235 — Extract complete-line jitter processing** into
 `_simplify_ass/complete_line_jitter.py`. No preparatory production change is
