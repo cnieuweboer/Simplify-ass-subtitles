@@ -111,9 +111,9 @@ The [v237 masked-glyph extraction](MASKED_GLYPH_EXTRACTION.md) follows its
 [bounded assessment](MASKED_GLYPH_EXTRACTION_ASSESSMENT.md), moving the complete
 operation while preserving pass-owned caches/fonts and caller-owned reporting.
 
-The [next bounded assessment](KARAOKE_COMPLETION_EXTRACTION_ASSESSMENT.md)
-recommends v238 karaoke completion extraction, retaining the existing outline
-producer and both caller-owned handoffs. No production preparation is needed.
+The [v238 karaoke completion extraction](KARAOKE_COMPLETION_EXTRACTION.md) follows
+its [bounded assessment](KARAOKE_COMPLETION_EXTRACTION_ASSESSMENT.md), retaining
+the outline-profile producer and both caller-owned handoffs.
 
 ## Tools
 

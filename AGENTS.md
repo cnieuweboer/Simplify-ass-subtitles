@@ -108,6 +108,15 @@ for its frozen result, shared output whitelist and five functions. It owns local
 stream state and serialization; selectors retain their sampling/evidence work.
 Preserve borrowed inputs, canonical continuation/selection identity, the visible-only
 bypass and post-selection blur clamping with pre-clamp settled snapshots.
+Ordered karaoke-completion matching, sweep proof and destination paint replacement
+live in `_simplify_ass/karaoke_completion.py`, with direct engine aliases for
+thirteen functions and two frozen records. Borrow source/working events,
+visibility and supplied outline profiles; keep indexes and replacements call-local.
+The outline-strip producer retains its geometry/compositing/paint proof and
+profile lifetime. Keep both consumer routes, continuation/timing bounds, untouched
+identity and original list order. Callers retain stage conditions and reporting;
+this paint operation introduces no removal counter. Interpreter observers must
+include the defining consumer, without production forwarding.
 Masked-glyph indexing, exact contour/text proofs and ordered replacement live in
 `_simplify_ass/masked_glyphs.py`, with direct engine aliases for eighteen functions
 and four frozen records. Borrow working events, visibility, animation evidence and
@@ -168,7 +177,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-110-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+111-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it

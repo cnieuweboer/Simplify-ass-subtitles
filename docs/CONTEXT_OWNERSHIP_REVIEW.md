@@ -11,6 +11,16 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v238 karaoke completion moved unchanged with two frozen records to
+`_simplify_ass/karaoke_completion.py`, with direct engine aliases. Events,
+visibility, source maps, supplied profiles and their paint dictionaries remain
+borrowed. Row/source indexes, phase lists and replacements remain call-local;
+there is no persistent cache or diagnostic owner. The outline-strip producer
+retains its proof and profile lifetime; both callers retain stage conditions,
+source selection and reporting. Preserve complete-row refusal, original-list
+order, untouched identity and the existing paint-only successor contract.
+See [KARAOKE_COMPLETION_EXTRACTION.md](KARAOKE_COMPLETION_EXTRACTION.md).
+
 In v237 masked-glyph processing moved unchanged with its four frozen records to
 `_simplify_ass/masked_glyphs.py`, with direct engine aliases. Caller data and
 metrics remain borrowed; geometry/outline caches, font handles, proof/removal

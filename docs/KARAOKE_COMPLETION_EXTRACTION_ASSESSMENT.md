@@ -1,5 +1,8 @@
 # Karaoke completion — bounded extraction assessment
 
+Implemented in [v238](KARAOKE_COMPLETION_EXTRACTION.md). The evidence below
+describes the historical assessment.
+
 Assessed against v237 (`2026.10.20.237`, commit `1d024d8`). Recommended next
 release: **v238 — Extract karaoke completion** into
 `_simplify_ass/karaoke_completion.py`, with no intended behavior changes.

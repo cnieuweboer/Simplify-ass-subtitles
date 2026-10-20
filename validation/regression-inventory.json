@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.20.237",
+  "version": "2026.10.20.238",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -273,6 +273,11 @@
     },
     {
       "script": "tests/check_masked_glyph_module.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "tests/check_karaoke_completion_module.py",
       "status": "current",
       "category": "general"
     },
