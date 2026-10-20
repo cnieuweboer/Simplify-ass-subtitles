@@ -11,6 +11,19 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v242 complete moving-glyph source indexing, chain/fade proof and replacement
+moved unchanged with two frozen records to `_simplify_ass/moving_glyphs.py`.
+Borrow source/retained events, visible maps and optional metrics; own resolved
+successors, indexes, chain evidence and proposals per call. Preserve shallow
+record sharing, optional whole-fragment proof, exact-font glyph fitting,
+source-index ordering, refusal identity and actual list-slot counts. The caller
+retains movement/karaoke/exact-position handoffs and aggregate reporting.
+`literal_font_spans()` belongs to event operations and reads borrowed source
+catalogs into local state/continuation/spans without installing a cache;
+`opaque_text_effect_state()` belongs to effect validation and borrows resolved
+formatting without claiming full paint opacity or family ownership. See
+[MOVING_GLYPH_EXTRACTION.md](MOVING_GLYPH_EXTRACTION.md).
+
 In v240 complete backed-glyph pulse processing moved unchanged with two frozen
 records to `_simplify_ass/backed_glyph_pulses.py`, with direct engine aliases.
 Events, word/position maps and optional metrics remain borrowed. Resolved-detail

@@ -108,6 +108,18 @@ for its frozen result, shared output whitelist and five functions. It owns local
 stream state and serialization; selectors retain their sampling/evidence work.
 Preserve borrowed inputs, canonical continuation/selection identity, the visible-only
 bypass and post-selection blur clamping with pre-clamp settled snapshots.
+Complete stationary/moving/held-caption chain proofs and replacement live in
+`_simplify_ass/moving_glyphs.py`, with direct engine aliases for seventeen
+functions and two frozen records. Source/retained events, visible maps and metrics
+remain borrowed; resolved successors, indexes, chain evidence and proposals stay
+pass-local. Preserve whole-fragment proof without metrics, exact-font glyph fits,
+complete recorded exits, shared-owner refusal, source-index ordering and actual
+list-slot counts. The text-effect caller retains stage conditions, subsequent
+karaoke normalization, exact-position consolidation and reporting. Shared
+`literal_font_spans()` reads belong to event operations; supported opaque-text
+state validation belongs to effect validation. Preserve their distinct scope and
+continuation/borrowed-input contracts. Interpreter observers follow both defining
+consumers, without production forwarding.
 Complete backed-glyph pulse admission, row/coverage/return proofs, exit handling,
 paint selection and ordered replacement live in `_simplify_ass/backed_glyph_pulses.py`,
 with direct engine aliases for eighteen functions and two frozen records. Borrow
@@ -196,7 +208,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-113-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+114-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it

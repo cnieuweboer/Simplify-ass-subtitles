@@ -1,5 +1,8 @@
 # Moving-glyph sequences — bounded extraction assessment
 
+Implemented in [v242](MOVING_GLYPH_EXTRACTION.md). The evidence below describes
+the historical assessment.
+
 Assessed against v241 (`2026.10.20.241`, commit `e05d357`). Recommended next
 release: **v242 — Extract complete moving-glyph sequence processing** into
 `_simplify_ass/moving_glyphs.py`, with no intended behavior changes.
