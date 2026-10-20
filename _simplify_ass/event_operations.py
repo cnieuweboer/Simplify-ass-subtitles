@@ -1,11 +1,12 @@
 """Resolved event reads and successor edits with their existing evidence contract."""
 from __future__ import annotations
 
+import re
 from dataclasses import replace as dataclass_replace
 
 from .ass_overrides import (
     DEFAULT_STATE, OVERRIDE_RE, OverrideContinuation, OverrideEvaluation,
-    evaluate_effective_state, resolve_event_style, tokenize_override,
+    apply_override, evaluate_effective_state, resolve_event_style, tokenize_override,
 )
 from .caption_geometry import inline_layout_key
 from .event_model import Event, EventEvidence
@@ -85,3 +86,28 @@ def state_key(e: Event, omit: set[str] | None = None) -> tuple:
 def event_override_tokens(e: Event) -> list[tuple[str,str]]:
     return [token for block in OVERRIDE_RE.findall(e.text)
             for token in tokenize_override(block)]
+
+
+def literal_font_spans(e: Event) -> tuple[tuple[str,str],...] | None:
+    """Identify literal spans with stationary font changes only.
+
+    Resolve empty font resets so source and frozen overrides share a key.
+    Paint, geometry, resets and transforms within text require other proofs.
+    """
+    state = e.defaults.copy()
+    continuation = OverrideContinuation()
+    spans = []
+    for part in re.split(r'(\{[^}]*\})',e.text):
+        if part.startswith('{'):
+            tokens = tokenize_override(part[1:-1])
+            if spans and any(tag != 'fn' for tag,value in tokens):
+                return None
+            for tag,value in tokens:
+                continuation = apply_override(state,tag,value,e.styles,e.defaults,continuation)
+        elif part:
+            font = str(state.get('fn','Arial'))
+            if spans and spans[-1][1] == font:
+                spans[-1] = (spans[-1][0]+part,font)
+            else:
+                spans.append((part,font))
+    return tuple(spans)

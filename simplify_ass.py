@@ -192,6 +192,9 @@ from _simplify_ass.backed_glyph_pulses import (
     collapse_backed_glyph_pulses,
 )
 
+from _simplify_ass.event_operations import literal_font_spans
+from _simplify_ass.effect_validation import opaque_text_effect_state
+
 __version__ = "2026.10.20.241"
 
 
@@ -3872,38 +3875,8 @@ def without_inert_spacing_tail(e: Event) -> Event:
     return replace_event(e,text=text,state={**e.state,'fsp':tracking})
 
 
-def literal_font_spans(e: Event) -> tuple[tuple[str,str],...] | None:
-    """Identify literal spans with stationary font changes only.
-
-    Resolve empty font resets so source and frozen overrides share a key.
-    Paint, geometry, resets and transforms within text require other proofs.
-    """
-    state = e.defaults.copy()
-    continuation = OverrideContinuation()
-    spans = []
-    for part in re.split(r'(\{[^}]*\})',e.text):
-        if part.startswith('{'):
-            tokens = tokenize_override(part[1:-1])
-            if spans and any(tag != 'fn' for tag,value in tokens):
-                return None
-            for tag,value in tokens:
-                continuation = apply_override(state,tag,value,e.styles,e.defaults,continuation)
-        elif part:
-            font = str(state.get('fn','Arial'))
-            if spans and spans[-1][1] == font:
-                spans[-1] = (spans[-1][0]+part,font)
-            else:
-                spans.append((part,font))
-    return tuple(spans)
 
 
-def opaque_text_effect_state(state: dict) -> bool:
-    """Recognize unmasked opaque glyph effects with ordinary outlines."""
-    return (not state.get('p',0) and state.get('1a',0) == 0 and
-            state.get('borderstyle',1) == 1 and
-            not any(k in state for k in ('clip','iclip','org')) and
-            not any(abs(state.get(k,state.get('shad',0))) > .001
-                    for k in ('xshad','yshad')))
 
 
 def _eligible_shrinking_row_families(events: dict[int,Event]) -> set:

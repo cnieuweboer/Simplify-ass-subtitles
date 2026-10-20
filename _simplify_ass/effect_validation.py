@@ -52,3 +52,12 @@ def parse_effect_move(value: str, duration: float, *,
             len(nums) == 6 and not 0 <= nums[4] < nums[5] <= 1000*duration+endpoint_slack+_ENDPOINT_ROUNDING_MS):
         return None
     return nums
+
+
+def opaque_text_effect_state(state: dict) -> bool:
+    """Recognize unmasked opaque glyph effects with ordinary outlines."""
+    return (not state.get('p',0) and state.get('1a',0) == 0 and
+            state.get('borderstyle',1) == 1 and
+            not any(k in state for k in ('clip','iclip','org')) and
+            not any(abs(state.get(k,state.get('shad',0))) > .001
+                    for k in ('xshad','yshad')))

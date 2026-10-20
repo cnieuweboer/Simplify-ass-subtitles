@@ -7,6 +7,7 @@ import pickle
 import subprocess
 import sys
 import tempfile
+from types import MappingProxyType
 from typing import get_type_hints
 import unittest
 from unittest.mock import patch
@@ -15,7 +16,7 @@ import simplify_ass as engine
 from _simplify_ass import effect_validation as validation
 from check_windows_installer import ROOT, load_installer
 
-NAMES = ('parse_effect_transform', 'parse_effect_move')
+NAMES = ('parse_effect_transform', 'parse_effect_move', 'opaque_text_effect_state')
 PAYLOAD = r'\alpha&H80&'
 CHANGES = [('alpha', '&H80&')]
 
@@ -67,6 +68,17 @@ py_compile.compile(o.__file__, doraise=True)
 
 
 class EffectValidationModuleChecks(unittest.TestCase):
+    def test_opaque_text_state_reads_borrowed_formatting_and_keeps_channel_distinctions(self):
+        for state in ({},{'3a':255},{'shad':.001},{'shad':2,'xshad':0,'yshad':0}):
+            with self.subTest(state=state):
+                self.assertTrue(validation.opaque_text_effect_state(MappingProxyType(state)))
+        for state in ({'p':1},{'1a':1},{'borderstyle':3},{'clip':None},
+                      {'iclip':None},{'org':None},{'shad':.00101},{'xshad':-.002}):
+            before = deepcopy(state)
+            with self.subTest(state=state):
+                self.assertFalse(validation.opaque_text_effect_state(MappingProxyType(state)))
+                self.assertEqual(state,before)
+
     def test_canonical_aliases_annotations_defaults_and_old_root_lookup(self):
         for name in NAMES:
             function = getattr(validation, name)

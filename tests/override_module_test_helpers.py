@@ -23,7 +23,8 @@ def patch_interpreter_bindings(engine, name, *args, **kwargs):
         for entry in ('sample_transform_state', 'sample_transform_states',
                       'select_static_state', 'freeze_block', 'static_object_key',
                       'compact_static_overrides', 'normalize_karaoke_completion_paint',
-                      '_settled_caption_paint_samples', 'collapse_backed_glyph_pulses'))]
+                      '_settled_caption_paint_samples', 'collapse_backed_glyph_pulses',
+                      'literal_font_spans'))]
     for consumer in consumers:
         if (consumer is not None and consumer not in bindings and
                 getattr(consumer, name, None) is original):

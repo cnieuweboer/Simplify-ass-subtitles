@@ -8,6 +8,7 @@ import subprocess
 import pickle
 import sys
 import tempfile
+from types import MappingProxyType
 import unittest
 from unittest.mock import patch
 
@@ -15,7 +16,7 @@ import simplify_ass as engine
 from _simplify_ass import event_operations as operations
 from check_windows_installer import load_installer, ROOT
 
-NAMES = ('event_evaluation', 'replace_event', '_frame_pose_key', 'state_key', 'event_override_tokens')
+NAMES = ('event_evaluation', 'replace_event', '_frame_pose_key', 'state_key', 'event_override_tokens', 'literal_font_spans')
 
 
 def source():
@@ -35,6 +36,24 @@ def child(code, cwd, tools):
 
 
 class EventOperationsModuleChecks(unittest.TestCase):
+    def test_literal_font_spans_borrow_source_inputs_and_resolve_empty_font_resets(self):
+        event = source()
+        defaults = MappingProxyType({**event.defaults,'fn':'Base Font'})
+        styles = MappingProxyType({'Default':defaults,'Other':MappingProxyType({**defaults,'fn':'Other Font'})})
+        event = replace(event,defaults=defaults,styles=styles,state={},
+                        continuation=engine.OverrideContinuation('Stale',True),
+                        text=r'{\rOther\fn}A{\fnBase Font}B{\fn}C')
+        before = (event.text,dict(defaults),{k:dict(v) for k,v in styles.items()},event.continuation)
+        self.assertEqual(operations.literal_font_spans(event),
+                         (('A','Other Font'),('B','Base Font'),('C','Other Font')))
+        self.assertEqual(event.state,{})
+        self.assertEqual((event.text,dict(defaults),{k:dict(v) for k,v in styles.items()},event.continuation),before)
+        for text,expected in ((r'A{\fnBase Font}B',(('AB','Base Font'),)),
+                              (r'A{\1c&H123456&}B',None),
+                              (r'A{\rOther}B',None),('',())):
+            with self.subTest(text=text):
+                self.assertEqual(operations.literal_font_spans(replace(event,text=text)),expected)
+
     def test_canonical_aliases_and_types(self):
         for name in NAMES:
             self.assertIs(getattr(engine, name), getattr(operations, name))
