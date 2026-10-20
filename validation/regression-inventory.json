@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.20.240",
+  "version": "2026.10.20.241",
   "current": [
     {
       "script": "tests/check_caption_spans.py",

@@ -78,9 +78,10 @@ def _settled_caption_paint_samples(foreground: Event, copies: list[Event], metri
         ink = ink.resize(resized)
         core = ink.filter(ImageFilter.MinFilter(3))
         ring = ImageChops.subtract(ink.filter(ImageFilter.MaxFilter(2*2*factor+1)),ink)
-        regions = [list(core.getdata()),list(ring.getdata())]
+        # All masks are mode L: raw bytes retain one 0..255 value per pixel.
+        regions = [core.tobytes(),ring.tobytes()]
         accum = [[0.,0.,0.,0.,0.] for _ in regions]
-        planes = [(list(ink.filter(ImageFilter.GaussianBlur(p.get('blur',0)*factor/2)).getdata()),
+        planes = [(ink.filter(ImageFilter.GaussianBlur(p.get('blur',0)*factor/2)).tobytes(),
                    (255-p.get('1a',0))/255,[int(p['1c'][i:i+2],16)/255 for i in (4,2,0)])
                   for e,p in sorted(settled,key=lambda pair:(int(pair[0].layer),pair[0].source_index),reverse=True)]
         for i in range(len(regions[0])):

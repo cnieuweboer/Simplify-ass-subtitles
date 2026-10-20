@@ -139,15 +139,15 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
     black=Path(directory)/'black.ass'
     black.write_text(output.read_text().replace(r'\3c&H260AC6&',r'\3c&H000000&'))
     prior=render(black,1338,(1920,1080)).crop((0,920,1920,1080))
-    red_pixels=lambda image:sum(r>60 and r>2*g and r>2*b for r,g,b in image.getdata())
+    red_pixels=lambda image:sum(r>60 and r>2*g and r>2*b for r,g,b in zip(*(band.tobytes() for band in image.split())))
     check('source visibly has red outline',red_pixels(original)>100)
     check('simplified outline visibly red',red_pixels(fixed)>100)
     check('previous black outline has no red pixels',red_pixels(prior)==0)
     # Antialiased edge compositing can move a rounded channel by one unit.
     # The original opaque white interiors must remain white at the same pixels.
-    cores=[i for i,rgb in enumerate(prior.getdata()) if rgb==(255,255,255)]
+    cores=[i for i,rgb in enumerate(zip(*(band.tobytes() for band in prior.split()))) if rgb==(255,255,255)]
     check('opaque white glyph cores remain white',len(cores)>100 and
-          all(min(fixed.getdata()[i])>=250 for i in cores))
+          all(min(fixed.getpixel((i % fixed.width,i // fixed.width)))>=250 for i in cores))
     montage=Image.new('RGB',(1920,540),(24,24,24))
     draw=ImageDraw.Draw(montage)
     for i,(label,picture) in enumerate((('Original gradient',original),

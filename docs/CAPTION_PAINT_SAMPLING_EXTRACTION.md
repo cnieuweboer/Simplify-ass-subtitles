@@ -90,3 +90,5 @@ checks in a bounded compatibility change, accounting for the project's supported
 older Pillow versions and requiring identical samples/paint/rendering. This extraction deliberately preserves their
 behavior. No structural corrective review was identified. The previously recorded
 scrolling-iterator contract and global API/index reviews remain separate work.
+
+The Pillow pixel-read follow-up is resolved in [v241](PILLOW_PIXEL_ACCESS.md).

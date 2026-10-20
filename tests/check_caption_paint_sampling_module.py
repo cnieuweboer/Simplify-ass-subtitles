@@ -116,6 +116,18 @@ class CaptionPaintSamplingModuleChecks(unittest.TestCase):
         second = sampling._settled_caption_paint_samples(foreground,[promoted,foreground],self.metric)
         self.assertNotEqual(first,second)
 
+    def test_sampling_without_deprecated_or_newer_flattened_pixel_apis(self):
+        from PIL import Image
+        foreground,planes = paint_inputs()
+        expected = sampling._settled_caption_paint_samples(foreground,planes,self.metric)
+        self.assertIsNotNone(expected)
+        # The old API is being removed; its replacement is absent on older Pillow.
+        unavailable = AssertionError('Flattened pixel API unavailable')
+        with patch.object(Image.Image,'getdata',side_effect=unavailable,create=True), \
+                patch.object(Image.Image,'get_flattened_data',side_effect=unavailable,create=True):
+            actual = sampling._settled_caption_paint_samples(foreground,planes,self.metric)
+        self.assertEqual(actual,expected)
+
     def test_existing_unsupported_layout_and_paint_keep_refusal(self):
         foreground,planes = paint_inputs(transformed=False)
         for change in ({'fsp':1},{'kerning':True},{'u':True},{'s':True},

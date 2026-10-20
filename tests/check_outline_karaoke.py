@@ -135,7 +135,7 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
     for i,(label,path) in enumerate((('Original after the color sweep',fixture),('v169 black outline',prior),('v170 completed red outline',result))):
         picture=render(path,1340,(1920,1080)).crop((0,0,1920,150))
         draw.text((12,i*170+3),label,fill='white');montage.paste(picture,(0,i*170+20))
-        if i==2:check('rendered top outline has red pixels',sum(r>60 and r>2*g and r>2*b for r,g,b in picture.getdata())>100)
+        if i==2:check('rendered top outline has red pixels',sum(r>60 and r>2*g and r>2*b for r,g,b in zip(*(band.tobytes() for band in picture.split())))>100)
     montage.save(ROOT/'validation/outline-karaoke-comparison.png')
 
 def definitions(path):return {n.name:n for n in executable_ast(ast.parse(path.read_text())).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}

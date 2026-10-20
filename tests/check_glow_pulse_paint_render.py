@@ -99,7 +99,7 @@ for label,kwargs in [
    r=subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=c=gray:s=640x360:r=1','-vf',f'settb=1/1000,setpts=PTS+{at},ass=filename={path}:fontsdir={ROOT/"fonts"}','-frames:v','1','-threads','1','-f','rawvideo','-pix_fmt','rgb24','pipe:1'],capture_output=True,check=True)
    return Image.frombytes('RGB',(640,360),r.stdout)
   a,b=frame(1200),frame(3500);check('native static hold',ImageChops.difference(a,b).getbbox() is None)
-  check('native green pixels',sum(g>r*1.15 and g>b*1.15 for r,g,b in a.getdata())>100)
+  check('native green pixels',sum(g>r*1.15 and g>b*1.15 for r,g,b in zip(*(band.tobytes() for band in a.split())))>100)
 for label,kwargs,accepted in [
  ('late 40 ms letters',dict(hold_end=3,echo_end=3.04),True),
  ('late 50 ms letters',dict(hold_end=3,echo_end=3.05),True),

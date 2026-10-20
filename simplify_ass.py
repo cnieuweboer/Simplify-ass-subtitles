@@ -192,7 +192,7 @@ from _simplify_ass.backed_glyph_pulses import (
     collapse_backed_glyph_pulses,
 )
 
-__version__ = "2026.10.20.240"
+__version__ = "2026.10.20.241"
 
 
 class _FontTimestampFilter(logging.Filter):

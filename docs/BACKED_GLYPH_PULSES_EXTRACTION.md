@@ -87,3 +87,5 @@ requires a dedicated follow-up review.
 The previously recorded Pillow `Image.getdata()` compatibility work, scrolling
 iterator contract and global API/index reviews remain separate. This extraction
 does not prescribe the remaining module hierarchy.
+
+The Pillow compatibility follow-up is resolved in [v241](PILLOW_PIXEL_ACCESS.md).
