@@ -87,6 +87,10 @@ recognition/limit/reporting subsystem unchanged while retaining
 pipeline configuration and aggregate counters. It separately records an existing
 single-use-iterator contract issue; production supplies lists.
 
+The proposed [v232 source-effect helper preparation](EFFECT_VALIDATION_EXTRACTION_ASSESSMENT.md)
+assesses strict effect validation and raw event-token access as shared dependencies
+of future processing extractions, including frame echoes. Production remains v231.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
