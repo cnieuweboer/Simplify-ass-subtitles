@@ -92,9 +92,10 @@ its [bounded assessment](EFFECT_VALIDATION_EXTRACTION_ASSESSMENT.md), giving str
 effect validation and raw event-token access shared private owners while retaining
 caller-owned source proofs and caches.
 
-The proposed [v233 frame-echo extraction](FRAME_ECHO_EXTRACTION_ASSESSMENT.md)
-assesses the now-closed processing subsystem, including its cache/source ownership,
-replacement-test bindings and current-policy behavioral coverage. Production remains v232.
+The [v233 frame-echo extraction](FRAME_ECHO_EXTRACTION.md) follows its
+[bounded assessment](FRAME_ECHO_EXTRACTION_ASSESSMENT.md), moving the complete
+echo operation while retaining caller-owned source selection and reporting.
+Current-policy behavior checks and defining-owner test stubs cover the new boundary.
 
 ## Tools
 
@@ -145,7 +146,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 107 current scripts. The runner uses three workers for
+The suite inventory lists 108 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.

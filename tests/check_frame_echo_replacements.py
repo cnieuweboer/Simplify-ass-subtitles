@@ -4,6 +4,7 @@ import test_paths  # Resolve the repository for direct test execution.
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+import inspect
 import importlib.util
 import json
 import sys
@@ -33,10 +34,11 @@ for name,ids,removed,replaced in cases:
         before = [vars(e).copy() for e in events]
         results = []
         for module in (previous,current):
+            owner = inspect.getmodule(module.collapse_frame_text_echoes)
             def accept(context,frames):
                 context.removed.update(removed)
                 context.replacements.update(replacements)
-            with patch.object(module,'_index_frame_echo_families',return_value={'family':{}}), patch.object(module,'_collapse_frame_echo_family',side_effect=accept):
+            with patch.object(owner,'_index_frame_echo_families',return_value={'family':{}}), patch.object(owner,'_collapse_frame_echo_family',side_effect=accept):
                 output,count = module.collapse_frame_text_echoes(events,.16)
             assert output is not events
             assert before==[vars(e) for e in events]

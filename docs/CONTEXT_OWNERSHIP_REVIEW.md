@@ -11,6 +11,15 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v233 the complete frame-echo operation and its five frozen records moved
+unchanged to `_simplify_ass/frame_echoes.py`, with direct engine aliases. Original
+source maps, working frames and measurement context remain borrowed; movement
+cache entries stay family-local and removal/replacement buffers stay call-local.
+Retained identity, frame lifetime, anchor paint/flags, source-ID counts and
+original-list ordering remain unchanged. `_prepare_stacked_text_copies()` retains
+stage invocation and aggregate contribution ownership. Test stubs follow the
+function's defining owner. See [FRAME_ECHO_EXTRACTION.md](FRAME_ECHO_EXTRACTION.md).
+
 In v232 strict transform/move proof validators moved unchanged to
 `_simplify_ass/effect_validation.py`; raw `event_override_tokens()` moved into event
 operations. Engine names remain direct aliases. Raw reads create fresh lists and
