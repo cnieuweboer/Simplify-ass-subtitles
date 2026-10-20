@@ -4,6 +4,10 @@ from __future__ import annotations
 import math
 from .ass_overrides import tokenize_override
 
+# Subtracting cue timestamps can lose sub-nanosecond precision. This absolute
+# allowance only absorbs arithmetic rounding; authored timing stays unchanged.
+_ENDPOINT_ROUNDING_MS = 1e-6
+
 
 def parse_effect_transform(value: str, duration: float,
                            allowed: set[str], *, allow_instant: bool = False,
@@ -29,7 +33,7 @@ def parse_effect_transform(value: str, duration: float,
     changes = tokenize_override('\\'+tail) if parsed_changes is None else parsed_changes
     begin,end = args[:2] if len(args) >= 2 else (0,1000*duration)
     if (not sep or len(args) > 3 or not all(math.isfinite(v) for v in args) or
-            not 0 <= begin <= end or not allow_after_end and end > 1000*duration+50 or
+            not 0 <= begin <= end or not allow_after_end and end > 1000*duration+50+_ENDPOINT_ROUNDING_MS or
             not allow_instant and begin == end or
             len(args) in (1,3) and args[-1] <= 0 or
             any(tag not in allowed for tag,value in changes)):
@@ -45,7 +49,6 @@ def parse_effect_move(value: str, duration: float, *,
     except ValueError:
         return None
     if (len(nums) not in (4,6) or not all(math.isfinite(v) for v in nums) or
-            len(nums) == 6 and not 0 <= nums[4] < nums[5] <= 1000*duration+endpoint_slack):
+            len(nums) == 6 and not 0 <= nums[4] < nums[5] <= 1000*duration+endpoint_slack+_ENDPOINT_ROUNDING_MS):
         return None
     return nums
-

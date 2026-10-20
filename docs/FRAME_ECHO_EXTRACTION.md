@@ -112,6 +112,10 @@ as local bug evidence, not a desired regression expectation. A separate bounded
 fix should tolerate arithmetic rounding without meaningfully widening authored
 slack. No production tolerance changed during this structural extraction.
 
+The numeric boundary follow-up is resolved in
+[v234](EFFECT_ENDPOINT_ROUNDING.md); exact-boundary acceptance now has direct
+validator and source-backed echo regression coverage.
+
 The previously recorded scrolling single-use iterator issue and deferred global
 API/pass-local index reviews also remain separate. These findings do not block the extraction; no source-proof tolerance or input
 contract changed in this release.

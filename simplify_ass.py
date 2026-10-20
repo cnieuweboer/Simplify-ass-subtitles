@@ -147,7 +147,7 @@ from _simplify_ass.static_selection import (
     _apply_static_state_colour_vote, select_static_state,
 )
 
-__version__ = "2026.10.20.233"
+__version__ = "2026.10.20.234"
 
 
 class _FontTimestampFilter(logging.Filter):

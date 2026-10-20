@@ -38,6 +38,12 @@ assert v.parse_effect_transform(r'(0,1051,\alpha&H80&)', 1, allowed, allow_after
 assert v.parse_effect_move('(1,2,3,4)', 1) == [1., 2., 3., 4.]
 assert v.parse_effect_move('(1,2,3,4,0,1040)', 1) is None
 assert v.parse_effect_move('(1,2,3,4,0,1040)', 1, endpoint_slack=50)[-1] == 1040.
+duration = 2.4 - 2.0
+assert v.parse_effect_move('(0,0,60,0,0,400)', duration)[-1] == 400
+assert v.parse_effect_move('(0,0,60,0,0,450)', duration, endpoint_slack=50)[-1] == 450
+assert v.parse_effect_transform(r'(0,450,\alpha&H80&)', duration, allowed)[:2] == (0, 450)
+assert v.parse_effect_move('(0,0,60,0,0,400.00001)', duration) is None
+assert v.parse_effect_transform(r'(0,450.00001,\alpha&H80&)', duration, allowed) is None
 raw = '[Events]\nDialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,'
 raw += r'{\rOther\fnTest}A{\t(0,1000,\alpha&H80&)}B{\fn}' + '\n'
 event = next(iter(d.parse_subtitle_document(raw).events.values()))
@@ -130,6 +136,39 @@ class EffectValidationModuleChecks(unittest.TestCase):
                       '(0,0,1,2,10,0)', '(0,0,1,2,0,0)', '(0,0,1,2,-1,1000)', '(bad,0,1,2)'):
             with self.subTest(value=value):
                 self.assertIsNone(validation.parse_effect_move(value, 1))
+
+    def test_subtracted_cue_times_accept_exact_endpoints_without_retiming(self):
+        for start, end in ((2., 2.4), (1320.2, 1320.6), (7200.2, 7200.6),
+                           (86400.2, 86400.6)):
+            duration = end - start
+            with self.subTest(start=start, end=end):
+                self.assertEqual(validation.parse_effect_move('(0,0,60,0,0,400)', duration),
+                                 [0., 0., 60., 0., 0., 400.])
+                self.assertEqual(validation.parse_effect_move('(0,0,60,0,0,450)', duration,
+                                                             endpoint_slack=50),
+                                 [0., 0., 60., 0., 0., 450.])
+                changes = list(CHANGES)
+                parsed = validation.parse_effect_transform('(0,450,' + PAYLOAD + ')', duration,
+                                                           {'alpha'}, parsed_changes=changes)
+                self.assertIsNotNone(parsed)
+                self.assertEqual(parsed[:2], (0., 450.))
+                self.assertIs(parsed[2], changes)
+
+    def test_rounding_allowance_rejects_actual_overruns_without_relative_tolerance(self):
+        for duration, milliseconds in ((2.4-2., 400.), (86400., 86400000.)):
+            for overrun in (.00001, .01, 1.):
+                with self.subTest(duration=duration, overrun=overrun):
+                    end = milliseconds + overrun
+                    self.assertIsNone(validation.parse_effect_move(f'(0,0,60,0,0,{end:.8f})', duration))
+                    end += 50
+                    self.assertIsNone(validation.parse_effect_move(f'(0,0,60,0,0,{end:.8f})', duration,
+                                                                  endpoint_slack=50))
+                    self.assertIsNone(validation.parse_effect_transform(
+                        f'(0,{end:.8f},' + PAYLOAD + ')', duration, {'alpha'}))
+        self.assertIsNone(validation.parse_effect_move('(0,0,60,0,-0.0000001,400)', 2.4-2.))
+        self.assertIsNone(validation.parse_effect_move('(0,0,60,0,400,400)', 2.4-2.))
+        self.assertIsNone(validation.parse_effect_transform(
+            '(-0.0000001,400,' + PAYLOAD + ')', 2.4-2., {'alpha'}))
 
     def test_cold_source_and_installed_processing_and_owned_uninstall(self):
         with tempfile.TemporaryDirectory() as folder:

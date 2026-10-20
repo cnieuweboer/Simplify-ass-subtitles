@@ -30,6 +30,8 @@ Strict source-effect timing validators live in `_simplify_ass/effect_validation.
 raw `event_override_tokens()` lives in event operations, with direct engine aliases.
 Keep strict validation distinct from permissive freezer parsing. Borrow allowed
 sets and supplied parsed-change lists, preserving list identity and caller opt-ins.
+The shared upper-endpoint comparisons include only a one-nanosecond arithmetic
+rounding allowance; do not round returned values or widen authored timing slack.
 Raw token reads return fresh lists without resolving/caching formatting. Family-local
 source-token reuse stays with `OutlineStripEvidence` and its exact-object identity;
 callers retain source lifetimes, proof state, diagnostic ownership and reporting.

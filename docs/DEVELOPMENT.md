@@ -97,6 +97,10 @@ The [v233 frame-echo extraction](FRAME_ECHO_EXTRACTION.md) follows its
 echo operation while retaining caller-owned source selection and reporting.
 Current-policy behavior checks and defining-owner test stubs cover the new boundary.
 
+The [v234 effect-endpoint rounding fix](EFFECT_ENDPOINT_ROUNDING.md) resolves the
+shared move/transform boundary issue found during v233, without retiming sources
+or changing the caller-owned effect proofs.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks

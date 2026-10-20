@@ -44,7 +44,7 @@ for flat, expected in ((False, 5), (True, 2)):
     assert [vars(e) for e in events] == before
 long = echo_events(True, duration=.4)
 assert b.collapse_frame_text_echoes(long, .16) == (long, 0)
-originals = moving_sources(long)
+originals = moving_sources(long, endpoint=450)
 before = deepcopy({key: vars(value) for key, value in originals.items()})
 assert b.collapse_frame_text_echoes(long, .16, source_events=originals)[1] == 2
 assert {key: vars(value) for key, value in originals.items()} == before
@@ -150,7 +150,7 @@ class FrameEchoModuleChecks(unittest.TestCase):
             events = echo_events(flat, duration=.4)
             for originals in (None, {}):
                 self.assertEqual(echoes.collapse_frame_text_echoes(events, .16, source_events=originals), (events, 0))
-            originals = moving_sources(events, endpoint=449)
+            originals = moving_sources(events, endpoint=450)
             before = deepcopy({key: vars(value) for key, value in originals.items()})
             self.assertEqual(echoes.collapse_frame_text_echoes(events, .16, source_events=originals)[1], expected)
             self.assertEqual({key: vars(value) for key, value in originals.items()}, before)
