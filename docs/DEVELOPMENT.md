@@ -138,6 +138,10 @@ The [v244 progressive-reveal extraction](PROGRESSIVE_REVEAL_EXTRACTION.md) follo
 its [bounded assessment](PROGRESSIVE_REVEAL_EXTRACTION_ASSESSMENT.md), preserving
 caller-owned visibility adoption and giving the existing shared result a neutral owner.
 
+The [next bounded assessment](SHRINKING_ROW_EXTRACTION_ASSESSMENT.md) recommends
+v245 extraction of complete shrinking glyph-row processing, with the shared
+fixed-boundary group query given a neutral owner in the same release.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
