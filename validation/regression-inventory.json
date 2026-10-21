@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.21.244",
+  "version": "2026.10.21.245",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -578,6 +578,11 @@
     },
     {
       "script": "tests/check_progressive_reveals_module.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "tests/check_shrinking_rows_module.py",
       "status": "current",
       "category": "general"
     }

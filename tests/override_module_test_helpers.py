@@ -8,7 +8,7 @@ from unittest.mock import patch
 def patch_interpreter_bindings(engine, name, *args, **kwargs):
     """Patch the defining binding and known consumers with one replacement.
 
-    Sampling, selection, freezing, static objects, compaction, karaoke, backed-glyph moving-glyph and sliced-text
+    Sampling, selection, freezing, static objects, compaction, karaoke, backed-glyph, moving-glyph, sliced-text and shrinking-row
     consumers import interpreter functions directly. Resolve their actual owners
     through engine exports so historical
     single-file engines still need only one binding; do not add production
@@ -25,7 +25,7 @@ def patch_interpreter_bindings(engine, name, *args, **kwargs):
                       'compact_static_overrides', 'normalize_karaoke_completion_paint',
                       '_settled_caption_paint_samples', 'collapse_backed_glyph_pulses',
                       'literal_font_spans', 'collapse_moving_glyph_sequences',
-                      'collapse_sliced_text_sequences'))]
+                      'collapse_sliced_text_sequences', 'collapse_shrinking_glyph_rows'))]
     for consumer in consumers:
         if (consumer is not None and consumer not in bindings and
                 getattr(consumer, name, None) is original):

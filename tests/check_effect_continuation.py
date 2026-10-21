@@ -5,7 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 from override_module_test_helpers import patch_interpreter_bindings
-import importlib.util,json,math,sys
+import importlib.util,inspect,json,math,sys
 import simplify_ass as current
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
 install_row_test_doubles(current)
@@ -70,10 +70,13 @@ def compare(label,target,inputs,*,expected_colour=None):
  cases+=1
 
 f=fixtures('check_shrinking_row_stages.py','SPY_NAMES=')
-for c in f['CASES']:
- for order in ('original','reversed','shuffled'):
-  for mode in ('available','unavailable','none','failed_fit'):
-   compare(c['name']+order+mode,'collapse_shrinking_glyph_rows',lambda m:(f['inputs'](m,c['events'],order),None if mode=='none' else f['RecordingMetric'](engines[m],mode),2))
+# The recording metric double belongs at the defining fit consumer after extraction.
+fit_owner=inspect.getmodule(current.collapse_shrinking_glyph_rows)
+with patch.object(fit_owner,'matches_authored_glyph_positions',current.matches_authored_glyph_positions):
+ for c in f['CASES']:
+  for order in ('original','reversed','shuffled'):
+   for mode in ('available','unavailable','none','failed_fit'):
+    compare(c['name']+order+mode,'collapse_shrinking_glyph_rows',lambda m:(f['inputs'](m,c['events'],order),None if mode=='none' else f['RecordingMetric'](engines[m],mode),2))
 f=fixtures('check_karaoke_completion_stages.py','SPY_NAMES=')
 for c in f['CASES']:
  for order in ('original','reversed','shuffled'):

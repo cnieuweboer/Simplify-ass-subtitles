@@ -138,9 +138,9 @@ The [v244 progressive-reveal extraction](PROGRESSIVE_REVEAL_EXTRACTION.md) follo
 its [bounded assessment](PROGRESSIVE_REVEAL_EXTRACTION_ASSESSMENT.md), preserving
 caller-owned visibility adoption and giving the existing shared result a neutral owner.
 
-The [next bounded assessment](SHRINKING_ROW_EXTRACTION_ASSESSMENT.md) recommends
-v245 extraction of complete shrinking glyph-row processing, with the shared
-fixed-boundary group query given a neutral owner in the same release.
+The [v245 shrinking-row extraction](SHRINKING_ROW_EXTRACTION.md) follows its
+[bounded assessment](SHRINKING_ROW_EXTRACTION_ASSESSMENT.md), preserving original
+timing history and giving the shared fixed-boundary query a neutral owner.
 
 ## Tools
 
@@ -191,7 +191,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 116 current scripts. The runner uses three workers for
+The suite inventory lists 117 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
