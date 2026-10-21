@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verify borrowed visibility, sparse deltas, pending reads and failure isolation."""
 import test_paths  # Resolve the repository for direct test execution.
+import inspect
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import FrozenInstanceError
@@ -120,16 +121,16 @@ for name,make,fn,helper in [
     ('full copies',lambda:copies(chain=True),s.collapse_full_lyric_copies,'render_simplified_caption'),
     ('progressive reveal',lambda:reveal(two=True),s.collapse_progressive_text_reveals,'_select_progressive_reveal_caption'),
 ]:
-    events,visible=make();before=snapshot(events,visible);original=getattr(s,helper);calls=[]
+    events,visible=make();before=snapshot(events,visible);owner=inspect.getmodule(fn);original=getattr(owner,helper);calls=[]
     def fail_after_first(*args,**kwargs):
         calls.append(1)
         if len(calls)==2:raise RuntimeError('injected failure after first accepted caption')
         return original(*args,**kwargs)
-    setattr(s,helper,fail_after_first)
+    setattr(owner,helper,fail_after_first)
     try:fn(events,visible)
     except RuntimeError as error:check(name+' failure occurs after first caption',len(calls)==2 and str(error).startswith('injected'))
     else:raise AssertionError('expected failure')
-    finally:setattr(s,helper,original)
+    finally:setattr(owner,helper,original)
     check(name+' failed pass leaves shared inputs untouched',snapshot(events,visible)==before)
 
 (ROOT/'validation/text-visibility-ownership-checks.json').write_text(json.dumps(dict(

@@ -119,6 +119,19 @@ source-fragment caller retains isolation, the backing-pulse handoff, row adoptio
 and aggregate reporting. Shared `rectangle_clip()` reads belong to caption
 geometry: preserve source coordinates and refusal without parsing/caching events.
 The interpreter observer follows the defining sliced-text consumer.
+Complete progressive text-reveal admission, prefix/chain and temporal strip-band
+proofs, representative paint and interval reconstruction live in
+`_simplify_ass/progressive_reveals.py`, with direct engine aliases for thirteen
+functions and three frozen records. Borrow events, visibility history, catalogs
+and measurement context; keep profiles, coverage counters, replacements and sparse
+deltas call-local. Preserve real gaps, opacity/source-order selection, untouched
+event identity and no-family early-return list identity. The existing frozen
+`TextVisibilityResult` lives in `_simplify_ass/text_visibility.py`, shared with
+full-lyric-copy cleanup, with a direct engine alias. Keep shallow sharing and
+accepted equal-value assignments; callers adopt deltas unconditionally before the
+next consumer, even with zero removals. The consolidation caller retains stage
+conditions, event adoption and reporting. Test fault injection follows the defining
+producer; no production forwarding is needed.
 Complete stationary/moving/held-caption chain proofs and replacement live in
 `_simplify_ass/moving_glyphs.py`, with direct engine aliases for seventeen
 functions and two frozen records. Source/retained events, visible maps and metrics
@@ -219,7 +232,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-115-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+116-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it

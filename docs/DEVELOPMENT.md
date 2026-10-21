@@ -134,9 +134,9 @@ The [v243 sliced-text extraction](SLICED_TEXT_EXTRACTION.md) follows its
 [bounded assessment](SLICED_TEXT_EXTRACTION_ASSESSMENT.md), retaining source-fragment
 orchestration while establishing shared rectangular-clip geometry ownership.
 
-The [next bounded assessment](PROGRESSIVE_REVEAL_EXTRACTION_ASSESSMENT.md)
-recommends v244 extraction of complete progressive text reveals, with the existing
-shared visibility-result record given a neutral owner in the same release.
+The [v244 progressive-reveal extraction](PROGRESSIVE_REVEAL_EXTRACTION.md) follows
+its [bounded assessment](PROGRESSIVE_REVEAL_EXTRACTION_ASSESSMENT.md), preserving
+caller-owned visibility adoption and giving the existing shared result a neutral owner.
 
 ## Tools
 
@@ -187,7 +187,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 108 current scripts. The runner uses three workers for
+The suite inventory lists 116 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.
