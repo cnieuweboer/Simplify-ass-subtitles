@@ -142,6 +142,10 @@ The [v245 shrinking-row extraction](SHRINKING_ROW_EXTRACTION.md) follows its
 [bounded assessment](SHRINKING_ROW_EXTRACTION_ASSESSMENT.md), preserving original
 timing history and giving the shared fixed-boundary query a neutral owner.
 
+The next bounded recommendation is [v246 boundary-glyph processing](BOUNDARY_GLYPH_EXTRACTION_ASSESSMENT.md):
+move its complete classification/ownership proof after giving the shared simple-fade
+parser an existing neutral validation owner. This is an assessment, not an implemented release.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
