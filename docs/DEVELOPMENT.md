@@ -134,6 +134,10 @@ The [v243 sliced-text extraction](SLICED_TEXT_EXTRACTION.md) follows its
 [bounded assessment](SLICED_TEXT_EXTRACTION_ASSESSMENT.md), retaining source-fragment
 orchestration while establishing shared rectangular-clip geometry ownership.
 
+The [next bounded assessment](PROGRESSIVE_REVEAL_EXTRACTION_ASSESSMENT.md)
+recommends v244 extraction of complete progressive text reveals, with the existing
+shared visibility-result record given a neutral owner in the same release.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
