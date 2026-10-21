@@ -94,10 +94,13 @@ for c in f['CASES']:
    return (events,)
   compare(c['name']+order,'collapse_sliced_text_sequences',build)
 f=fixtures('check_boundary_glyph_stages.py','NAMES=')
-for c in f['CASES']:
- for order in ('original','reverse','shuffle'):
-  for mode in ('real','unavailable','none','failed_fit','distant_fit'):
-   compare(c['name']+order+mode,'match_boundary_glyph_effects',lambda m:(*f['inputs'](m,c,order,order),None if mode=='none' else f['RecordingMetric'](engines[m],mode)))
+# Recorded metrics patch the actual fit consumer, without production forwarding.
+boundary_owner=inspect.getmodule(current.match_boundary_glyph_effects)
+with patch.object(boundary_owner,'fit_fragment_anchor',current.fit_fragment_anchor):
+ for c in f['CASES']:
+  for order in ('original','reverse','shuffle'):
+   for mode in ('real','unavailable','none','failed_fit','distant_fit'):
+    compare(c['name']+order+mode,'match_boundary_glyph_effects',lambda m:(*f['inputs'](m,c,order,order),None if mode=='none' else f['RecordingMetric'](engines[m],mode)))
 f=fixtures('check_vector_text_stages.py','NAMES=')
 for c in f['CASES']:
  for order in ('original','reverse','shuffle'):

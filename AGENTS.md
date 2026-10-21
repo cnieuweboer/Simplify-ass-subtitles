@@ -145,6 +145,17 @@ and aggregate reporting. Shared `nearby_boundary_groups()` lives in
 50 ms plus rounding search bounds and borrowed group references. Producers retain
 index construction and their separate acceptance rules. Interpreter observers and
 fit doubles follow the defining shrinking-row consumer, without production forwarding.
+Complete boundary-glyph rotating-entrance/flying-exit classification, ordered literal
+and exact-font anchor proof and unique ownership live in
+`_simplify_ass/boundary_glyphs.py`, with direct engine aliases for twelve functions
+and two frozen records. Borrow working events, visibility, source maps and metrics;
+keep resolved source views, indexes, protected IDs and proposals call-local.
+Preserve protected absorbed holds, per-phase caption ownership and unique effect
+ownership. Return removal IDs; the covered-fragment caller retains application,
+row timing handoffs, order and reporting. The strict shared simple-fade read lives
+in `effect_validation`; caption-phase and boundary producers retain their distinct
+core/duration decisions. Test observers and fit doubles follow the defining
+consumer, without production forwarding.
 Complete stationary/moving/held-caption chain proofs and replacement live in
 `_simplify_ass/moving_glyphs.py`, with direct engine aliases for seventeen
 functions and two frozen records. Source/retained events, visible maps and metrics
@@ -245,7 +256,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-117-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+118-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it

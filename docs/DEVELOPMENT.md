@@ -142,9 +142,10 @@ The [v245 shrinking-row extraction](SHRINKING_ROW_EXTRACTION.md) follows its
 [bounded assessment](SHRINKING_ROW_EXTRACTION_ASSESSMENT.md), preserving original
 timing history and giving the shared fixed-boundary query a neutral owner.
 
-The next bounded recommendation is [v246 boundary-glyph processing](BOUNDARY_GLYPH_EXTRACTION_ASSESSMENT.md):
-move its complete classification/ownership proof after giving the shared simple-fade
-parser an existing neutral validation owner. This is an assessment, not an implemented release.
+The [v246 boundary-glyph extraction](BOUNDARY_GLYPH_EXTRACTION.md) follows its
+[bounded assessment](BOUNDARY_GLYPH_EXTRACTION_ASSESSMENT.md), retaining caller-owned
+removal application/reporting and giving the shared simple-fade parser its existing
+neutral validation owner.
 
 ## Tools
 
@@ -195,7 +196,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 117 current scripts. The runner uses three workers for
+The suite inventory lists 118 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.

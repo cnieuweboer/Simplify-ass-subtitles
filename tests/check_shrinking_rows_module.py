@@ -6,6 +6,7 @@ from pathlib import Path
 from types import MappingProxyType,SimpleNamespace
 from typing import get_type_hints
 import pickle
+import inspect
 import subprocess
 import sys
 import tempfile
@@ -80,7 +81,8 @@ class ShrinkingRowModuleChecks(unittest.TestCase):
         local=rows._index_shrinking_row_sources(events,families,2)
         peers=next(iter(local.groups.values()));held=next(e for e in events.values() if e.text.endswith('abc'))
         words={held.source_index:'abc'};key=('word',)
-        with patch.object(engine,'nearby_boundary_groups',wraps=boundary_groups.nearby_boundary_groups) as query:
+        with patch.object(inspect.getmodule(engine._match_boundary_glyph_words),
+                          'nearby_boundary_groups',wraps=boundary_groups.nearby_boundary_groups) as query:
             result=engine._match_boundary_glyph_words(key,1.5,[(e,(m[0],m[1]),c) for e,c,m in peers],{key:([1.5],{1.5:[held]})},words)
         self.assertEqual(query.call_count,1);self.assertEqual(result,[held])
 

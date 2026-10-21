@@ -61,3 +61,17 @@ def opaque_text_effect_state(state: dict) -> bool:
             not any(k in state for k in ('clip','iclip','org')) and
             not any(abs(state.get(k,state.get('shad',0))) > .001
                     for k in ('xshad','yshad')))
+
+
+def _parse_simple_source_fade(tokens: list):
+    """Require exactly one finite nonnegative two-part fad and no fade."""
+    fades = [value for tag,value in tokens if tag == 'fad']
+    if len(fades) != 1 or any(tag == 'fade' for tag,value in tokens):
+        return None
+    try:
+        fade = [float(v) for v in fades[0].strip('()').split(',')]
+    except ValueError:
+        return None
+    if len(fade) != 2 or not all(math.isfinite(v) and v >= 0 for v in fade):
+        return None
+    return fade

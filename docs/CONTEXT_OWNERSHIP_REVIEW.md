@@ -11,6 +11,16 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v246 complete boundary-glyph entrance/exit classification, literal/anchor proof
+and unique ownership moved unchanged with two frozen records to
+`_simplify_ass/boundary_glyphs.py`. Inputs remain borrowed; resolved source views,
+indexes, protected IDs and proposals stay call-local. Preserve shallow payloads,
+absorbed-slot protection and independent per-phase caption ownership. Return source
+IDs; the covered-fragment caller retains removal application, timing successors,
+stage order and reporting. The shared strict simple-fade parser belongs to
+`effect_validation`; each producer retains its own duration/core policy. See
+[BOUNDARY_GLYPH_EXTRACTION.md](BOUNDARY_GLYPH_EXTRACTION.md).
+
 In v243 complete sliced-text admission, coverage/paint proof, proposal arbitration
 and authored timing moved unchanged with two frozen records to
 `_simplify_ass/sliced_text.py`. Events, catalogs, evidence and measurement context
