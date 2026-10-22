@@ -147,6 +147,10 @@ The [v246 boundary-glyph extraction](BOUNDARY_GLYPH_EXTRACTION.md) follows its
 removal application/reporting and giving the shared simple-fade parser its existing
 neutral validation owner.
 
+The [v247 full-lyric-copy extraction](FULL_LYRIC_COPY_EXTRACTION.md) moves the
+complete operation behind v244's existing visibility-result boundary, retaining
+caller-owned stage order, delta adoption and reporting.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks
@@ -196,7 +200,7 @@ The two JSON audit inputs retained under `validation` are test data, rather than
 generated pass reports: `masked-extraction-blocks.json` and
 `covered-fragment-helper-list.json`.
 
-The suite inventory lists 118 current scripts. The runner uses three workers for
+The suite inventory lists 119 current scripts. The runner uses three workers for
 ordinary checks and serializes render checks. It records runtime/harness hashes
 and writes fresh logs and summaries under `validation/backend-runs/windows`.
 Inspect script exit codes and `validation/complete-regression-checks.json`.

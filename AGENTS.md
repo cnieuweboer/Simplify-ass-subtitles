@@ -132,6 +132,16 @@ accepted equal-value assignments; callers adopt deltas unconditionally before th
 next consumer, even with zero removals. The consolidation caller retains stage
 conditions, event adoption and reporting. Test fault injection follows the defining
 producer; no production forwarding is needed.
+Complete overlapping full-lyric-copy clustering, representative paint/caption
+selection and sparse visibility handoff live in `_simplify_ass/full_lyric_copies.py`,
+with a direct engine alias. Borrow resolved working events and visibility history;
+keep the pending ChainMap overlay, groups, removal IDs and replacements call-local.
+Preserve original ordering, untouched identity, source-pose support and accepted
+equal-value visibility assignments. The existing shared `TextVisibilityResult`
+retains its neutral owner. `_consolidate_text_events()` retains stage order,
+unconditional delta adoption before frame merging, level gating and reporting.
+Selection, rendering, replacement and measurement policy retain their existing
+owners. Test observers target the defining consumer without production forwarding.
 Complete shrinking glyph-row source admission, held-caption/anchor proofs, unique
 ownership and terminal-fade handoffs live in `_simplify_ass/shrinking_rows.py`,
 with direct engine aliases for nine functions and three frozen records. Borrow
@@ -256,7 +266,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-118-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+119-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it

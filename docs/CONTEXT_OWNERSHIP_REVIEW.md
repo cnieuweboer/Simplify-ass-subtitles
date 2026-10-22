@@ -11,6 +11,16 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v247 full-lyric-copy grouping, representative paint/caption selection and
+sparse visibility updates moved unchanged to `_simplify_ass/full_lyric_copies.py`.
+Events, history and catalogs remain borrowed; pending text, groups, removal IDs
+and replacements stay call-local. Keep the shared neutral result owner, untouched
+identity, original source-pose intervals and equal-value assignments. The caller
+retains level gating, count/output adoption and visibility updates before frame
+merging. No new cache or diagnostic owner is introduced. See
+[FULL_LYRIC_COPY_EXTRACTION.md](FULL_LYRIC_COPY_EXTRACTION.md), including the
+pre-existing repeated-cluster behavior identified for separate assessment.
+
 In v246 complete boundary-glyph entrance/exit classification, literal/anchor proof
 and unique ownership moved unchanged with two frozen records to
 `_simplify_ass/boundary_glyphs.py`. Inputs remain borrowed; resolved source views,

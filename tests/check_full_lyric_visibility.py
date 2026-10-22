@@ -5,7 +5,7 @@ from event_evidence_test_helpers import without_inactive_color_phase_reporting  
 from event_evidence_test_helpers import contour_independent_contract as contract
 from contextlib import contextmanager,redirect_stdout
 from pathlib import Path
-import importlib.util,json,random,sys,tempfile
+import importlib.util,inspect,json,random,sys,tempfile
 import simplify_ass as current
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
 install_row_test_doubles(current, historical_fade_timing=True)
@@ -88,16 +88,17 @@ def inputs(module,records,order,map_mode):
 
 @contextmanager
 def recording(module,calls):
-    originals={name:getattr(module,name) for name in ('select_static_state',)}
+    owner=inspect.getmodule(module.collapse_full_lyric_copies)
+    originals={name:getattr(owner,name) for name in ('select_static_state',)}
     def wrap(name,original):
         def call(*args,**kwargs):
             before=snapshot((args,kwargs));result=original(*args,**kwargs)
             calls.append((name,before,snapshot(result)));return result
         return call
-    for name,original in originals.items():setattr(module,name,wrap(name,original))
+    for name,original in originals.items():setattr(owner,name,wrap(name,original))
     try:yield
     finally:
-        for name,original in originals.items():setattr(module,name,original)
+        for name,original in originals.items():setattr(owner,name,original)
 
 checks=[]
 for name,records in CASES:
