@@ -147,6 +147,10 @@ The [v246 boundary-glyph extraction](BOUNDARY_GLYPH_EXTRACTION.md) follows its
 removal application/reporting and giving the shared simple-fade parser its existing
 neutral validation owner.
 
+The [full-copy repeat assessment](FULL_COPY_REPEAT_ASSESSMENT.md) distinguishes
+lost original-anchor discovery from ambiguous transitive chains, with fresh
+current-policy corpus and native rendering probes. It recommends a bounded
+discovery/paint-selection correction without repeated application of the pass.
 The [v247 full-lyric-copy extraction](FULL_LYRIC_COPY_EXTRACTION.md) moves the
 complete operation behind v244's existing visibility-result boundary, retaining
 caller-owned stage order, delta adoption and reporting.
