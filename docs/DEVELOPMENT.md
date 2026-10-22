@@ -147,6 +147,9 @@ The [v246 boundary-glyph extraction](BOUNDARY_GLYPH_EXTRACTION.md) follows its
 removal application/reporting and giving the shared simple-fade parser its existing
 neutral validation owner.
 
+The [v249 full-copy family correction](FULL_COPY_FAMILIES.md) discovers original
+anchor proposals before removals and selects paint once per accepted family,
+without merging unrestricted transitive chains.
 The [full-copy repeat assessment](FULL_COPY_REPEAT_ASSESSMENT.md) distinguishes
 lost original-anchor discovery from ambiguous transitive chains, with fresh
 current-policy corpus and native rendering probes. It recommends a bounded

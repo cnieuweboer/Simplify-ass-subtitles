@@ -117,8 +117,15 @@ check('zero-count reveal emits complete captions',all(s.simplify_text(e.text,vis
 events,visible=reveal(accepted=False);result=s.collapse_progressive_text_reveals(events,visible)
 check('ineligible reveal keeps early-return list identity',result.events is events and not result.visibility_updates)
 
+def two_copy_families():
+    events,visible=copies()
+    second=[s.replace_event(e,source_index=e.source_index+100,
+        start_s=e.start_s+10,end_s=e.end_s+10,
+        start=s.format_time(e.start_s+10),end=s.format_time(e.end_s+10)) for e in events]
+    return events+second,{**visible,**{e.source_index+100:visible[e.source_index] for e in events}}
+
 for name,make,fn,helper in [
-    ('full copies',lambda:copies(chain=True),s.collapse_full_lyric_copies,'render_simplified_caption'),
+    ('full copies',two_copy_families,s.collapse_full_lyric_copies,'render_simplified_caption'),
     ('progressive reveal',lambda:reveal(two=True),s.collapse_progressive_text_reveals,'_select_progressive_reveal_caption'),
 ]:
     events,visible=make();before=snapshot(events,visible);owner=inspect.getmodule(fn);original=getattr(owner,helper);calls=[]

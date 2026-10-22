@@ -11,6 +11,15 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v249 full-copy admission discovers all original-anchor proposals before any
+source is removed. Stable proposal arbitration assigns disjoint original families;
+each family selects text/paint and renders exactly once. There is no pending
+caption overlay or transfer between partially rendered families. Timing union and
+pose support use the complete accepted originals, with a compatible original
+serving as pose reference. Visibility remains a borrowed lookup-only history plus
+a returned sparse delta. The caller's stage/count/adoption owners are unchanged.
+See [FULL_COPY_FAMILIES.md](FULL_COPY_FAMILIES.md).
+
 In v248 full-copy replacements retain their complete accepted original-source
 families across later clusters and retained-ID transfers. Bounds use the complete
 family; matching and paint selection keep the original cluster. Source-pose

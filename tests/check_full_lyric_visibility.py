@@ -10,7 +10,8 @@ import simplify_ass as current
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
 install_row_test_doubles(current, historical_fade_timing=True)
 from event_evidence_test_helpers import event_comparison_fields
-from full_copy_contract_helpers import accepted_copy_clusters, assert_copy_family_coverage, copy_paint_comparison_fields
+from full_copy_contract_helpers import (accepted_copy_clusters, assert_anchored_copy_contract,
+    copy_cluster_ids, copy_paint_comparison_fields)
 
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('full_copies_reference',ROOT/'test-data/simplify_ass-v165-reference.py')
@@ -105,7 +106,7 @@ checks=[]
 for name,records in CASES:
     for order in ('original','reverse','shuffle'):
         for map_mode in ('complete','missing_one','missing_all','wrong_one'):
-            compared=[]
+            compared=[];proofs=[]
             for module in (previous,current):
                 events,visible=inputs(module,records,order,map_mode)
                 before=snapshot((events,visible));calls=[]
@@ -115,11 +116,14 @@ for name,records in CASES:
                     out,count=result.events,result.removed_count
                     applied={**visible,**result.visibility_updates}
                 else:out,count=result;applied=visible
-                if module is current:assert_copy_family_coverage(events,out,clusters)
+                if module is current:assert_anchored_copy_contract(module,events,visible,result,clusters)
+                proofs.append(copy_cluster_ids(clusters))
                 compared.append((snapshot(([copy_paint_comparison_fields(e) for e in out],count)),snapshot(applied),calls,
                     tuple(any(e is old for old in events) for e in out)))
-            assert contract(compared[0]) == contract(compared[1]),(name,order,map_mode)
-            checks.append(dict(case=name,order=order,map_mode=map_mode))
+            if proofs[0]==proofs[1]:
+                assert contract(compared[0]) == contract(compared[1]),(name,order,map_mode)
+            checks.append(dict(case=name,order=order,map_mode=map_mode,
+                historical_proof_unchanged=proofs[0]==proofs[1]))
 
 focused=[]
 for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass'):
@@ -148,6 +152,8 @@ for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass')
 
 (ROOT/'validation/full-lyric-visibility-checks.json').write_text(json.dumps(dict(
     version=current.__version__,reference_version=previous.__version__,comparisons=len(checks),
-    scenarios=len(CASES),contour_independent_visibility_and_selection_identical=True,
+    scenarios=len(CASES),anchored_family_contract_checked=True,
+    historical_proof_unchanged=sum(x['historical_proof_unchanged'] for x in checks),
+    historical_parity_checked_when_proofs_agree=True,
     input_ownership_and_event_identity_preserved=True,focused_conversions=focused,checks=checks),indent=2)+'\n')
 print(len(checks),'full-lyric comparisons across',len(CASES),'scenarios; two focused conversions passed')

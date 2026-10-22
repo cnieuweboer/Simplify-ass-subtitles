@@ -125,6 +125,8 @@ class FullLyricCopyModuleChecks(unittest.TestCase):
                     words[events[-1].source_index]='Independent'
                     before=deepcopy(([vars(e) for e in ordered],words))
                     result=copies.collapse_full_lyric_copies(ordered,MappingProxyType(words))
+                    self.assertEqual(result.removed_count,2)
+                    self.assertEqual(len(result.events),2)
                     spans=sorted((e.start_s,e.end_s) for e in result.events if e.name!='unrelated')
                     coverage=[]
                     for start,end in spans:
@@ -168,7 +170,7 @@ class FullLyricCopyModuleChecks(unittest.TestCase):
         self.assertEqual(engine.OVERRIDE_RE.sub('',caption.text),'AB CD')
         self.assertEqual((caption.state['1c'],caption.state['3c'],caption.state['3a'],caption.state['bord']),('FFFFFF','DDDDDD',96,1.25))
 
-    def test_matching_original_pose_wins_when_pending_caption_has_other_geometry(self):
+    def test_complete_family_pose_follows_selected_original_geometry(self):
         events,visible=full_copy_inputs(variant='chain')
         family=[]
         for n,event in enumerate(events[:3]):
@@ -178,12 +180,12 @@ class FullLyricCopyModuleChecks(unittest.TestCase):
         result=copies.collapse_full_lyric_copies(family,{e.source_index:'AB CD' for e in family})
         self.assertEqual(len(result.events),1)
         caption=result.events[0]
-        self.assertEqual(caption.state['fs'],40)
+        self.assertEqual(caption.state['fs'],50)
         self.assertEqual((caption.start_s,caption.end_s),(1.,5.))
         self.assertEqual(set(caption.evidence.frame_pose_intervals or ()),
-            {span for e in family[1:] for span in e.evidence.frame_pose_intervals})
+            set(family[0].evidence.frame_pose_intervals))
 
-    def test_timing_handoff_does_not_expand_matching_or_iterate(self):
+    def test_original_anchor_settles_crossing_copies_without_iteration(self):
         from full_lyric_copy_test_helpers import HEADER
         specs=[('AB CD',1.5,4.5),('A B C D',2,5),('ABCD',2.5,5.5)]
         text=HEADER+''.join('Dialogue: 0,'+engine.format_time(start)+','+engine.format_time(end)+
@@ -191,11 +193,80 @@ class FullLyricCopyModuleChecks(unittest.TestCase):
         events=list(engine._resolve_document_state(engine.parse_subtitle_document(text)).events.values())
         for event in events:event.lyric=True
         visible={e.source_index:engine.simplify_text(e.text,visible_only=True)[1] for e in events}
-        result=copies.collapse_full_lyric_copies(events,visible)
-        self.assertEqual(result.removed_count,1)
-        self.assertEqual([(e.start_s,e.end_s) for e in result.events],[(1.5,5.),(2.5,5.5)])
-        repeated=copies.collapse_full_lyric_copies(result.events,{**visible,**result.visibility_updates})
-        self.assertEqual(repeated.removed_count,1)
+        before=deepcopy(events)
+        for order in permutations(events):
+            with patch.object(copies,'select_static_state',wraps=copies.select_static_state) as selected:
+                result=copies.collapse_full_lyric_copies(list(order),MappingProxyType(visible))
+            self.assertEqual(result.removed_count,2)
+            self.assertEqual([(e.start_s,e.end_s) for e in result.events],[(1.5,5.5)])
+            self.assertEqual(engine.OVERRIDE_RE.sub('',result.events[0].text),'A B C D')
+            self.assertEqual(selected.call_count,1)
+            self.assertEqual({id(e) for e in selected.call_args.kwargs['paint_events']},{id(e) for e in events})
+            repeated=copies.collapse_full_lyric_copies(result.events,{**visible,**result.visibility_updates})
+            self.assertEqual(repeated.removed_count,0)
+        self.assertEqual(events,before)
+
+    def test_complete_original_paint_is_order_independent(self):
+        events,visible=full_copy_inputs(variant='chain')
+        family=[]
+        for event,color in zip(events[:3],('0000FF','00FF00','FF0000')):
+            family.append(engine.replace_event(event,text=event.text.replace('\\1c&HFFFFFF&','\\1c&H'+color+'&')))
+        appearances=[]
+        for order in permutations(family):
+            with patch.object(copies,'select_static_state',wraps=copies.select_static_state) as selected:
+                result=copies.collapse_full_lyric_copies(list(order),visible)
+            self.assertEqual(result.removed_count,2)
+            self.assertEqual(selected.call_count,1)
+            self.assertEqual({id(e) for e in selected.call_args.kwargs['paint_events']},{id(e) for e in family})
+            appearances.append(result.events[0].text)
+        self.assertEqual(len(set(appearances)),1)
+
+    def test_zero_length_source_cannot_link_separate_cues(self):
+        events,visible=full_copy_inputs(variant='gap')
+        point=engine.replace_event(events[0],source_index=99,start_s=4.,end_s=4.,
+            start=engine.format_time(4.),end=engine.format_time(4.))
+        # A point at a touching boundary must not join two independent holds.
+        next_cue=engine.replace_event(events[1],start_s=4.,end_s=7.,start=engine.format_time(4.),end=engine.format_time(7.))
+        words={**visible,point.source_index:visible[events[0].source_index]}
+        result=copies.collapse_full_lyric_copies([point,events[0],next_cue],words)
+        self.assertTrue(any(e.start_s==4. and e.end_s==7. for e in result.events))
+        self.assertFalse(any(e.start_s==1. and e.end_s==7. for e in result.events))
+
+    def test_competing_anchors_do_not_union_a_rolling_chain(self):
+        from full_lyric_copy_test_helpers import HEADER
+        from full_copy_contract_helpers import accepted_copy_clusters,assert_anchored_copy_contract
+        text=HEADER+''.join('Dialogue: 0,'+engine.format_time(1+n*.5)+','+engine.format_time(4+n*.5)+
+            r',Default,,0,0,0,,{\pos(320,100)}AB CD'+'\n' for n in range(8))
+        events=list(engine._resolve_document_state(engine.parse_subtitle_document(text)).events.values())
+        for event in events:event.lyric=True;event.row=0
+        visible={e.source_index:'AB CD' for e in events};outputs=[]
+        for ordered in (events,list(reversed(events)),events[::2]+events[1::2]):
+            with accepted_copy_clusters(engine) as clusters:
+                result=copies.collapse_full_lyric_copies(ordered,visible)
+            assert_anchored_copy_contract(engine,ordered,visible,result,clusters)
+            self.assertGreater(len(result.events),1)
+            self.assertTrue(all(e.duration<=4 for e in result.events))
+            outputs.append(sorted((e.source_index,e.start_s,e.end_s,e.text) for e in result.events))
+        self.assertTrue(all(o==outputs[0] for o in outputs))
+
+    def test_distinct_color_holds_and_interleaved_content_retain_ownership(self):
+        events,visible=full_copy_inputs(variant='chain')
+        marker=engine.replace_event(events[-1],start_s=1.,end_s=6.,
+            start=engine.format_time(1.),end=engine.format_time(6.),layer='1')
+        # A later color hold has the same literal/anchor but a separate lifetime.
+        hold=engine.replace_event(events[0],source_index=100,start_s=5.,end_s=7.,
+            start=engine.format_time(5.),end=engine.format_time(7.),
+            text=events[0].text.replace('\\1c&HFFFFFF&',r'\1c&H00FF00&'))
+        ordered=[events[0],marker,events[1],events[2],hold]
+        words={**visible,hold.source_index:visible[events[0].source_index]}
+        before=deepcopy(ordered)
+        result=copies.collapse_full_lyric_copies(ordered,words)
+        self.assertEqual(result.removed_count,2)
+        self.assertIs(result.events[-1],hold)
+        self.assertIs(result.events[0],marker)
+        self.assertEqual(marker.layer,'1')
+        self.assertEqual((hold.start_s,hold.end_s,hold.state['1c']),(5.,7.,'00FF00'))
+        self.assertEqual(ordered,before)
 
     def test_cold_source_installed_processing_and_owned_uninstall(self):
         with tempfile.TemporaryDirectory() as tmp:

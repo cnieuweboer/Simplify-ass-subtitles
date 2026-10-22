@@ -1,8 +1,6 @@
 """Complete overlapping lyric-copy selection and its sparse visibility handoff."""
 from __future__ import annotations
 
-import collections
-
 from .event_model import Event
 from .caption_geometry import get_pos, placement_key
 from .static_selection import select_static_state
@@ -17,11 +15,11 @@ def collapse_full_lyric_copies(events: list[Event],
                                visible_map: dict[int, str]) -> TextVisibilityResult:
     """Collapse overlapping full-line copies and return accepted caption text.
 
-    A private overlay preserves pending text for later clusters without
-    changing the borrowed map or copying its history.
+    Discover families from original anchors before discarding any match links.
+    Each accepted family selects paint once; replacement spans never vote or
+    authorize further removals. Borrow the visibility history without copying it.
     """
     visibility_updates: dict[int,str] = {}
-    visible_map = collections.ChainMap(visibility_updates,visible_map)
     def norm(value: str) -> str:
         return "".join(value.split()).casefold()
 
@@ -36,16 +34,32 @@ def collapse_full_lyric_copies(events: list[Event],
 
     removed: set[int] = set()
     replacements: dict[int, Event] = {}
-    # Keep accepted originals independently of the replacements' expanded spans.
-    # Matching and paint selection continue to use the original working events.
-    source_families: dict[int, dict[int, Event]] = {}
     for group in grouped.values():
-        for e in group:
+        # All original anchors get a proposal, including sources that the old
+        # greedy walk could absorb before discovering their complete family.
+        # Prefer the most supported original family, then authored source order.
+        # Store only proposal sizes, not a quadratic table of source references.
+        def matches(anchor: Event, other: Event) -> bool:
+            return (other.duration >= 0 and
+                    min(anchor.end_s, other.end_s) - max(anchor.start_s, other.start_s) >=
+                    0.8 * min(anchor.duration, other.duration))
+
+        proposals = sorted(
+            ((sum(matches(anchor, other) for other in group), anchor)
+             for anchor in group if anchor.duration > 0),
+            key=lambda item: (-item[0], item[1].source_index))
+        for size, e in proposals:
+            if size < 2:
+                break
             if e.source_index in removed:
                 continue
-            cluster = [other for other in group if other.source_index not in removed and
-                       min(e.end_s, other.end_s) - max(e.start_s, other.start_s) >=
-                       0.8 * min(e.duration, other.duration)]
+            cluster = sorted((other for other in group if other.source_index not in removed
+                              and other.source_index not in replacements and matches(e, other)),
+                             key=lambda item: item.source_index)
+            # A retained representative is claimed too. Neither it nor its
+            # originals may participate in a second family in this invocation.
+            if e.source_index in replacements:
+                continue
             if len(cluster) < 2:
                 continue
             # Prefer the author's spaced lyric when both a generated row and a
@@ -54,11 +68,8 @@ def collapse_full_lyric_copies(events: list[Event],
                 visible_map[item.source_index].count(" "),
                 item.effect == "", -item.source_index))
             first = min(cluster, key=lambda item: item.source_index)
-            sources = {item.source_index: item for item in cluster}
-            for item in cluster:
-                sources.update(source_families.pop(item.source_index, {}))
-            earlier = min(item.start_s for item in sources.values())
-            later = max(item.end_s for item in sources.values())
+            earlier = min(item.start_s for item in cluster)
+            later = max(item.end_s for item in cluster)
             state = select_static_state(best.state,[],set(),best.styles,best.defaults,
                                         paint_events=cluster,continuation=best.continuation).state
             text = render_simplified_caption(state, visible_map[best.source_index],
@@ -71,13 +82,12 @@ def collapse_full_lyric_copies(events: list[Event],
                 first, layer="0", start=format_time(earlier), end=format_time(later),
                 start_s=earlier, end_s=later, effect="",
                 text=text)
-            # Prefer the selected original pose. Pending accepted text can need
-            # its previous caption as reference; only originals supply dwell.
-            pose_source = best
-            if _frame_pose_key(best) != _frame_pose_key(caption):
-                pose_source = replacements.get(best.source_index, best)
-            replacements[first.source_index] = _preserve_frame_pose_support(pose_source,caption,sources.values())
-            source_families[first.source_index] = sources
+            # Paint selection can choose another member's font geometry. Use a
+            # compatible original as the pose reference, never a rendered union.
+            pose_key = _frame_pose_key(caption)
+            pose_source = next((item for item in [best] + cluster
+                                if _frame_pose_key(item) == pose_key), best)
+            replacements[first.source_index] = _preserve_frame_pose_support(pose_source,caption,cluster)
             visibility_updates[first.source_index] = visible_map[best.source_index]
             removed.update(item.source_index for item in cluster if item != first)
 

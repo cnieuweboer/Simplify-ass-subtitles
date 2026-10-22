@@ -4,7 +4,8 @@ import test_paths  # Resolve the repository for direct test execution.
 from event_evidence_test_helpers import contour_independent_contract as contract
 from copy import deepcopy
 from contextlib import nullcontext
-from full_copy_contract_helpers import accepted_copy_clusters, assert_copy_family_coverage, copy_paint_comparison_fields
+from full_copy_contract_helpers import (accepted_copy_clusters, assert_anchored_copy_contract,
+    copy_cluster_ids, copy_paint_comparison_fields)
 from pathlib import Path
 from collections.abc import Iterator
 import importlib.util,json,math,random,sys
@@ -55,7 +56,7 @@ for name,records in copies['CASES']:
     for order in ('original','reverse','shuffle'):
         for map_mode in ('complete','missing_one','missing_all','wrong_one'):
             for target in ('collapse_full_lyric_copies','coalesce_lyric_phases'):
-                compared=[]
+                compared=[];proofs=[]
                 for module in (previous,current):
                     events,visible=copies['inputs'](module,records,order,map_mode)
                     before=deepcopy(snapshot((events,visible)))
@@ -66,13 +67,17 @@ for name,records in copies['CASES']:
                         updates=result.visibility_updates
                     else:output,count=result;updates={}
                     check(name+target+' borrowed input',before==snapshot((events,visible)))
+                    retained_identity=[any(e is source for source in events) for e in output]
                     if target=='collapse_full_lyric_copies':
-                        if module is current:assert_copy_family_coverage(events,output,clusters)
+                        if module is current:assert_anchored_copy_contract(module,events,visible,result,clusters)
+                        proofs.append(copy_cluster_ids(clusters))
                         output=[copy_paint_comparison_fields(e) for e in output]
-                    compared.append((snapshot(output),count,updates,
-                        [any(e is source for source in events) for e in output]))
-                check(name+target+' output/updates/identity parity',
-                    (contract(compared[0])==contract(compared[1])) if target=='collapse_full_lyric_copies' else compared[0]==compared[1]);copy_cases+=1
+                    compared.append((snapshot(output),count,updates,retained_identity))
+                if target!='collapse_full_lyric_copies' or proofs[0]==proofs[1]:
+                    check(name+target+' output/updates/identity parity',
+                        (contract(compared[0])==contract(compared[1])) if target=='collapse_full_lyric_copies' else compared[0]==compared[1])
+                else:checks.append(name+target+' original-anchor family contract')
+                copy_cases+=1
 
 sequences=fixtures('check_text_effect_sequence_stages.py','SPY_NAMES=');sequence_cases=0
 for case in sequences['CASES']:

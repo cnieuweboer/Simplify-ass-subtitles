@@ -135,13 +135,17 @@ producer; no production forwarding is needed.
 Complete overlapping full-lyric-copy clustering, representative paint/caption
 selection and sparse visibility handoff live in `_simplify_ass/full_lyric_copies.py`,
 with a direct engine alias. Borrow resolved working events and visibility history;
-keep the pending ChainMap overlay, groups, removal IDs and replacements call-local.
+keep groups, original-anchor proposal sizes, removal IDs and replacements call-local.
 Preserve original ordering, untouched identity, source-pose support and accepted
-equal-value visibility assignments. Accumulate each accepted caption's original
-source family through later clusters, including transfer to another retained ID.
-Use that family only for full timing union and compatible original pose dwell;
-matching and paint voting stay on original working events. Never use an expanded
-replacement as new overlap evidence or manufacture dwell across its union span. The existing shared `TextVisibilityResult`
+equal-value visibility assignments. Discover original-anchor proposals before
+removals; prefer larger supported families, breaking ties by original source ID.
+Only positive-duration originals may anchor a proposal. Claim every accepted
+member once, including the retained ID; do not join arbitrary transitive chains.
+Select text and paint once from the complete accepted original family in stable
+source order, retaining its full timing union and compatible original pose dwell.
+Use a compatible original as pose reference when selection changes geometry.
+Never use an expanded replacement as new overlap/paint evidence or manufacture
+dwell across its union span. The existing shared `TextVisibilityResult`
 retains its neutral owner. `_consolidate_text_events()` retains stage order,
 unconditional delta adoption before frame merging, level gating and reporting.
 Selection, rendering, replacement and measurement policy retain their existing
