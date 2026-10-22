@@ -3,6 +3,8 @@
 import test_paths  # Resolve the repository for direct test execution.
 from event_evidence_test_helpers import contour_independent_contract as contract
 from copy import deepcopy
+from contextlib import nullcontext
+from full_copy_contract_helpers import accepted_copy_clusters, assert_copy_family_coverage, copy_paint_comparison_fields
 from pathlib import Path
 from collections.abc import Iterator
 import importlib.util,json,math,random,sys
@@ -57,12 +59,16 @@ for name,records in copies['CASES']:
                 for module in (previous,current):
                     events,visible=copies['inputs'](module,records,order,map_mode)
                     before=deepcopy(snapshot((events,visible)))
-                    result=getattr(module,target)(events,visible)
+                    with accepted_copy_clusters(module) if target=='collapse_full_lyric_copies' else nullcontext() as clusters:
+                        result=getattr(module,target)(events,visible)
                     if target=='collapse_full_lyric_copies':
                         output,count=result.events,result.removed_count
                         updates=result.visibility_updates
                     else:output,count=result;updates={}
                     check(name+target+' borrowed input',before==snapshot((events,visible)))
+                    if target=='collapse_full_lyric_copies':
+                        if module is current:assert_copy_family_coverage(events,output,clusters)
+                        output=[copy_paint_comparison_fields(e) for e in output]
                     compared.append((snapshot(output),count,updates,
                         [any(e is source for source in events) for e in output]))
                 check(name+target+' output/updates/identity parity',

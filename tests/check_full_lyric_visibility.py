@@ -10,6 +10,7 @@ import simplify_ass as current
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
 install_row_test_doubles(current, historical_fade_timing=True)
 from event_evidence_test_helpers import event_comparison_fields
+from full_copy_contract_helpers import accepted_copy_clusters, assert_copy_family_coverage, copy_paint_comparison_fields
 
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('full_copies_reference',ROOT/'test-data/simplify_ass-v165-reference.py')
@@ -108,13 +109,14 @@ for name,records in CASES:
             for module in (previous,current):
                 events,visible=inputs(module,records,order,map_mode)
                 before=snapshot((events,visible));calls=[]
-                with recording(module,calls):result=module.collapse_full_lyric_copies(events,visible)
+                with accepted_copy_clusters(module) as clusters,recording(module,calls):result=module.collapse_full_lyric_copies(events,visible)
                 if hasattr(result,"visibility_updates"):
                     assert before==snapshot((events,visible)),(name,'borrowed inputs changed')
                     out,count=result.events,result.removed_count
                     applied={**visible,**result.visibility_updates}
                 else:out,count=result;applied=visible
-                compared.append((snapshot((out,count)),snapshot(applied),calls,
+                if module is current:assert_copy_family_coverage(events,out,clusters)
+                compared.append((snapshot(([copy_paint_comparison_fields(e) for e in out],count)),snapshot(applied),calls,
                     tuple(any(e is old for old in events) for e in out)))
             assert contract(compared[0]) == contract(compared[1]),(name,order,map_mode)
             checks.append(dict(case=name,order=order,map_mode=map_mode))

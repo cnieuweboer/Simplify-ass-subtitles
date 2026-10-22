@@ -137,7 +137,11 @@ selection and sparse visibility handoff live in `_simplify_ass/full_lyric_copies
 with a direct engine alias. Borrow resolved working events and visibility history;
 keep the pending ChainMap overlay, groups, removal IDs and replacements call-local.
 Preserve original ordering, untouched identity, source-pose support and accepted
-equal-value visibility assignments. The existing shared `TextVisibilityResult`
+equal-value visibility assignments. Accumulate each accepted caption's original
+source family through later clusters, including transfer to another retained ID.
+Use that family only for full timing union and compatible original pose dwell;
+matching and paint voting stay on original working events. Never use an expanded
+replacement as new overlap evidence or manufacture dwell across its union span. The existing shared `TextVisibilityResult`
 retains its neutral owner. `_consolidate_text_events()` retains stage order,
 unconditional delta adoption before frame merging, level gating and reporting.
 Selection, rendering, replacement and measurement policy retain their existing

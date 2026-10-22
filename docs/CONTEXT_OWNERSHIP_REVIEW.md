@@ -11,6 +11,15 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v248 full-copy replacements retain their complete accepted original-source
+families across later clusters and retained-ID transfers. Bounds use the complete
+family; matching and paint selection keep the original cluster. Source-pose
+pooling uses only compatible original dwell, with a pending caption serving as a
+reference only when the selected original cannot match its accepted text/geometry.
+No replacement's expanded lifetime becomes new matching or exposure evidence.
+Family catalogs stay call-local and ownership transfers on acceptance. See
+[FULL_COPY_TIMING.md](FULL_COPY_TIMING.md).
+
 In v247 full-lyric-copy grouping, representative paint/caption selection and
 sparse visibility updates moved unchanged to `_simplify_ass/full_lyric_copies.py`.
 Events, history and catalogs remain borrowed; pending text, groups, removal IDs

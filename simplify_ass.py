@@ -270,7 +270,7 @@ from _simplify_ass.shrinking_rows import (
     collapse_shrinking_glyph_rows,
 )
 
-__version__ = "2026.10.22.247"
+__version__ = "2026.10.22.248"
 
 
 class _FontTimestampFilter(logging.Filter):

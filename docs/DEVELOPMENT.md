@@ -151,6 +151,9 @@ The [v247 full-lyric-copy extraction](FULL_LYRIC_COPY_EXTRACTION.md) moves the
 complete operation behind v244's existing visibility-result boundary, retaining
 caller-owned stage order, delta adoption and reporting.
 
+[v248 full-copy timing](FULL_COPY_TIMING.md) retains complete accepted source
+families across overlapping clusters without changing matching or paint selection.
+
 ## Tools
 
 Use Python 3.10 or newer, MKVToolNix, Pillow, fontTools and uharfbuzz. Render checks

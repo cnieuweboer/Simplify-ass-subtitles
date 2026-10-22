@@ -7,7 +7,7 @@ from .event_model import Event
 from .caption_geometry import get_pos, placement_key
 from .static_selection import select_static_state
 from .caption_rendering import render_simplified_caption, _source_caption_paint
-from .event_operations import replace_event
+from .event_operations import replace_event, _frame_pose_key
 from .frame_pose import _preserve_frame_pose_support
 from .subtitle_document import format_time
 from .text_visibility import TextVisibilityResult
@@ -36,6 +36,9 @@ def collapse_full_lyric_copies(events: list[Event],
 
     removed: set[int] = set()
     replacements: dict[int, Event] = {}
+    # Keep accepted originals independently of the replacements' expanded spans.
+    # Matching and paint selection continue to use the original working events.
+    source_families: dict[int, dict[int, Event]] = {}
     for group in grouped.values():
         for e in group:
             if e.source_index in removed:
@@ -51,8 +54,11 @@ def collapse_full_lyric_copies(events: list[Event],
                 visible_map[item.source_index].count(" "),
                 item.effect == "", -item.source_index))
             first = min(cluster, key=lambda item: item.source_index)
-            earlier = min(item.start_s for item in cluster)
-            later = max(item.end_s for item in cluster)
+            sources = {item.source_index: item for item in cluster}
+            for item in cluster:
+                sources.update(source_families.pop(item.source_index, {}))
+            earlier = min(item.start_s for item in sources.values())
+            later = max(item.end_s for item in sources.values())
             state = select_static_state(best.state,[],set(),best.styles,best.defaults,
                                         paint_events=cluster,continuation=best.continuation).state
             text = render_simplified_caption(state, visible_map[best.source_index],
@@ -65,7 +71,13 @@ def collapse_full_lyric_copies(events: list[Event],
                 first, layer="0", start=format_time(earlier), end=format_time(later),
                 start_s=earlier, end_s=later, effect="",
                 text=text)
-            replacements[first.source_index] = _preserve_frame_pose_support(best,caption,cluster)
+            # Prefer the selected original pose. Pending accepted text can need
+            # its previous caption as reference; only originals supply dwell.
+            pose_source = best
+            if _frame_pose_key(best) != _frame_pose_key(caption):
+                pose_source = replacements.get(best.source_index, best)
+            replacements[first.source_index] = _preserve_frame_pose_support(pose_source,caption,sources.values())
+            source_families[first.source_index] = sources
             visibility_updates[first.source_index] = visible_map[best.source_index]
             removed.update(item.source_index for item in cluster if item != first)
 

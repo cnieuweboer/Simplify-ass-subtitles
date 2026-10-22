@@ -100,3 +100,6 @@ families. Do not introduce blind iteration or broaden removal authority merely t
 force idempotence. These examples establish a producer-level timing issue; they do
 not establish a new whole-file corpus regression. Broader API/index and scrolling-
 iterator reviews remain separate.
+
+The lost-start/end and source-support handoff are corrected in
+[v248](FULL_COPY_TIMING.md). The separate second-call merging assessment remains open.
