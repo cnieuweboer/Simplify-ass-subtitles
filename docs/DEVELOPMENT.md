@@ -147,6 +147,10 @@ The [v246 boundary-glyph extraction](BOUNDARY_GLYPH_EXTRACTION.md) follows its
 removal application/reporting and giving the shared simple-fade parser its existing
 neutral validation owner.
 
+The [transitive full-copy assessment](TRANSITIVE_COPY_ASSESSMENT.md) finds that
+original connected families can replace the single-anchor restriction, provided
+the producer first preserves independent intervening ink. It identifies a shared
+clearance boundary and avoids numeric family caps or exact-paint requirements.
 The [v249 full-copy family correction](FULL_COPY_FAMILIES.md) discovers original
 anchor proposals before removals and selects paint once per accepted family,
 without merging unrestricted transitive chains.
