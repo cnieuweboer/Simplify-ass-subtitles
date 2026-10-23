@@ -111,3 +111,8 @@ def literal_font_spans(e: Event) -> tuple[tuple[str,str],...] | None:
             else:
                 spans.append((part,font))
     return tuple(spans)
+
+
+def _faded_cue_is_scrolling(e: Event) -> bool:
+    """Exclude legacy scrolling effects from stationary cue evidence."""
+    return e.effect.split(';',1)[0].strip().casefold() in {'banner','scroll up','scroll down'}

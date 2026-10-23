@@ -125,5 +125,54 @@ def definitions(p):return {n.name:n for n in executable_ast(ast.parse(p.read_tex
 a,b=definitions(ROOT/'test-data/simplify_ass-v176-reference.py'),definitions(ROOT/'tests/references/simplify_ass_v177.py')
 check('only focused lifecycle proof definitions added',set(b)-set(a)=={'GlyphPhaseLife','_index_glyph_phase_slots','_prove_glyph_phase_lives','reconstruct_glyph_lifecycles'} and not set(a)-set(b))
 check('existing changes confined to source preparation and proof adoption',{k for k in a if ast.dump(a[k])!=ast.dump(b[k])}=={'_prepare_source_text','_consolidate_text_events'})
+# Module boundary, borrowed lifecycle evidence and caller-owned diagnostics.
+import inspect,pickle,subprocess,sys
+from dataclasses import FrozenInstanceError
+from typing import get_type_hints
+from unittest.mock import patch
+from _simplify_ass import event_operations, glyph_lifecycles
+for name,value in vars(glyph_lifecycles).items():
+ if (inspect.isfunction(value) or inspect.isclass(value)) and value.__module__==glyph_lifecycles.__name__:
+  check('canonical lifecycle alias '+name,getattr(s,name) is value)
+  get_type_hints(value)
+check('shared scrolling read retains one owner',s._faded_cue_is_scrolling is event_operations._faded_cue_is_scrolling
+      and glyph_lifecycles._faded_cue_is_scrolling is event_operations._faded_cue_is_scrolling)
+get_type_hints(event_operations._faded_cue_is_scrolling)
+check('legacy lifecycle type lookup remains available',pickle.loads(b'csimplify_ass\nGlyphPhaseLife\n.') is glyph_lifecycles.GlyphPhaseLife)
+sample=next(iter(parse(row()).values()))
+members=(sample,);required=frozenset({sample.source_index})
+life=glyph_lifecycles.GlyphPhaseLife(members,sample,'A',1.,4.,(1.2,3.8),required)
+check('lifecycle record borrows source evidence',life.members is members and life.pose is sample and life.required_members is required)
+try:life.core=(2.,3.)
+except FrozenInstanceError:check('lifecycle record retains frozen bindings',True)
+else:raise AssertionError('mutable lifecycle binding')
+for effect,expected in (('',False),('Banner;10;0;0',True),(' scroll UP ;1;2 ',True),
+                        ('SCROLL DOWN',True),('banner extra',False),('fx;Banner',False)):
+ probe=replace(sample,effect=effect,state={})
+ check('legacy scrolling effect read '+repr(effect),event_operations._faded_cue_is_scrolling(probe)==expected)
+ check('scrolling read does not populate formatting '+repr(effect),probe.state=={})
+# A measurement refusal belongs only to one call; a later call may use the same
+# metric owner after exact-font availability returns, with a separate report.
+parsed=parse(row())
+peer=s.replace_event(next(iter(parsed.values())),source_index=max(parsed)+1,text=r'{\pos(0,0)}Independent',name='unrelated',effect='Banner')
+parsed={peer.source_index:peer,**parsed};before=snapshot(parsed)
+report_owner=s.FontMetrics([ROOT/'fonts']);refused_report=s.FontProcessingReport(missing_families={'earlier finding'})
+with patch.object(report_owner,'matching_face',return_value=None):
+ refused=s.reconstruct_glyph_lifecycles(parsed,report_owner,font_report=refused_report)
+check('missing measurements preserve original event identities',not refused.rows and all(a is b for a,b in zip(refused.events,parsed.values())))
+check('diagnostics accumulate in supplied report',refused_report.missing_families=={'earlier finding','Arial'})
+retry_report=s.FontProcessingReport()
+retry=s.reconstruct_glyph_lifecycles(parsed,report_owner,font_report=retry_report)
+check('failed width evidence does not survive into another call',len(retry.rows)==1 and not retry_report.missing_families)
+check('separate reports retain their own lifetime',refused_report.missing_families=={'earlier finding','Arial'})
+check('untouched event identity and original placement retained',retry.events[0] is peer)
+check('repeated reconstruction borrows source events and caches',snapshot(parsed)==before)
+with tempfile.TemporaryDirectory() as directory:
+ code=("import sys;sys.path.insert(0,"+repr(str(ROOT))+");"
+       "from _simplify_ass import event_operations,glyph_lifecycles;"
+       "assert not any(n.split('.')[0] in {'simplify_ass','PIL','fontTools','uharfbuzz'} for n in sys.modules)")
+ subprocess.run([sys.executable,'-I','-c',code],cwd=directory,check=True)
+check('standalone lifecycle import needs no engine or optional fonts',True)
+
 report=dict(version=s.__version__,runtime_sha256=hashlib.sha256((ROOT/'simplify_ass.py').read_bytes()).hexdigest(),checks_passed=len(checks),checks=checks,romaji_lines=21,source_phases=12783)
 (ROOT/'validation/glyph-lifecycle-checks.json').write_text(json.dumps(report,indent=2)+'\n');print(len(checks),'glyph lifecycle checks passed; 21 complete opening lines')

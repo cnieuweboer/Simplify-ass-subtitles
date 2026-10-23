@@ -213,6 +213,20 @@ normalization choices, literal boundaries, repeated/overlapping matches, empty
 fragments, uncapped lengths, caller-normalized targets and borrowed-index reads.
 These helpers grant no event/removal ownership. Test trace coverage, interpreter
 observers and fit doubles follow the defining consumer, without production forwarding.
+Complete source glyph-lifecycle admission, letter/whole-syllable phase proof,
+readable paint, row fitting, clearance and atomic ownership live in
+`_simplify_ass/glyph_lifecycles.py`, with direct engine aliases for five functions
+and frozen `GlyphPhaseLife`. Borrow source maps, Events and supplied metrics/report;
+keep resolved successors, spatial/obstacle indexes, positive/negative widths,
+paths, proposals and claims call-local. Preserve required shared-member ownership,
+source paint/timing cores, input-map iteration order, untouched identity and
+reduction counts. The source-preparation caller retains pre-collapse timing,
+stage order, collection, row adoption and reporting. Font caches and existing
+selective missing findings retain their owners; do not add report counters or
+change diagnostic lifetimes during extraction. Shared `_faded_cue_is_scrolling()`
+is a raw event read in event operations: retain the legacy effect-prefix test,
+borrowed formatting and existing caller decisions. Interpreter observers and
+fitting doubles follow the defining lifecycle consumer, without production forwarding.
 Complete shared-interval row discovery, exact-font/paint/compositing proof,
 proposal arbitration, tail retention and ordered application live in
 `_simplify_ass/shared_interval_rows.py`, with direct engine aliases for sixteen

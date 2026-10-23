@@ -494,3 +494,8 @@ See [TRANSLATED_PHASE_EXTRACTION.md](TRANSLATED_PHASE_EXTRACTION.md) for v257's
 complete entrance/movement/held caption reconstruction, preserving cue-local
 match caches and caller-owned timing/reporting handoffs. Shared literal fragment
 indexing and boundary matching live in `fragment_spans`.
+
+See [GLYPH_LIFECYCLE_EXTRACTION.md](GLYPH_LIFECYCLE_EXTRACTION.md) for v258's
+complete source letter/syllable lifecycle proofs, representative paint and atomic
+row ownership. The shared legacy-scrolling metadata read lives in event operations;
+source-history, pipeline adoption and aggregate reporting remain with the engine.
