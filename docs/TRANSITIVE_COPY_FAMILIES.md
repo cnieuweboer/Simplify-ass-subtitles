@@ -1,8 +1,7 @@
 # Connected original full-copy families — v250
 
-Local version `2026.10.23.250` implements the
+Version `2026.10.23.250` implements the
 [transitive-copy assessment](TRANSITIVE_COPY_ASSESSMENT.md).
-Publication is pending the exact-font visual check described below.
 
 ## Admission and ownership
 
@@ -73,16 +72,13 @@ and read-only visibility, borrowed-input/state identity and repeat calls. The
 interleaved ink, original foreground coverage and gaps, mixed layers, distant
 and animated peers, matched-fade color phases, cold delivery and uninstall.
 
-The 13-track corpus comparison has nine byte-identical outputs. Changed tracks:
+The completed 13-track corpus comparison has ten byte-identical outputs. The
+font-dependent Attack on Titan case was rechecked with the supplied exact face;
+the other twelve sources do not reference that newly added family. Changed tracks:
 
 - Overlord: original ordering retains 30 additional output events (2,088 → 2,118;
   peak concurrency 32 → 34). Full-copy removals change from 586 to 157; later
   effect/row processing still reduces the retained source layers.
-- Attack on Titan: four additional sign events (351 → 355), with source-supported
-  timing and representative pose changes. The affected signs at
-  12:07.79–12:09.20 require **Señor Domingo, bold** for native rendering. That exact
-  family is absent from the supplied local and archived fonts; this visual check
-  remains pending and no substitute is accepted.
 - Solo Leveling: output count/text/timing are unchanged; several isolated edge
   contours now agree with their neighboring reconstructed gradient spans.
 - Goblin Slayer: only the two next-preview captions' layers change (0 → 2),
@@ -90,7 +86,13 @@ The 13-track corpus comparison has nine byte-identical outputs. Changed tracks:
 
 Native exact-Arial checks cover 150 source/reference frame pairs. Three changed
 corpus tracks additionally have 48 source/v249/v250 frames rendered with their
-active fonts.
+active fonts. The completed Attack on Titan check adds 21 source/v249/v250
+frames at seven sample times across 12:07.79–12:09.20. Libass selects the supplied
+**Señor Domingo** face, including the authored bold flag. Fresh full-track
+conversions with that font are byte-identical and statistically identical under
+v249 and v250 (351 output events, nine full copies removed). The earlier 355-event
+v250 result came from conservative clearance refusal while that font was absent.
+No substitute was used and no production change was needed to complete the check.
 
 All 119 current regression entrypoints pass: 117 results from the complete run,
 plus focused rechecks of the two isolated historical assertions updated during
@@ -101,8 +103,10 @@ The original run report is preserved alongside the explicit combined report at
 also checked through the shipped updater, including failure rollback, preserved
 user files/choices, cold processing and uninstall.
 
-The release remains local, pending the missing-font visual check. No fallback
-font was substituted and `simplify_subtitles.py` is unchanged.
+The completed font-dependent comparison is recorded separately at
+`validation/transitive-copy-fix/font-complete/`; the initial missing-font corpus
+report is preserved as historical evidence. Supplied fonts and native artifacts
+remain local development assets. `simplify_subtitles.py` is unchanged.
 
 ## After-release evaluation
 
@@ -125,3 +129,13 @@ immutable inputs, retained identity and timing-only edits instead, retaining
 historical target parity for equivalent incoming evidence. The remaining
 historical tests deserve the same stage-boundary discipline when future behavior
 changes expose that coupling.
+
+The exact-font native review also exposes a pre-existing moving-sign paint/pose
+handoff issue: **South Group**, Attack on Titan S02E01 track 3, around
+**12:08.18–12:08.70**. Its dark foreground is frozen while a pale backing continues
+through separate positions, producing an offset white copy. It is identical in
+v249 and v250, so it is not a regression from connected-copy admission. A dedicated
+follow-up should trace the foreground/backing relationship through pose selection
+and retain their geometric relationship at the responsible producer, rather than
+adding a show-specific late repair. Source, both conversions, exact font hashes
+and comparison frames are kept under `native-attack-font-complete/`.
