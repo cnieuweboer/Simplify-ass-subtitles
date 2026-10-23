@@ -155,6 +155,10 @@ for case in cases:
                         assert before_rows==snapshot(rows),(case['name'],'row input mutation')
                         rows_out=result.rows
                         semantic_result=(result.events,result.removed_effects)
+                        assert len(result.events)==len(args[0])-result.removed_effects
+                        retained={e.source_index:e for e in args[0]}
+                        assert all(retained[e.source_index] is e for e in result.events)
+                        assert len(result.rows)==len(args[2])
                     else:
                         rows_out=rows
                         semantic_result=result
@@ -199,6 +203,10 @@ for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass')
                 assert before==snapshot((args[:5],kwargs)),(fixture,'input mutation')
                 after_args=(*args[:2],result.rows,*args[3:5])
                 semantic_result=(result.events,result.removed_effects)
+                assert len(result.events)==len(args[0])-result.removed_effects
+                retained={e.source_index:e for e in args[0]}
+                assert all(retained[e.source_index] is e for e in result.events)
+                assert len(result.rows)==len(args[2])
             else:
                 after_args=args[:5]
                 semantic_result=result
@@ -217,8 +225,17 @@ for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass')
                 compared.append((snapshot(captured),output.read_bytes(),stats,font_test_report(metric).rows_joined))
         finally:
             module.remove_covered_fragment_effects=original
-    assert contract(compared[0]) == contract(compared[1]),fixture
-    focused.append(dict(fixture=fixture,target_calls=len(captured),contour_independent_contract_identical=True))
+    # The preceding copy producer can now retain layers that historical code
+    # discarded. Compare target results only for equivalent incoming evidence;
+    # every current invocation also checks immutable inputs and retained identity.
+    assert captured,fixture
+    equal_inputs = [contract(a[0])==contract(b[0])
+                    for a,b in zip(compared[0][0],compared[1][0])]
+    assert len(compared[0][0])==len(compared[1][0])
+    for same,a,b in zip(equal_inputs,compared[0][0],compared[1][0]):
+        if same:assert contract(a)==contract(b),fixture
+    focused.append(dict(fixture=fixture,target_calls=len(captured),
+        current_ownership_checked=True,historical_equivalent_inputs=sum(equal_inputs)))
 
 audit=json.loads((ROOT/'validation/covered-fragment-helper-list.json').read_text())
 helper_names=set(audit['helpers'])

@@ -11,7 +11,7 @@ import contextlib,importlib.util,json,statistics,sys,tempfile
 import simplify_ass as s
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
 install_row_test_doubles(s, historical_fade_timing=True)
-from event_evidence_test_helpers import event_comparison_fields
+from event_evidence_test_helpers import event_comparison_fields, prepared_source_comparison_fields
 
 ROOT=Path(__file__).resolve().parents[1]
 checks=[]
@@ -143,7 +143,8 @@ except FrozenInstanceError:check('result bindings immutable',True)
 else:raise AssertionError('mutable result binding')
 
 # Verify real caller boundaries and source-only paint normalization, then
-# compare outputs/statistics against the current production reference.
+# compare the source handoff and call modes with the historical reference.
+# Later full-copy cleanup now protects ink that the old reference removed.
 spec=importlib.util.spec_from_file_location('reconstruction_reference',ROOT/'test-data/simplify_ass-v153-reference.py')
 previous=importlib.util.module_from_spec(spec);sys.modules[spec.name]=previous;spec.loader.exec_module(previous)
 adapt_reference_font_api(previous)
@@ -154,7 +155,13 @@ focused=[]
 for fixture_name in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass'):
     compared=[]
     for module in (previous,s):
-        calls=[];original=module.reconstruct_text_rows
+        calls=[];prepared=[];original=module.reconstruct_text_rows
+        prepare=module._prepare_source_text
+        def watched_prepare(*args,**kwargs):
+            result=prepare(*args,**kwargs)
+            prepared.append(prepared_source_comparison_fields(result))
+            return result
+        module._prepare_source_text=watched_prepare
         def wrapped(*args,**kwargs):
             result=original(*args,**kwargs)
             calls.append(dict(source_only=kwargs.get('source_only',False),static_only=kwargs.get('static_only',False)))
@@ -166,10 +173,13 @@ for fixture_name in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.
                 with contextlib.redirect_stdout(None):stats=module.simplify_ass(ROOT/'test-data'/fixture_name,output,module.SimplifyConfig(),font_metrics=metric, font_report=font_test_report(metric))
                 stats=without_inactive_color_phase_reporting(stats)
                 assert stats.pop('shadow_lettering_normalized', 0)==0  # This fixture must remain unaffected by final paint normalization.
-                compared.append((output.read_bytes(),stats,calls,font_test_report(metric).rows_joined,sorted(font_test_report(metric).missing_families)))
-        finally:module.reconstruct_text_rows=original
-    check(fixture_name+' caller conversion unchanged',contract(compared[0]) == contract(compared[1]))
-    focused.append(dict(fixture=fixture_name,reconstruction_calls=calls,contour_independent_contract_identical=True))
+                compared.append((prepared,calls,sorted(font_test_report(metric).missing_families)))
+        finally:
+            module.reconstruct_text_rows=original
+            module._prepare_source_text=prepare
+    check(fixture_name+' source handoff and reconstruction call modes unchanged',contract(compared[0]) == contract(compared[1]))
+    check(fixture_name+' source preparation observed',len(compared[1][0])==1)
+    focused.append(dict(fixture=fixture_name,reconstruction_calls=calls,source_handoff_contract_identical=True))
 
 (ROOT/'validation/row-reconstruction-ownership-checks.json').write_text(json.dumps(
     dict(version=s.__version__,count=len(checks),checks=checks,focused_conversions=focused),indent=2)+'\n')

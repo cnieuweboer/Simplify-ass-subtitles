@@ -319,8 +319,12 @@ for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass')
                 assert stats.pop('shadow_lettering_normalized', 0)==0  # This fixture must remain unaffected by final paint normalization.
                 compared.append((snapshot(captured),output.read_bytes(),stats,font_test_report(metric).rows_joined))
         finally:module.remove_masked_glyph_effects=original
-    assert contract(compared[0]) == contract(compared[1]),fixture
-    focused.append(dict(fixture=fixture,target_calls=len(captured),contour_independent_contract_identical=True))
+    # Mask removal precedes copy cleanup. Compare this producer's complete
+    # inputs/edits, not a later cleanup's obsolete whole-file output.
+    assert contract(compared[0][0]) == contract(compared[1][0]),fixture
+    assert captured,fixture
+    focused.append(dict(fixture=fixture,target_calls=len(captured),
+        contour_independent_target_contract_identical=True))
 
 audit=json.loads((ROOT/'validation/masked-extraction-blocks.json').read_text())
 helpers={entry['helper'] for entry in audit}

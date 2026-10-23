@@ -191,3 +191,24 @@ def without_inactive_color_phase_reporting(stats):
     assert not stats.get('color_phase_limits'),stats
     reporting=set(counters)|{'color_phase_min_hold','color_phase_change_interval','color_phase_limits'}
     return {key:value for key,value in stats.items() if key not in reporting}
+
+
+def prepared_source_comparison_fields(prepared):
+    """Compare the source handoff before later consolidation changes its output."""
+    from collections.abc import Mapping
+    def snapshot(value):
+        if type(value).__name__ == 'Event':
+            return snapshot(event_comparison_fields(value))
+        if type(value).__name__ == 'TextRow':
+            return snapshot(row_comparison_fields(value))
+        if isinstance(value,Mapping):
+            return {k:snapshot(v) for k,v in value.items()}
+        if isinstance(value,(list,tuple)):
+            return tuple(snapshot(v) for v in value)
+        if isinstance(value,(set,frozenset)):
+            return frozenset(snapshot(v) for v in value)
+        if hasattr(value,'__dict__'):
+            return snapshot(vars(value))
+        return value
+    return snapshot((prepared.events,prepared.timing_sources,prepared.rows,
+                     prepared.effects_removed,prepared.vector_captions))

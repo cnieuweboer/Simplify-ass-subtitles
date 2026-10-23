@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import simplify_ass as engine
 from _simplify_ass import full_lyric_copies as copies, text_visibility
-from full_lyric_copy_test_helpers import full_copy_inputs
+from full_lyric_copy_test_helpers import full_copy_inputs,transitive_copy_inputs
 from check_windows_installer import ROOT,load_installer
 
 COLD_CHECKS=r'''
@@ -232,7 +232,7 @@ class FullLyricCopyModuleChecks(unittest.TestCase):
         self.assertTrue(any(e.start_s==4. and e.end_s==7. for e in result.events))
         self.assertFalse(any(e.start_s==1. and e.end_s==7. for e in result.events))
 
-    def test_competing_anchors_do_not_union_a_rolling_chain(self):
+    def test_transitive_original_links_settle_a_rolling_chain(self):
         from full_lyric_copy_test_helpers import HEADER
         from full_copy_contract_helpers import accepted_copy_clusters,assert_anchored_copy_contract
         text=HEADER+''.join('Dialogue: 0,'+engine.format_time(1+n*.5)+','+engine.format_time(4+n*.5)+
@@ -244,10 +244,122 @@ class FullLyricCopyModuleChecks(unittest.TestCase):
             with accepted_copy_clusters(engine) as clusters:
                 result=copies.collapse_full_lyric_copies(ordered,visible)
             assert_anchored_copy_contract(engine,ordered,visible,result,clusters)
-            self.assertGreater(len(result.events),1)
-            self.assertTrue(all(e.duration<=4 for e in result.events))
+            self.assertEqual(len(result.events),1)
+            self.assertEqual((result.events[0].start_s,result.events[0].end_s),(1.,7.5))
+            repeated=copies.collapse_full_lyric_copies(result.events,{**visible,**result.visibility_updates})
+            self.assertEqual(repeated.removed_count,0)
             outputs.append(sorted((e.source_index,e.start_s,e.end_s,e.text) for e in result.events))
         self.assertTrue(all(o==outputs[0] for o in outputs))
+
+    def test_long_connected_chains_have_no_size_or_duration_cap(self):
+        from full_lyric_copy_test_helpers import HEADER
+        for count in (20,100):
+            text=HEADER+''.join('Dialogue: 0,'+engine.format_time(1+n*.5)+','+engine.format_time(4+n*.5)+
+                r',Default,,0,0,0,,{\pos(320,100)}ABCD'+'\n' for n in range(count))
+            events=list(engine._resolve_document_state(engine.parse_subtitle_document(text)).events.values())
+            for event in events:event.lyric=True;event.row=0
+            visible={e.source_index:'ABCD' for e in events}
+            result=copies.collapse_full_lyric_copies(events,visible)
+            self.assertEqual(result.removed_count,count-1)
+            self.assertEqual((result.events[0].start_s,result.events[0].end_s),(1.,4+(count-1)*.5))
+            self.assertEqual(copies.collapse_full_lyric_copies(result.events,
+                {**visible,**result.visibility_updates}).removed_count,0)
+
+    def test_intervening_ink_partitions_copies_without_changing_paint_order(self):
+        from full_lyric_copy_test_helpers import HEADER
+        specs=[(1,4,'ABCD',''),(1.5,4.5,'ABCD',''),(2,5,'XXXX','independent'),
+               (2,5,'ABCD',''),(2.5,5.5,'ABCD','')]
+        text=HEADER+''.join(f'Dialogue: 0,{engine.format_time(a)},{engine.format_time(b)},Default,{name},0,0,0,,'+
+            r'{\pos(320,100)\bord1.25\3c&HDDDDDD&}'+word+'\n' for a,b,word,name in specs)
+        events=list(engine._resolve_document_state(engine.parse_subtitle_document(text)).events.values())
+        for event in events:event.lyric=not event.name;event.row=0
+        visible={e.source_index:engine.OVERRIDE_RE.sub('',e.text) for e in events}
+        before=deepcopy([vars(e) for e in events])
+        result=copies.collapse_full_lyric_copies(events,visible)
+        self.assertEqual([(e.start_s,e.end_s) for e in result.events if not e.name],[(1.,4.5),(2.,5.5)])
+        self.assertIs(result.events[1],events[2])
+        self.assertEqual(result.removed_count,2)
+        self.assertEqual([vars(e) for e in events],before)
+
+    def test_shared_clearance_aliases_and_paint_vocabulary_keep_their_owners(self):
+        from _simplify_ass import caption_clearance,caption_rendering
+        self.assertIs(engine._caption_implicit_anchor,caption_clearance._caption_implicit_anchor)
+        self.assertIs(engine._glyph_replacement_row_is_clear,caption_clearance._glyph_replacement_row_is_clear)
+        self.assertIs(engine.CAPTION_PAINT_TAGS,caption_rendering.CAPTION_PAINT_TAGS)
+
+    def test_unchanged_paint_order_and_nonconcurrent_content_need_no_measurement(self):
+        for placement in (0,4):
+            for layer,foreign_layer in (('0','0'),('2','1'),('0','1')):
+                events,visible=transitive_copy_inputs(foreign='overlap',insertion=placement,
+                    layer=layer,foreign_layer=foreign_layer)
+                with patch.object(copies,'_glyph_replacement_row_is_clear',side_effect=AssertionError('unneeded measurement')):
+                    result=copies.collapse_full_lyric_copies(events,visible)
+                self.assertEqual(result.removed_count,3)
+                self.assertEqual(next(e.layer for e in result.events if not e.name),layer)
+                self.assertIs(next(e for e in result.events if e.name),next(e for e in events if e.name))
+        events,visible=transitive_copy_inputs(foreign='outside')
+        result=copies.collapse_full_lyric_copies(events,visible)
+        self.assertEqual(result.removed_count,3)
+
+    def test_measured_distant_and_animated_peers_do_not_block_reduction(self):
+        metric=engine.FontMetrics([ROOT/'fonts'])
+        self.assertIsNotNone(metric.matching_face('Arial',0,False),'Missing exact Arial regular')
+        for tags,count in (('',3),(r'\t(0,3000,\fscx105)',3),
+                           (r'\t(0,3000,\fscx500)',2)):
+            events,visible=transitive_copy_inputs(foreign='distant',marker_tags=tags)
+            before=deepcopy([vars(e) for e in events])
+            result=copies.collapse_full_lyric_copies(events,visible,font_metrics=metric)
+            self.assertEqual(result.removed_count,count,tags)
+            self.assertIs(next(e for e in result.events if e.name),next(e for e in events if e.name))
+            self.assertEqual([vars(e) for e in events],before)
+        events,visible=transitive_copy_inputs(foreign='distant',marker_layout=r'\move(100,100,320,100)')
+        self.assertEqual(copies.collapse_full_lyric_copies(events,visible,font_metrics=metric).removed_count,2)
+
+    def test_original_foreground_coverage_allows_lower_effect_planes(self):
+        events,visible=transitive_copy_inputs(foreign='overlap',layer='2',foreign_layer='1')
+        # A full-length foreground covers the independent ink; lower copies
+        # should not require the exact-font disjointness proof to disappear.
+        end=max(e.end_s for e in events if not e.name)
+        events=[engine.replace_event(e,end_s=end,end=engine.format_time(end)) if n==0 else
+                engine.replace_event(e,layer='0') if not e.name else e
+                for n,e in enumerate(events)]
+        result=copies.collapse_full_lyric_copies(events,visible)
+        self.assertEqual(result.removed_count,3)
+        self.assertEqual(next(e.layer for e in result.events if not e.name),'2')
+        # Shortening the foreground exposes a real order change in its tail.
+        events[0]=engine.replace_event(events[0],end_s=4.,end=engine.format_time(4.))
+        result=copies.collapse_full_lyric_copies(events,visible)
+        self.assertLess(result.removed_count,3)
+        self.assertIs(next(e for e in result.events if e.name),events[2])
+
+    def test_unknown_measurement_keeps_sides_and_mixed_layers_keep_order(self):
+        events,visible=transitive_copy_inputs(foreign='distant')
+        self.assertEqual(copies.collapse_full_lyric_copies(events,visible).removed_count,2)
+        events,visible=transitive_copy_inputs(foreign='overlap',layer='2',foreign_layer='3')
+        events=[engine.replace_event(e,layer='4') if not e.name and n>2 else e for n,e in enumerate(events)]
+        result=copies.collapse_full_lyric_copies(events,visible)
+        self.assertEqual([e.layer for e in result.events],['0','3','4'])
+        self.assertEqual([(e.start_s,e.end_s) for e in result.events if not e.name],[(1.,4.5),(2.,5.5)])
+
+    def test_connected_matched_fades_keep_source_owned_color_phases(self):
+        from full_lyric_copy_test_helpers import HEADER
+        colors=('0000FF','00FF00','FF0000','00FFFF')
+        text=HEADER+''.join(f'Dialogue: 0,{engine.format_time(1+n)},{engine.format_time(7+n)},Default,,0,0,0,,'+
+            r'{\pos(320,100)\bord1.25\3c&HDDDDDD&\fad(2500,2500)\1c&H'+color+'&}ABCD\n'
+            for n,color in enumerate(colors))
+        events=list(engine._resolve_document_state(engine.parse_subtitle_document(text)).events.values())
+        for event in events:event.lyric=True;event.row=0
+        visible={e.source_index:'ABCD' for e in events}
+        metric=engine.FontMetrics([ROOT/'fonts'])
+        self.assertIsNotNone(metric.matching_face('Arial',0,False),'Missing exact Arial regular')
+        data=engine.collect_source_text_rows({e.source_index:e for e in events},set(),font_metrics=metric)
+        timelines=engine._collect_caption_paint_timelines(data,[],events,metric)
+        result=copies.collapse_full_lyric_copies(events,visible,font_metrics=metric)
+        self.assertEqual(result.removed_count,3)
+        emitted,counts=engine._emit_caption_paint_timelines(result.events,timelines,engine.SimplifyConfig())
+        self.assertEqual(counts['color_phase_changes_preserved'],3)
+        self.assertEqual([e.state['1c'] for e in emitted],list(colors))
+        self.assertEqual([(e.start_s,e.end_s) for e in emitted],[(1.,4.5),(4.5,5.5),(5.5,6.5),(6.5,10.)])
 
     def test_distinct_color_holds_and_interleaved_content_retain_ownership(self):
         events,visible=full_copy_inputs(variant='chain')

@@ -151,6 +151,11 @@ The [transitive full-copy assessment](TRANSITIVE_COPY_ASSESSMENT.md) finds that
 original connected families can replace the single-anchor restriction, provided
 the producer first preserves independent intervening ink. It identifies a shared
 clearance boundary and avoids numeric family caps or exact-paint requirements.
+The [v250 connected-copy correction](TRANSITIVE_COPY_FAMILIES.md) settles
+original transitive matches in one call, with shared measured clearance and
+compositing-preserving partitions. It adds no family-length/duration cap and
+retains source-owned paint timelines, pose dwell and sparse visibility updates.
+
 The [v249 full-copy family correction](FULL_COPY_FAMILIES.md) discovers original
 anchor proposals before removals and selects paint once per accepted family,
 without merging unrestricted transitive chains.

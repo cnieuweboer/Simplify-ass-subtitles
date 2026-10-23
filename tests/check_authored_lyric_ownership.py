@@ -20,7 +20,7 @@ import tempfile
 import simplify_ass as current
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
 install_row_test_doubles(current, historical_fade_timing=True)
-from event_evidence_test_helpers import event_comparison_fields, row_comparison_fields
+from event_evidence_test_helpers import event_comparison_fields, row_comparison_fields, prepared_source_comparison_fields
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('authored_ownership_reference',ROOT/'test-data/simplify_ass-v162-reference.py')
@@ -264,18 +264,25 @@ check('failed pass leaves source/event inputs unchanged',before == snapshot((eve
 
 # Later passes see caller-applied cache updates and row additions in complete
 # conversions, including real Overlord timing/fade evidence and scaffold paint.
+# Compare this producer boundary: later copy cleanup has a newer ink-order policy.
 focused = []
 for name in ('Full-line-scaffold-source.ass','Full-line-shadow-source.ass','Full-line-tracking-source.ass','Overlord-22m06-source.ass','Overlord-opening-fades-source.ass'):
     compared = []
     for module in (previous,current):
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory)/'out.ass'
-            with redirect_stdout(None):
+            captured=[];prepare=module._prepare_source_text
+            def watched_prepare(*args,**kwargs):
+                result=prepare(*args,**kwargs)
+                captured.append(prepared_source_comparison_fields(result))
+                return result
+            with patch.object(module,'_prepare_source_text',watched_prepare),redirect_stdout(None):
                 statistics = module.simplify_ass(ROOT/'test-data'/name,out,module.SimplifyConfig(),font_metrics=metrics[module], font_report=font_test_report(metrics[module]))
             statistics=without_inactive_color_phase_reporting(statistics)
             assert statistics.pop('shadow_lettering_normalized', 0)==0  # This fixture must remain unaffected by final paint normalization.
-            compared.append((out.read_bytes(),statistics))
-    check('complete focused conversion '+name,contract(compared[0]) == contract(compared[1]))
+            compared.append(captured)
+    check('focused source handoff '+name,contract(compared[0]) == contract(compared[1]))
+    check('source preparation observed '+name,len(compared[1])==1)
     focused.append(name)
 
 report = dict(version=current.__version__,reference_version=previous.__version__,checks_passed=len(checks),

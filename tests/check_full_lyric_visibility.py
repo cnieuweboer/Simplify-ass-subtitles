@@ -131,12 +131,22 @@ for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass')
     for module in (previous,current):
         original=module.collapse_full_lyric_copies;captured=[]
         def wrapped(*args,**kwargs):
-            before=snapshot((args,kwargs));result=original(*args,**kwargs)
+            # Metrics is a borrowed owner with cyclic backend/cache objects,
+            # not historical event evidence or a serialized paint input.
+            observed={k:v for k,v in kwargs.items() if k!='font_metrics'}
+            if 'font_metrics' in kwargs:assert kwargs['font_metrics'] is metric
+            before=snapshot((args,observed))
+            if module is current:
+                with accepted_copy_clusters(inspect.getmodule(original)) as clusters:
+                    result=original(*args,**kwargs)
+                assert_anchored_copy_contract(module,args[0],args[1],result,clusters)
+            else:
+                result=original(*args,**kwargs)
             if hasattr(result,"visibility_updates"):
-                assert before==snapshot((args,kwargs)),fixture
+                assert before==snapshot((args,observed)),fixture
                 semantic=(result.events,result.removed_count)
-                after=snapshot(((args[0],{**args[1],**result.visibility_updates}),kwargs))
-            else:semantic=result;after=snapshot((args,kwargs))
+                after=snapshot(((args[0],{**args[1],**result.visibility_updates}),observed))
+            else:semantic=result;after=snapshot((args,observed))
             captured.append((before,snapshot(semantic),after));return result
         module.collapse_full_lyric_copies=wrapped
         try:
@@ -147,8 +157,16 @@ for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass')
                 assert stats.pop('shadow_lettering_normalized', 0)==0  # This fixture must remain unaffected by final paint normalization.
                 compared.append((captured,out.read_bytes(),stats,font_test_report(metric).rows_joined,sorted(font_test_report(metric).missing_families)))
         finally:module.collapse_full_lyric_copies=original
-    assert contract(compared[0]) == contract(compared[1]),fixture
-    focused.append(dict(fixture=fixture,target_calls=len(captured),contour_independent_contract_identical=True))
+    # Historical code has no intervening-ink admission proof. Its exact output
+    # is only a useful oracle when both producers accepted the same result.
+    same_target = contract(compared[0][0]) == contract(compared[1][0])
+    if same_target:
+        assert contract(compared[0]) == contract(compared[1]),fixture
+    assert not compared[1][-1], (fixture,'required exact fonts missing')
+    focused.append(dict(fixture=fixture,target_calls=len(captured),
+        original_family_and_input_contract_checked=True,
+        historical_target_identical=same_target,
+        historical_pipeline_parity_checked=same_target))
 
 (ROOT/'validation/full-lyric-visibility-checks.json').write_text(json.dumps(dict(
     version=current.__version__,reference_version=previous.__version__,comparisons=len(checks),

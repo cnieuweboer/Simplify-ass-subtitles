@@ -26,7 +26,7 @@ def patch_interpreter_bindings(engine, name, *args, **kwargs):
                       '_settled_caption_paint_samples', 'collapse_backed_glyph_pulses',
                       'literal_font_spans', 'collapse_moving_glyph_sequences',
                       'collapse_sliced_text_sequences', 'collapse_shrinking_glyph_rows',
-                      'match_boundary_glyph_effects'))]
+                      'match_boundary_glyph_effects', '_glyph_replacement_row_is_clear'))]
     for consumer in consumers:
         if (consumer is not None and consumer not in bindings and
                 getattr(consumer, name, None) is original):

@@ -16,6 +16,9 @@ from .event_model import DocumentMeasurementContext
 MAX_PROVED_CAPTION_BORDER = 2.
 
 
+CAPTION_PAINT_TAGS = ('1c','2c','3c','4c','1a','2a','3a','4a',
+                      'bord','xbord','ybord','shad','xshad','yshad','blur','be')
+
 @dataclass(frozen=True)
 class SourceCaptionPaint:
     """Proved representative subtitle-only paint, borrowed by caption rendering."""

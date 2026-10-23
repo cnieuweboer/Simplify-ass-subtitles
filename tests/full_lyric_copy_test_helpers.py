@@ -33,3 +33,19 @@ def full_copy_inputs(*,variant='complete',tags=r'\1c&HFFFFFF&\3c&HDDDDDD&\3a&H60
     visible={e.source_index:e.text.rsplit('}',1)[-1] for e in events}
     visible[999999]='historical source'
     return events,visible
+
+
+def transitive_copy_inputs(*,foreign='none',insertion=2,layer='0',foreign_layer='0',
+                           marker_tags='',marker_layout=None):
+    """Four linked originals, optionally separated by independent painted ink."""
+    records=[f'Dialogue: {layer},{format_time(1+n*.5)},{format_time(4+n*.5)},Default,,0,0,0,,'+
+        r'{\pos(320,100)\bord1.25\3c&HDDDDDD&}ABCD'+'\n' for n in range(4)]
+    if foreign!='none':
+        start,end=(6,7) if foreign=='outside' else (2,5)
+        layout=marker_layout if marker_layout is not None else r'\pos('+('100' if foreign=='distant' else '320')+',100)'
+        marker=f'Dialogue: {foreign_layer},{format_time(start)},{format_time(end)},Default,independent,0,0,0,,'+'{'+layout+r'\1c&H0000FF&'+marker_tags+'}XXXX\n'
+        records.insert(insertion,marker)
+    events=list(_resolve_document_state(parse_subtitle_document(HEADER+''.join(records))).events.values())
+    for event in events:event.lyric=not event.name;event.row=0
+    visible={event.source_index:event.text.rsplit('}',1)[-1] for event in events}
+    return events,visible

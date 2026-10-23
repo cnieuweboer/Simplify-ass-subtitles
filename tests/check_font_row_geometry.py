@@ -9,7 +9,7 @@ from io import StringIO
 import ast, contextlib, hashlib, importlib.util, inspect, json, random, sys, tempfile
 from font_geometry_test_helpers import historical_static_phase_policy
 import simplify_ass as current
-from event_evidence_test_helpers import event_comparison_fields
+from event_evidence_test_helpers import event_comparison_fields, prepared_source_comparison_fields
 from font_geometry_audit import normalized_row_algorithm, normalized_font_caller
 from font_geometry_test_helpers import ROW_NAMES
 
@@ -117,12 +117,21 @@ with tempfile.TemporaryDirectory() as directory, patch.object(
     for repeat in range(2):
         for source in inputs:
             new_output=folder/'current.ass';old_output=folder/'reference.ass'
-            with contextlib.redirect_stdout(None):
+            prepared={}
+            def watch(module):
+                original=module._prepare_source_text
+                def call(*args,**kwargs):
+                    result=original(*args,**kwargs)
+                    prepared[module]=prepared_source_comparison_fields(result)
+                    return result
+                return call
+            with patch.object(current,'_prepare_source_text',watch(current)),patch.object(
+                    previous,'_prepare_source_text',watch(previous)),contextlib.redirect_stdout(None):
                 actual=current.simplify_ass(source,new_output,current.SimplifyConfig(),font_metrics=fonts,font_report=batch,outline_matcher=matcher)
                 expected=previous.simplify_ass(source,old_output,previous.SimplifyConfig(),font_spacing=old_batch)
             actual=without_inactive_color_phase_reporting(actual)
             assert actual.pop('shadow_lettering_normalized',0)==0  # These row fixtures are outside the new normalization.
-            check('complete focused subtitle unchanged',actual==expected and contract(new_output.read_bytes())==contract(old_output.read_bytes()))
+            check('complete focused source geometry handoff unchanged',contract(prepared[current])==contract(prepared[previous]))
             check('batch accepted joins unchanged',batch.rows_joined==old_batch.merged)
             check('batch selective missing fonts unchanged',batch.missing_families==old_batch.missing)
             conversion_cases.append(source.name)

@@ -191,14 +191,15 @@ def capture_cores(events, rows, sources):
 with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()), patch.object(
         s,'synchronize_faded_cue_handoffs',lambda context,pairs,proven: {}), historical_static_phase_policy(s):
     paths,statistics = [],[]
-    for engine in (reference,s):
-        path = Path(folder)/(engine.__version__+'.ass')
+    # Isolate this timing feature with a current-policy control. An old engine
+    # also embeds unrelated copy-removal and paint-order behavior.
+    for enabled in (False,True):
+        path = Path(folder)/('with-cores.ass' if enabled else 'without-cores.ass')
         paths.append(path)
-        if engine is s:
-            s.derive_staggered_fade_cores = capture_cores
+        s.derive_staggered_fade_cores = capture_cores if enabled else lambda events,rows,sources: rows
         try:
-            statistics.append(engine.simplify_ass(source,path,engine.SimplifyConfig(),
-                font_metrics=engine.FontMetrics([ROOT/'fonts'])))
+            statistics.append(s.simplify_ass(source,path,s.SimplifyConfig(),
+                font_metrics=s.FontMetrics([ROOT/'fonts'])))
         finally:
             s.derive_staggered_fade_cores = original
     old,new = [s.load_subtitle_events(path)[1] for path in paths]

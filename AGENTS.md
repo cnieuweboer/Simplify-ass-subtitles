@@ -135,12 +135,18 @@ producer; no production forwarding is needed.
 Complete overlapping full-lyric-copy clustering, representative paint/caption
 selection and sparse visibility handoff live in `_simplify_ass/full_lyric_copies.py`,
 with a direct engine alias. Borrow resolved working events and visibility history;
-keep groups, original-anchor proposal sizes, removal IDs and replacements call-local.
+keep groups, original connected components, partitions, removal IDs and replacements call-local.
 Preserve original ordering, untouched identity, source-pose support and accepted
-equal-value visibility assignments. Discover original-anchor proposals before
-removals; prefer larger supported families, breaking ties by original source ID.
-Only positive-duration originals may anchor a proposal. Claim every accepted
-member once, including the retained ID; do not join arbitrary transitive chains.
+equal-value visibility assignments. Discover connected matches between positive-
+duration originals before removals; zero-duration records cannot bridge families.
+Compare original foreground coverage over each independent peer's lifetime;
+lower effect planes do not block continuously covered foreground. Partition when
+replacement would cross independent ink in actual layer/list order and measured
+clearance cannot prove separation. Recheck original
+child families after partitioning. Normalize output layers only when independently
+clear or order-preserving. Do not impose family-size/duration caps or require all
+members to overlap one anchor. Claim every accepted member once, including the
+retained ID; rendered output unions never authorize further removals.
 Select text and paint once from the complete accepted original family in stable
 source order, retaining its full timing union and compatible original pose dwell.
 Use a compatible original as pose reference when selection changes geometry.
@@ -149,7 +155,11 @@ dwell across its union span. The existing shared `TextVisibilityResult`
 retains its neutral owner. `_consolidate_text_events()` retains stage order,
 unconditional delta adoption before frame merging, level gating and reporting.
 Selection, rendering, replacement and measurement policy retain their existing
-owners. Test observers target the defining consumer without production forwarding.
+owners. Shared measured clearance and implicit anchor resolution live in
+`_simplify_ass/caption_clearance.py`, with direct engine aliases. Borrow caller
+metrics and inputs; keep geometry query buffers local. The shared caption-paint
+vocabulary belongs to caption rendering. Clearance grants no family/removal
+ownership. Test observers target the defining consumer without production forwarding.
 Complete shrinking glyph-row source admission, held-caption/anchor proofs, unique
 ownership and terminal-fade handoffs live in `_simplify_ass/shrinking_rows.py`,
 with direct engine aliases for nine functions and three frozen records. Borrow

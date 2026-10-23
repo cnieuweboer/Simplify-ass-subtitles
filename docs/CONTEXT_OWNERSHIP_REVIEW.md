@@ -11,6 +11,21 @@ bounds the follow-up to three functions and two result records.
 
 ## Final ownership contracts
 
+In v250 full-copy admission discovers original-source connected overlap families,
+then compares original foreground coverage across independent interleaved ink.
+Lower effect planes cannot block a replacement already covered above that ink.
+When foreground order changes, partition unless shared exact-font clearance
+proves disjoint footprints. Actual list/layer order is borrowed from
+the caller. Zero-duration events cannot bridge families; replacements and their
+expanded lifetimes never provide new match links or pose dwell. Original child
+families are rechecked after partitioning, and representative paint is selected
+once per accepted family. Safe layer normalization shares that clearance proof.
+Caller-owned metrics flow directly into the existing producer. Shared implicit
+anchors and measured clearance now live in `caption_clearance`, with unchanged
+bodies and direct engine aliases; the paint-tag vocabulary belongs to caption
+rendering. No adapter, global context, cache owner or diagnostic was added.
+See [TRANSITIVE_COPY_FAMILIES.md](TRANSITIVE_COPY_FAMILIES.md).
+
 In v249 full-copy admission discovers all original-anchor proposals before any
 source is removed. Stable proposal arbitration assigns disjoint original families;
 each family selects text/paint and renders exactly once. There is no pending

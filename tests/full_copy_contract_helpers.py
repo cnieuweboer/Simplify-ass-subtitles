@@ -51,7 +51,7 @@ def copy_cluster_ids(clusters):
 
 
 def assert_anchored_copy_contract(module, inputs, visible, result, clusters):
-    """Check source authority and complete, once-only family handoff behavior."""
+    """Check original connected evidence and complete once-only family handoff."""
     originals={e.source_index:e for e in inputs}
     claimed=set();retained=set()
     for cluster in clusters:
@@ -59,9 +59,18 @@ def assert_anchored_copy_contract(module, inputs, visible, result, clusters):
         assert len(ids)==len(cluster) and len(ids)>1
         assert not claimed & ids,('source belongs to two accepted families',claimed,ids)
         assert all(originals[e.source_index] is e for e in cluster)
-        assert any(anchor.duration>0 and all(other.duration>=0 and
-            min(anchor.end_s,other.end_s)-max(anchor.start_s,other.start_s)>=
-            .8*min(anchor.duration,other.duration) for other in cluster) for anchor in cluster),ids
+        positive=[e for e in cluster if e.duration>0]
+        assert positive
+        reached={positive[0].source_index}
+        while True:
+            linked={e.source_index for e in positive if any(a.source_index in reached and
+                min(a.end_s,e.end_s)-max(a.start_s,e.start_s)>=.8*min(a.duration,e.duration)
+                for a in positive)}
+            if linked<=reached:break
+            reached.update(linked)
+        assert reached=={e.source_index for e in positive},ids
+        assert all(e.duration>=0 and (e.duration>0 or any(a.start_s<=e.start_s<=a.end_s
+            for a in positive)) for e in cluster)
         def group(e):
             pos=module.get_pos(e.text)
             return (e.style,e.name,''.join(visible.get(e.source_index,'').split()).casefold(),
@@ -73,7 +82,7 @@ def assert_anchored_copy_contract(module, inputs, visible, result, clusters):
         best=max(cluster,key=lambda e:(visible[e.source_index].count(' '),e.effect=='',-e.source_index))
         assert module.OVERRIDE_RE.sub('',caption.text)==visible[best.source_index]
         assert result.visibility_updates[first]==visible[best.source_index]
-        assert caption.layer=='0' and caption.effect==''
+        assert caption.layer in {'0',originals[first].layer} and caption.effect==''
     assert_copy_family_coverage(inputs,result.events,clusters)
     assert set(result.visibility_updates)==retained
     assert result.removed_count==len(inputs)-len(result.events)==len(claimed)-len(retained)
