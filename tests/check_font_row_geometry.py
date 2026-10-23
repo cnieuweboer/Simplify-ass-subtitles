@@ -7,8 +7,11 @@ from copy import deepcopy
 from unittest.mock import patch
 from io import StringIO
 import ast, contextlib, hashlib, importlib.util, inspect, json, random, sys, tempfile
+import pickle, subprocess
+from typing import get_type_hints
 from font_geometry_test_helpers import historical_static_phase_policy
 import simplify_ass as current
+from _simplify_ass import row_fitting, font_reporting
 from event_evidence_test_helpers import event_comparison_fields, prepared_source_comparison_fields
 from font_geometry_audit import normalized_row_algorithm, normalized_font_caller
 from font_geometry_test_helpers import ROW_NAMES
@@ -23,6 +26,31 @@ checks=[];cases=0
 def check(label,value):
     assert value,label
     checks.append(label)
+
+for name in ('recover_font_row','recover_tracked_font_row','fit_fullwidth_run'):
+    function=getattr(row_fitting,name)
+    hints=get_type_hints(function)
+    check(name+' retains one canonical owner',getattr(current,name) is function)
+    check(name+' resolves shared measurement and report annotations',
+          hints['metrics'] is current.FontMetrics and
+          hints['font_report']==current.FontProcessingReport | None)
+check('fullwidth fit resolves canonical events',
+      get_type_hints(row_fitting.fit_fullwidth_run)['ordered']==list[current.Event])
+check('shared report retains canonical alias',
+      current.FontProcessingReport is font_reporting.FontProcessingReport)
+saved_report=current.FontProcessingReport(3,{'Recorded missing family'})
+check('report pickle preserves data and type',pickle.loads(pickle.dumps(saved_report))==saved_report)
+check('legacy report class lookup retains alias',
+      pickle.loads(b'csimplify_ass\nFontProcessingReport\n.') is current.FontProcessingReport)
+subprocess.run([sys.executable,'-I','-c',
+    'import sys; sys.path.insert(0,'+repr(str(ROOT))+'); '
+    'from _simplify_ass import font_reporting; '
+    'assert "_simplify_ass.font_metrics" not in sys.modules; '
+    'from _simplify_ass import row_fitting; '
+    'assert not any(n.split(".")[0] in '
+    '{"simplify_ass","PIL","fontTools","uharfbuzz"} for n in sys.modules)'],
+    cwd=ROOT,check=True)
+check('independent fitting/report import needs neither engine nor optional fonts',True)
 
 HEADER='''[Script Info]
 PlayResX: 1920

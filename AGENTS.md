@@ -250,9 +250,15 @@ matching and cubic fitting live in `_simplify_ass/font_outlines.py`, depending
 only on measurements and the standard library; the engine re-exports both names.
 Exact-font fragment fitting and authored glyph placement live in
 `_simplify_ass/glyph_placement.py`, depending only on measurements and the standard
-library, with direct engine aliases. Event-based row recovery and reports remain
-in the engine. Keep reconstruction-family proofs, timing and event ownership
-with their engine producers. Ship the private package with the engine and preserve
+library, with direct engine aliases. Event-based row recovery lives in
+`_simplify_ass/row_fitting.py`; the shared mutable `FontProcessingReport` lives in
+`_simplify_ass/font_reporting.py`, with direct engine aliases. Borrow caller
+events, measurements and reports; preserve temporary zero-tracking event views
+and their shallow sharing. Keep selective missing-face writes, caller-selected
+report lifetimes and the four accepted-join commit sites unchanged. The fitting
+module returns geometry only; reconstruction-family proofs, rendering, timing
+and event ownership remain with producers. Test doubles follow the defining
+fitting consumer. Ship the private package with the engine and preserve
 one-way imports and sibling font discovery.
 The Windows installer/updater discover private Python sources and persist owned
 paths; keep this delivery contract and the older-updater migration documented in

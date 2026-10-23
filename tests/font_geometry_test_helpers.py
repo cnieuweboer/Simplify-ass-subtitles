@@ -99,6 +99,10 @@ def install_row_test_doubles(module, *, historical_fade_timing=False):
                 return getattr(metric,_old)(*args,**kwargs)
             return _real(metric,*args,**kwargs)
         patch.object(module,new,dispatch).start()
+        if new in ('recover_font_row','recover_tracked_font_row','fit_fullwidth_run'):
+            owner=inspect.getmodule(real)
+            if owner is not None and owner is not module and getattr(owner,new,None) is real:
+                patch.object(owner,new,dispatch).start()
 
 def adapt_reference_font_api(module):
     """Bridge API shape only on an immutable reference, preserving its engine."""

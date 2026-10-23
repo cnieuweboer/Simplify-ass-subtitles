@@ -471,3 +471,7 @@ are documented in [NEAR_STROKED_BACKINGS.md](NEAR_STROKED_BACKINGS.md).
 See [MERGED_CAPTION_RENDERING_EXTRACTION.md](MERGED_CAPTION_RENDERING_EXTRACTION.md)
 for v252's unchanged merged-row and literal-span serialization in the existing
 caption-rendering owner, with caller-owned matching, geometry and event edits.
+
+See [EVENT_ROW_FITTING_EXTRACTION.md](EVENT_ROW_FITTING_EXTRACTION.md) for v253's
+event-based row recovery and neutral shared report record, retaining caller-owned
+measurements, diagnostics, accepted-join commits and event edits.

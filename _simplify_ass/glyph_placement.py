@@ -1,7 +1,8 @@
 """Exact-font fragment fitting and authored glyph placement.
 
 These functions borrow formatting and coordinates. Measurement resources and
-caches belong to FontMetrics; event recovery and diagnostics stay in the engine.
+caches belong to FontMetrics. Event-based row fitting and caller-owned
+diagnostic records live in their separate sibling modules.
 """
 from __future__ import annotations
 
