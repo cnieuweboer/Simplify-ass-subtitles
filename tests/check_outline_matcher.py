@@ -5,8 +5,11 @@ from pathlib import Path
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
-import ast,contextlib,importlib.util,inspect,json,math,sys,tempfile
+import ast,contextlib,importlib.util,inspect,json,math,sys,tempfile,subprocess
+from dataclasses import FrozenInstanceError
+from typing import get_type_hints
 import simplify_ass as current
+from _simplify_ass import vector_text as vector
 from event_evidence_test_helpers import event_comparison_fields
 from font_geometry_test_helpers import font_test_report, adapt_reference_font_api
 ROOT=Path(__file__).resolve().parents[1]
@@ -17,6 +20,28 @@ checks=[];search_cases=0;integration_cases=0
 def check(label,condition):
  assert condition,label
  checks.append(label)
+
+VECTOR_NAMES=('VectorTextFitContext','infer_vector_text_cues',
+ '_index_authored_vector_text_cues','_profile_vector_text_drawing',
+ '_index_vector_text_sources','_group_vector_text_runs',
+ '_measure_vector_text_outline','_select_vector_text_paint','_fit_vector_text_outline',
+ '_select_vector_text_cue_runs','_recover_vector_text_fragment_anchor',
+ '_reconstruct_vector_text_family','_propose_vector_text_cue',
+ '_apply_vector_text_ownership','recover_vector_text_cues')
+for name in VECTOR_NAMES:
+ check(name+' has one canonical owner',getattr(current,name) is getattr(vector,name))
+ get_type_hints(getattr(vector,name))
+check('vector context resolves shared resources',
+      get_type_hints(vector.VectorTextFitContext)['metric'] is current.FontMetrics and
+      get_type_hints(vector.VectorTextFitContext)['font_report']==current.FontProcessingReport | None)
+subprocess.run([sys.executable,'-I','-c',
+ 'import sys;sys.path.insert(0,'+repr(str(ROOT))+');'
+ 'from _simplify_ass import vector_text;'
+ 'assert not any(n.split(".")[0] in '
+ '{"simplify_ass","PIL","fontTools","uharfbuzz"} for n in sys.modules)'],
+ cwd=ROOT,check=True)
+check('vector recovery imports without engine or optional font backends',True)
+
 def snapshot(value):
  if type(value).__name__=='Event':return snapshot(event_comparison_fields(value))
  if isinstance(value,float) and not math.isfinite(value):return repr(value)
@@ -163,6 +188,67 @@ exec(compile(fpath.read_text().split('class RecordingMetric:')[0],str(fpath),'ex
 adapt_reference_font_api(previous)
 engines={m:m.FontMetrics([ROOT/'fonts']) for m in (previous,current)}
 shared_matcher=current.FontOutlineMatcher(engines[current])
+
+# Source fits belong to one recovery call, separate from reusable font profiles.
+source=fixtures['inputs'](current,fixtures['CASES'][0],'original')
+sample=next(e for e in source.values() if e.kind=='Dialogue')
+run=((),[(sample,(),{})])
+caption=current.replace_event(sample,text='Recovered caption')
+context=current.VectorTextFitContext(engines[current],0,{})
+try:context.cache={}
+except FrozenInstanceError:check('fit context bindings remain frozen',True)
+else:raise AssertionError('fit context became mutable')
+with patch.object(vector,'_measure_vector_text_outline',return_value=run[1]) as measure, \
+     patch.object(vector,'_select_vector_text_paint',return_value=caption) as paint:
+ check('successful source fit returns caption',vector._fit_vector_text_outline(run,'Caption A',context) is caption)
+ check('successful source fit reuses caption identity',vector._fit_vector_text_outline(run,'Caption A',context) is caption)
+ check('successful fit measured and painted once',measure.call_count==paint.call_count==1)
+ vector._fit_vector_text_outline(run,'Caption B',context)
+ check('different literal has its own fit',measure.call_count==paint.call_count==2)
+ peer=current.replace_event(sample,source_index=sample.source_index+10000)
+ vector._fit_vector_text_outline(((),[(peer,(),{})]),'Caption A',context)
+ check('different source has its own fit',measure.call_count==paint.call_count==3)
+ fresh=current.VectorTextFitContext(engines[current],0,{})
+ vector._fit_vector_text_outline(run,'Caption A',fresh)
+ check('fresh recovery never borrows previous source fits',
+       fresh.cache is not context.cache and measure.call_count==paint.call_count==4)
+for phase in ('outline','paint'):
+ context=current.VectorTextFitContext(engines[current],0,{})
+ with patch.object(vector,'_measure_vector_text_outline',
+                   return_value=None if phase=='outline' else run[1]) as measure, \
+      patch.object(vector,'_select_vector_text_paint',return_value=None) as paint:
+  check(phase+' refusal returns no caption',vector._fit_vector_text_outline(run,'Caption A',context) is None)
+  check(phase+' refusal is reused',vector._fit_vector_text_outline(run,'Caption A',context) is None)
+  check(phase+' refusal avoids repeated proof work',
+        measure.call_count==1 and paint.call_count==(0 if phase=='outline' else 1))
+  vector._fit_vector_text_outline(run,'Caption B',context)
+  check(phase+' refusal does not exclude another literal',measure.call_count==2)
+
+# Arbitration consumes only uniquely proved sources. Retained entries keep their
+# identity and insertion order; each accepted caption counts once across frames.
+parsed={i:current.replace_event(sample,source_index=i,text='Source '+str(i)) for i in (90,8,60,3)}
+before=snapshot(parsed);before_order=list(parsed)
+result,count=vector._apply_vector_text_ownership(parsed,[])
+check('empty proposal set keeps original map identity',result is parsed and count==0)
+first=current.replace_event(caption,source_index=3,text='First caption')
+result,count=vector._apply_vector_text_ownership(parsed,[({8,3},first)])
+check('one caption spanning multiple sources counts once',count==1)
+check('accepted caption retains established insertion order',list(result)==[90,60,3])
+check('accepted caption keeps its source ID and identity',result[3] is first)
+check('unclaimed events retain identity',result[90] is parsed[90] and result[60] is parsed[60])
+second=current.replace_event(caption,source_index=8,text='Competing caption')
+conflicts=[({8,3},first),({8,60},second)]
+result,count=vector._apply_vector_text_ownership(parsed,conflicts)
+check('competing claims retain original map and sources',result is parsed and count==0)
+independent=current.replace_event(caption,source_index=90,text='Independent caption')
+result,count=vector._apply_vector_text_ownership(parsed,conflicts+[({90},independent)])
+check('independent ownership survives other competing proposals',count==1 and result[90] is independent)
+check('ambiguous sources remain intact and ordered',list(result)==[8,60,3,90] and
+      all(result[i] is parsed[i] for i in (8,60,3)))
+check('arbitration leaves all borrowed inputs unchanged',snapshot(parsed)==before and list(parsed)==before_order)
+check('absent font service preserves no-op map identity',vector.recover_vector_text_cues(parsed,None)==(parsed,0) and
+      vector.recover_vector_text_cues(parsed,None)[0] is parsed)
+
 for case in fixtures['CASES']:
  for order in ('original','reverse','shuffle'):
   outputs=[]
@@ -198,7 +284,7 @@ with tempfile.TemporaryDirectory() as directory:
 from executable_ast_audit import executable_ast
 # Bound the source change; the numerical method moves without edits.
 def definitions(path):return {n.name:n for n in executable_ast(ast.parse(path.read_text())).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
-a=definitions(ROOT/'test-data/simplify_ass-v164-reference.py');b=definitions(ROOT/'simplify_ass.py')
+a=definitions(ROOT/'test-data/simplify_ass-v164-reference.py')
 old_decoder=next(n for n in a['FontSpacing'].body if isinstance(n,ast.FunctionDef) and n.name=='decode_cubic_outline')
 matcher_definition=executable_ast(ast.parse(inspect.getsource(current.FontOutlineMatcher))).body[0]
 new_decoder=next(n for n in matcher_definition.body if isinstance(n,ast.FunctionDef) and n.name=='decode_cubic_outline')
@@ -219,7 +305,6 @@ backend=next(n for n in executable_ast(ast.parse(backend_source)).body if isinst
 ink=next(n for n in a['FontMetrics'].body if isinstance(n,ast.FunctionDef) and n.name=='line_ink_metrics')
 backend.body=[deepcopy(ink) if isinstance(n,ast.FunctionDef) and n.name=='line_ink_metrics' else n for n in backend.body]
 check('font backend unchanged outside portable ink',ast.dump(a['FontMetrics'],include_attributes=False)==ast.dump(backend,include_attributes=False))
-check('ownership resolution unchanged',ast.dump(a['_apply_vector_text_ownership'],include_attributes=False)==ast.dump(b['_apply_vector_text_ownership'],include_attributes=False))
 report=dict(version=current.__version__,reference_version=previous.__version__,checks_passed=len(checks),search_cases=search_cases,vector_integration_cases=integration_cases,focused_conversions=conversions,checks=checks)
 (ROOT/'validation/outline-matcher-checks.json').write_text(json.dumps(report,indent=2)+'\n')
 print(len(checks),'outline matcher checks passed;',search_cases,'search cases;',integration_cases,'vector integration cases; two focused conversions')

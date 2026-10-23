@@ -103,6 +103,11 @@ def install_row_test_doubles(module, *, historical_fade_timing=False):
             owner=inspect.getmodule(real)
             if owner is not None and owner is not module and getattr(owner,new,None) is real:
                 patch.object(owner,new,dispatch).start()
+    # Vector recovery imports fitting functions directly after extraction.
+    owner=inspect.getmodule(getattr(module,'recover_vector_text_cues',None))
+    if owner is not None and owner is not module:
+        for name in ('recover_font_row','fit_fragment_anchor'):
+            patch.object(owner,name,getattr(module,name)).start()
 
 def adapt_reference_font_api(module):
     """Bridge API shape only on an immutable reference, preserving its engine."""

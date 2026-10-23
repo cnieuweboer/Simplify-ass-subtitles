@@ -171,6 +171,17 @@ caption geometry and pass-local original-plane/paint/layer evidence. Keep origin
 and working correspondence separate, preserve source geometry and exposure, and
 require existing shared-fade proof for translucent candidates. Do not rewrite
 source geometry to satisfy an exact matcher or globally relax layout identity.
+Complete vector-caption cue discovery, drawing-run and exact-font proofs,
+representative paint, caption reconstruction and source-claim arbitration live in
+`_simplify_ass/vector_text.py`, with direct engine aliases for fourteen functions
+and the frozen `VectorTextFitContext`. Borrow source events, metrics, matcher and
+report; keep drawing indexes, inferred cue evidence, successful/refused source
+fits and proposal claims call-local. Preserve no-op map identity, untouched event
+identity, dictionary insertion order, source-ID application and recovered-caption
+counts. The engine retains stage order, configuration, source handoffs and
+aggregate reporting. Font measurement caches and reusable decoder profiles retain
+their existing owners. Test interpreter observers and fit doubles follow the
+defining vector consumer; pipeline spies retain the engine entry alias.
 Complete shrinking glyph-row source admission, held-caption/anchor proofs, unique
 ownership and terminal-fade handoffs live in `_simplify_ass/shrinking_rows.py`,
 with direct engine aliases for nine functions and three frozen records. Borrow

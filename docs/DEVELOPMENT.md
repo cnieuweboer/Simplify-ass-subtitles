@@ -475,3 +475,7 @@ caption-rendering owner, with caller-owned matching, geometry and event edits.
 See [EVENT_ROW_FITTING_EXTRACTION.md](EVENT_ROW_FITTING_EXTRACTION.md) for v253's
 event-based row recovery and neutral shared report record, retaining caller-owned
 measurements, diagnostics, accepted-join commits and event edits.
+
+See [VECTOR_TEXT_EXTRACTION.md](VECTOR_TEXT_EXTRACTION.md) for v254's complete
+vector-caption recovery subsystem, including call-local fit caches, source
+ownership and reconstruction with engine-owned stage and reporting handoffs.
