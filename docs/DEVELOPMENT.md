@@ -484,3 +484,8 @@ See [SHARED_INTERVAL_ROWS_EXTRACTION.md](SHARED_INTERVAL_ROWS_EXTRACTION.md) for
 v255's complete shared-interval row proof/reconstruction subsystem, retaining
 pass-local visibility and ordering evidence, authored tails and caller-owned
 adoption/reporting. Reused positioned-row geometry lives in `caption_geometry`.
+
+See [FRAGMENT_PHASE_EXTRACTION.md](FRAGMENT_PHASE_EXTRACTION.md) for v256's complete
+fragment-phase row reconstruction, with exact touching-chain proofs, protected
+activation evidence and caller-owned timing/reporting handoffs. Shared `TextRow`
+and `TextPhaseRowsResult` records live in the neutral `row_evidence` owner.

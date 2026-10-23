@@ -235,6 +235,25 @@ audit = dict(version=s.__version__,reference_version=old.__version__,
     removed_definitions=[],other_existing_definitions_unchanged=True,
     separately_audited_paint_followup=sorted(paint_followup))
 (ROOT/'validation/final-visibility-structure-audit.json').write_text(json.dumps(audit,indent=2)+'\n')
+# Fragment-phase processing has one defining owner and no engine dependency.
+import subprocess, tempfile
+from typing import get_type_hints
+from _simplify_ass import fragment_phases
+for name,value in vars(fragment_phases).items():
+    if (inspect.isfunction(value) or inspect.isclass(value)) and value.__module__==fragment_phases.__name__:
+        check('direct fragment-phase alias '+name,getattr(s,name) is value)
+        get_type_hints(value)
+check('fragment context/profile retain frozen bindings',fragment_phases.FragmentPhaseContext.__dataclass_params__.frozen
+      and fragment_phases.FragmentPhaseProfile.__dataclass_params__.frozen)
+with tempfile.TemporaryDirectory() as directory:
+    code=("import sys;sys.path.insert(0,"+repr(str(ROOT))+");"
+          "from _simplify_ass import row_evidence;"
+          "assert '_simplify_ass.font_metrics' not in sys.modules;"
+          "from _simplify_ass import fragment_phases;"
+          "assert not any(n.split('.')[0] in {'simplify_ass','PIL','fontTools','uharfbuzz'} for n in sys.modules)")
+    subprocess.run([sys.executable,'-I','-c',code],cwd=directory,check=True)
+check('row and fragment owners import without engine or optional fonts',True)
+
 (ROOT/'validation/final-visibility-ownership-checks.json').write_text(json.dumps(dict(
     version=s.__version__,reference_version=old.__version__,checks_passed=len(checks),checks=checks),indent=2)+'\n')
 print(len(checks),'final visibility ownership checks passed')

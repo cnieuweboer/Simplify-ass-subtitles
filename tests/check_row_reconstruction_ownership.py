@@ -181,6 +181,40 @@ for fixture_name in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.
     check(fixture_name+' source preparation observed',len(compared[1][0])==1)
     focused.append(dict(fixture=fixture_name,reconstruction_calls=calls,source_handoff_contract_identical=True))
 
+# Row evidence remains a shared record, without copying producer-owned data.
+import pickle
+from dataclasses import replace
+from typing import get_type_hints
+from _simplify_ass import row_evidence
+for name in ('TextRow','TextPhaseRowsResult'):
+    cls=getattr(row_evidence,name)
+    check('canonical shared row record '+name,getattr(s,name) is cls)
+    get_type_hints(cls)
+    legacy=('csimplify_ass\n'+name+'\n.').encode('ascii')
+    check('legacy row type lookup '+name,pickle.loads(legacy) is cls)
+sample=fixture()[0][0]
+pieces=[(sample,'A',(100.,100.))]
+row=row_evidence.TextRow(sample,pieces)
+peer=row_evidence.TextRow(sample,[])
+check('row keeps supplied base and pieces',row.base is sample and row.pieces is pieces)
+row.paint_rows.append([sample]);row.source_anchors['A']=[(100.,100.)];row.foreground.append(sample)
+row.confirmed=True
+check('row retains mutable bindings',row.confirmed)
+check('default row containers remain independent',not peer.paint_rows and not peer.source_anchors and not peer.foreground)
+check('optional timing and backing defaults unchanged',row.phase_core is None and row.owned_backing==())
+anchors=row.anchors;anchors.clear()
+check('anchors are derived without mutating pieces',row.anchors==[('A',100.)] and row.pieces is pieces)
+successor=replace(row,phase_core=(1.25,3.75))
+check('row successor preserves shallow evidence sharing',successor is not row and successor.pieces is pieces
+      and successor.paint_rows is row.paint_rows and row.phase_core is None)
+events=[sample];rows=[row];updates={sample.source_index:'A'}
+result=row_evidence.TextPhaseRowsResult(events,2,rows,updates)
+check('phase result borrows supplied payload containers',result.events is events and result.rows is rows
+      and result.visibility_updates is updates and result.removed_count==2)
+try:result.rows=[]
+except FrozenInstanceError:check('phase result bindings remain frozen',True)
+else:raise AssertionError('mutable phase result binding')
+
 (ROOT/'validation/row-reconstruction-ownership-checks.json').write_text(json.dumps(
     dict(version=s.__version__,count=len(checks),checks=checks,focused_conversions=focused),indent=2)+'\n')
 print(len(checks),'row-reconstruction ownership checks and 2 focused conversions passed')

@@ -28,7 +28,8 @@ def patch_interpreter_bindings(engine, name, *args, **kwargs):
                       'collapse_sliced_text_sequences', 'collapse_shrinking_glyph_rows',
                       'match_boundary_glyph_effects', '_glyph_replacement_row_is_clear',
                       'render_caption_spans', 'render_merged_caption',
-                      'recover_vector_text_cues', 'merge_shared_interval_rows'))]
+                      'recover_vector_text_cues', 'merge_shared_interval_rows',
+                      'collapse_fragment_phase_rows'))]
     for consumer in consumers:
         if (consumer is not None and consumer not in bindings and
                 getattr(consumer, name, None) is original):

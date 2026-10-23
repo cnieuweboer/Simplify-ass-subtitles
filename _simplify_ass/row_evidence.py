@@ -1,0 +1,46 @@
+"""Shared row evidence and phase-row results; producers retain their policies."""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from .event_model import Event
+
+
+@dataclass
+class TextRow:
+    """Shared text, geometry and cue provenance for reconstruction and FX.
+
+    Source rows retain their authored interval and alternate paint rows.
+    Reconstructed/virtual rows carry the same anchors into effect removal;
+    that stage never has to rediscover their fragment layout.
+    """
+    base: Event
+    pieces: list[tuple[Event, str, tuple[float, float]]]
+    paint_rows: list[list[Event]] = field(default_factory=list)
+    source_anchors: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
+    foreground: list[Event] = field(default_factory=list)
+    confirmed: bool = False
+    virtual: bool = False
+    # Optional protected cue core proved by source phase correspondence.
+    # The overlap pass preserves every activation point inside this interval.
+    # Timing proofs travel in returned row successors; passes borrow input rows.
+    phase_core: tuple[float, float] | None = None
+    # Exact retained paint successors owned by this foreground cue.
+    owned_backing: tuple[Event,...] = ()
+
+    @property
+    def anchors(self) -> list[tuple[str, float]]:
+        return [(text, pos[0]) for _, text, pos in self.pieces]
+
+
+@dataclass(frozen=True)
+class TextPhaseRowsResult:
+    """Accepted captions, protected row evidence and caller-applied visibility.
+
+    Events and input visibility are borrowed. Callers adopt rows and apply
+    the sparse delta before reconstruction or protected timing decisions.
+    """
+    events: list[Event]
+    removed_count: int
+    rows: list[TextRow]
+    visibility_updates: dict[int,str]

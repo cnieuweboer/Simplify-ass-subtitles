@@ -182,6 +182,21 @@ counts. The engine retains stage order, configuration, source handoffs and
 aggregate reporting. Font measurement caches and reusable decoder profiles retain
 their existing owners. Test interpreter observers and fit doubles follow the
 defining vector consumer; pipeline spies retain the engine entry alias.
+Shared `TextRow` and frozen `TextPhaseRowsResult` records live in
+`_simplify_ass/row_evidence.py`, with direct engine aliases. Keep mutable row
+bindings, independent default containers, borrowed explicit payloads and shallow
+successors unchanged. Producers retain source paint/timing/ownership decisions;
+the neutral records introduce no policy or font/cache dependency. Complete
+fragment-phase admission, touching-chain/row proof, missing-fragment protection,
+unique source ownership and application live in `_simplify_ass/fragment_phases.py`,
+with direct aliases for twelve functions and two frozen records. Borrow events,
+visibility and supplied metrics/report; keep indexes, successful/failed chain
+profiles, blockers, proposals, claims and output local. Preserve terminal paint,
+activation cores, source-index ordering, reduction counts and no-op identity.
+The final-layout caller retains stage order after translated phases, event/delta
+adoption, overlap handoffs and aggregate reporting. Font caches, selective missing
+findings and accepted-join commit timing retain their existing owners. Interpreter
+observers and fit doubles follow the defining consumer, without production forwarding.
 Complete shared-interval row discovery, exact-font/paint/compositing proof,
 proposal arbitration, tail retention and ordered application live in
 `_simplify_ass/shared_interval_rows.py`, with direct engine aliases for sixteen
