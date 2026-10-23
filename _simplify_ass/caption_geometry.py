@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import replace as dataclass_replace
 import math
 import re
+from typing import Iterable
 
 from .ass_overrides import DEFAULT_STATE, OVERRIDE_RE, NUMBER
 from .event_model import Event
@@ -229,3 +230,43 @@ def rectangle_clip(e: Event):
         return None
     coords = tuple(map(float, re.findall(NUMBER, value)))
     return coords if coords[0] < coords[2] and coords[1] < coords[3] else None
+
+
+def positioned_row_geometry(ordered: list[Event], *,
+                              min_x_step: float | None = None
+                              ) -> tuple[list[float],list[float]] | None:
+    """Validate anchors in supplied reading order and return their coordinates.
+
+    A row needs distinct increasing x anchors and a total vertical spread of
+    at most 15% of its shortest text height. The default horizontal tolerance
+    is the smallest event unit; virtual-row evidence supplies its first unit.
+    Eligibility, font fitting and timing remain the caller's responsibility.
+    """
+    if len(ordered) < 2:
+        return None
+    positions = [get_pos(e.text) for e in ordered]
+    if any(pos is None for pos in positions):
+        return None
+    xs = [pos[0] for pos in positions]
+    ys = [pos[1] for pos in positions]
+    tolerance = min(e.unit for e in ordered) if min_x_step is None else min_x_step
+    if (any(b-a <= tolerance for a,b in zip(xs,xs[1:])) or
+            max(ys)-min(ys) > .15*min(text_height(e) for e in ordered)):
+        return None
+    return xs,ys
+
+
+
+def split_positioned_row_runs(events: Iterable[Event]) -> list[list[Event]]:
+    """Split positioned candidates at gaps above twice the adjacent height.
+
+    Stable x ordering retains tied-anchor source order. Geometry validation
+    and cue ownership are separate: this grouping step proves neither.
+    """
+    runs = []
+    for e in sorted(events,key=lambda e:get_pos(e.text)[0]):
+        if (not runs or get_pos(e.text)[0]-get_pos(runs[-1][-1].text)[0] >
+                2*min(text_height(e),text_height(runs[-1][-1]))):
+            runs.append([])
+        runs[-1].append(e)
+    return runs

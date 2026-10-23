@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 from unittest.mock import patch
 from override_module_test_helpers import patch_interpreter_bindings
-import importlib.util,json,random,sys
+import importlib.util,inspect,json,random,sys
 import simplify_ass as current
 from event_evidence_test_helpers import event_comparison_fields,static_span_comparison_fields,resolve_test_event,override_comparison_state
 
@@ -153,7 +153,7 @@ for i,text in enumerate((r'{\rOther\pos(100,100)}A{\bord2\xbord8}B{\shad2\xshad4
         context=module._prepare_shared_interval_context([e],{0:'ABC'},None)
         def bounds(probe,metric):
             captured.append(clean(probe.state));return (10.,20.,30.,40.)
-        with patch.object(module,'caption_bounds',bounds):
+        with patch.object(inspect.getmodule(module._shared_interval_bounds),'caption_bounds',bounds):
             out,trace=traced(module,lambda:module._shared_interval_bounds(context,e),isolated=False)
             again=module._shared_interval_bounds(context,e)
         check(str(i)+' bounds cache',out==again and len(captured)<=1)

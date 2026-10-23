@@ -80,6 +80,13 @@ s.positioned_row_geometry(row)
 s.split_positioned_row_runs(row)
 ok('geometry helpers leave source events unchanged',
    before==[(e.fields(),e.state,e.unit) for e in row])
+# Reused row geometry has a shared owner, with unchanged callable contracts.
+import typing
+from _simplify_ass import caption_geometry as geometry
+for name in ('positioned_row_geometry','split_positioned_row_runs'):
+    ok('direct geometry alias '+name,getattr(s,name) is getattr(geometry,name))
+    typing.get_type_hints(getattr(geometry,name))
+
 (ROOT/'validation').mkdir(exist_ok=True)
 (ROOT/'validation/row-geometry-checks.json').write_text(json.dumps(checks,indent=2)+'\n')
 print(f'{len(checks)} row-geometry checks passed')

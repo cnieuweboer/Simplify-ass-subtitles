@@ -8,7 +8,7 @@ from dataclasses import FrozenInstanceError, fields
 from pathlib import Path
 from types import MappingProxyType, ModuleType
 from unittest.mock import patch
-import ast, contextlib, importlib.util, json, sys
+import ast, contextlib, importlib.util, inspect, json, sys
 import simplify_ass as s
 from font_geometry_test_helpers import install_row_test_doubles, row_test_call
 from event_evidence_test_helpers import event_comparison_fields, row_comparison_fields
@@ -152,7 +152,7 @@ for count in (4,8):
     def tracked_round(batch,pending,*args,**kwargs):
         round_reads.append({e.source_index:pending.get(e.source_index) for e in batch})
         return once(batch,pending,*args,**kwargs)
-    with patch.object(s,'_merge_shared_interval_rows_once',tracked_round):
+    with patch.object(inspect.getmodule(s.merge_shared_interval_rows),'_merge_shared_interval_rows_once',tracked_round):
         result = s.merge_shared_interval_rows(events,LookupOnly(visible),fonts[s],set(visible),font_report=current_report)
     check('shared explicit result',isinstance(result,s.SharedIntervalRowsResult))
     check('shared accepted rows/tails',result.rows_joined>0 and result.tails_retained>0)
@@ -181,7 +181,7 @@ for kind,helper in [('translated','_apply_translated_cue_proposals'),('fragment'
         if kind!='shared':assert result.rows,'failure must follow a real accepted row'
         committed.append(True)
         raise RuntimeError('intentional failure after private acceptance')
-    with patch.object(s,helper,fail_after_commit):
+    with patch.object(inspect.getmodule(getattr(s,helper)),helper,fail_after_commit):
         try:
             if kind=='shared':s.merge_shared_interval_rows(events,visible,fonts[s],set(visible))
             else:getattr(s,'collapse_'+kind+'_phase_rows')(events,visible,metric(s,kind,'fit'))

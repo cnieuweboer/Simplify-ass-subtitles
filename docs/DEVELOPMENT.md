@@ -479,3 +479,8 @@ measurements, diagnostics, accepted-join commits and event edits.
 See [VECTOR_TEXT_EXTRACTION.md](VECTOR_TEXT_EXTRACTION.md) for v254's complete
 vector-caption recovery subsystem, including call-local fit caches, source
 ownership and reconstruction with engine-owned stage and reporting handoffs.
+
+See [SHARED_INTERVAL_ROWS_EXTRACTION.md](SHARED_INTERVAL_ROWS_EXTRACTION.md) for
+v255's complete shared-interval row proof/reconstruction subsystem, retaining
+pass-local visibility and ordering evidence, authored tails and caller-owned
+adoption/reporting. Reused positioned-row geometry lives in `caption_geometry`.

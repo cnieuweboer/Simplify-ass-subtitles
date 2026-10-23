@@ -182,6 +182,20 @@ counts. The engine retains stage order, configuration, source handoffs and
 aggregate reporting. Font measurement caches and reusable decoder profiles retain
 their existing owners. Test interpreter observers and fit doubles follow the
 defining vector consumer; pipeline spies retain the engine entry alias.
+Complete shared-interval row discovery, exact-font/paint/compositing proof,
+proposal arbitration, tail retention and ordered application live in
+`_simplify_ass/shared_interval_rows.py`, with direct engine aliases for sixteen
+functions and four existing records. Borrow events, visibility and supplied
+metrics/report; keep eligibility copies, pending visibility, per-round bounds
+(including unknown results), actual-order indexes, proposals and edits local.
+Preserve original tails, span paint, numeric layer/list order, jointly compatible
+slots, generated-ID uniqueness and no-op identity. The final-layout caller
+retains stage order, event/delta adoption after success and aggregate reporting.
+Shared `positioned_row_geometry()` and `split_positioned_row_runs()` belong to
+caption geometry; preserve explicit tolerances, supplied reading order, stable
+sorting and borrowed Event identities. Font caches and selective missing-face
+diagnostics retain their owners. Test observers and fitting doubles follow the
+defining consumer, without production forwarding.
 Complete shrinking glyph-row source admission, held-caption/anchor proofs, unique
 ownership and terminal-fade handoffs live in `_simplify_ass/shrinking_rows.py`,
 with direct engine aliases for nine functions and three frozen records. Borrow

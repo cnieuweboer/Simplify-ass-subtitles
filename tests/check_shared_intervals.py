@@ -152,5 +152,26 @@ coverage(a,b,'joint placement')
 row_order=[e.name for e in b if len(s.simplify_text(e.text,visible_only=True)[1])>1]
 ok('joint placement preserves glyph draw order',row_order==['A','B'])
 
+# The pass has one defining owner; engine exports remain direct aliases.
+import inspect, subprocess, typing
+from _simplify_ass import shared_interval_rows as owner
+for name,value in vars(owner).items():
+ if (inspect.isfunction(value) or inspect.isclass(value)) and value.__module__==owner.__name__:
+  ok('direct engine alias '+name,getattr(s,name) is value)
+  typing.get_type_hints(value)
+ok('existing records retain frozen versus mutable bindings',
+   all(cls.__dataclass_params__.frozen for cls in
+       (owner.SharedIntervalRowsResult,owner.SharedIntervalContext,owner.SharedIntervalProposal))
+   and not owner.SharedIntervalEdits.__dataclass_params__.frozen)
+first,second=owner.SharedIntervalEdits(1),owner.SharedIntervalEdits(1)
+first.claimed.add(5);first.slots[5]=[];first.accepted.append(())
+ok('edit buffers are independent per call',not second.claimed and not second.slots and not second.accepted)
+with tempfile.TemporaryDirectory() as directory:
+ code=("import sys;sys.path.insert(0,"+repr(str(ROOT))+");"
+       "from _simplify_ass import shared_interval_rows;"
+       "assert not any(n.split('.')[0] in {'simplify_ass','PIL','fontTools','uharfbuzz'} for n in sys.modules)")
+ result=subprocess.run([sys.executable,'-I','-c',code],cwd=directory,capture_output=True,text=True)
+ ok('standalone import avoids engine and optional font backends',result.returncode==0)
+
 (ROOT/'validation/shared-interval-checks.json').write_text(json.dumps({'checks_passed':len(checks),'checks':checks},indent=2)+'\n')
 print(len(checks),'shared-interval checks passed')
