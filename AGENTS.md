@@ -197,6 +197,22 @@ The final-layout caller retains stage order after translated phases, event/delta
 adoption, overlap handoffs and aggregate reporting. Font caches, selective missing
 findings and accepted-join commit timing retain their existing owners. Interpreter
 observers and fit doubles follow the defining consumer, without production forwarding.
+Complete authored translated-phase cue discovery, exact-font movement/entrance/
+held backing proof, unique source ownership and caption construction live in
+`_simplify_ass/translated_phases.py`, with direct engine aliases for fifteen
+functions and four frozen records. Borrow events, visibility and supplied
+metrics/report; keep profile/pool indexes and proposals call-local, and positive/
+negative span caches cue-local with displacement/travel keys and cache-excluded
+model equality. Preserve complete glyph anchors, timing cores, held backing,
+reduction counts and no-op identity. The final-layout caller retains stage order
+before fragment phases, event/delta adoption, overlap handoffs and reporting.
+Accepted-row counter commits stay with proposal application; do not broaden
+missing-font diagnostics during extraction. Shared `index_fragment_spans()` and
+`matching_fragment_spans()` belong to `_simplify_ass/fragment_spans.py`. Preserve
+normalization choices, literal boundaries, repeated/overlapping matches, empty
+fragments, uncapped lengths, caller-normalized targets and borrowed-index reads.
+These helpers grant no event/removal ownership. Test trace coverage, interpreter
+observers and fit doubles follow the defining consumer, without production forwarding.
 Complete shared-interval row discovery, exact-font/paint/compositing proof,
 proposal arbitration, tail retention and ordered application live in
 `_simplify_ass/shared_interval_rows.py`, with direct engine aliases for sixteen

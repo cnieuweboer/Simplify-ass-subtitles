@@ -121,6 +121,12 @@ def install_row_test_doubles(module, *, historical_fade_timing=False):
         for name in ('recover_font_row','fit_fragment_anchor'):
             patch.object(owner,name,getattr(module,name)).start()
 
+    # Translated-phase proof imports exact authored glyph helpers directly.
+    owner=inspect.getmodule(getattr(module,'collapse_translated_phase_rows',None))
+    if owner is not None and owner is not module:
+        for name in ('authored_glyph_positions','fit_fragment_anchor','matches_authored_glyph_positions'):
+            patch.object(owner,name,getattr(module,name)).start()
+
 def adapt_reference_font_api(module):
     """Bridge API shape only on an immutable reference, preserving its engine."""
     if not hasattr(module,'FontSpacing') or getattr(module,'_font_reference_adapted',False):return

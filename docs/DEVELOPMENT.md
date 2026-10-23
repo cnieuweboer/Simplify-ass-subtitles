@@ -489,3 +489,8 @@ See [FRAGMENT_PHASE_EXTRACTION.md](FRAGMENT_PHASE_EXTRACTION.md) for v256's comp
 fragment-phase row reconstruction, with exact touching-chain proofs, protected
 activation evidence and caller-owned timing/reporting handoffs. Shared `TextRow`
 and `TextPhaseRowsResult` records live in the neutral `row_evidence` owner.
+
+See [TRANSLATED_PHASE_EXTRACTION.md](TRANSLATED_PHASE_EXTRACTION.md) for v257's
+complete entrance/movement/held caption reconstruction, preserving cue-local
+match caches and caller-owned timing/reporting handoffs. Shared literal fragment
+indexing and boundary matching live in `fragment_spans`.

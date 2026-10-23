@@ -6,6 +6,7 @@ from event_evidence_test_helpers import event_comparison_fields, row_comparison_
 from pathlib import Path
 from copy import deepcopy
 import importlib.util
+import inspect
 import json
 import statistics
 import sys
@@ -168,17 +169,82 @@ covered = {name:False for name in (
     '_prove_translated_cue_coverage','_render_translated_cue_proposal',
     '_apply_translated_cue_proposals')}
 import ast
-tree = ast.parse(Path(current.__file__).read_text())
+owner_file = inspect.getsourcefile(current.collapse_translated_phase_rows)
+tree = ast.parse(Path(owner_file).read_text())
 lines = {line for (filename,line),count in tracer.results().counts.items()
-         if Path(filename).resolve()==Path(current.__file__).resolve() and count}
+         if Path(filename).resolve()==Path(owner_file).resolve() and count}
 for node in tree.body:
     if isinstance(node,ast.FunctionDef) and node.name in covered:
         covered[node.name] = any(node.lineno<=line<=node.end_lineno for line in lines)
 assert all(covered.values()),covered
 assert any(c['case']=='changing_entrances' and c['mode']=='fit' and c['rows']==1 for c in checks)
 assert any(c['case']=='translation' and c['mode']=='fit' and c['rows']==1 for c in checks)
+# Protect the shared literal-boundary contract and the independent owners.
+from dataclasses import replace
+from typing import get_type_hints
+import subprocess, tempfile
+from _simplify_ass import fragment_spans, translated_phases
+contract_checks=[]
+def check_contract(name,condition):
+    assert condition,name
+    contract_checks.append(name)
+for owner in (fragment_spans,translated_phases):
+    for name,value in vars(owner).items():
+        if (inspect.isfunction(value) or inspect.isclass(value)) and value.__module__==owner.__name__:
+            check_contract('canonical alias '+name,getattr(current,name) is value)
+            get_type_hints(value)
+check_contract('existing translated records retain frozen bindings',all(cls.__dataclass_params__.frozen
+    for cls in (translated_phases.TranslatedPhaseContext,translated_phases.TranslatedCueLayout,
+                translated_phases.TranslatedCueModel,translated_phases.TranslatedCuePhases)))
+new_model=replace(a,span_cache={})
+new_model.span_cache[('probe',0,False)]=[]
+check_contract('cache contents do not affect model equality',new_model==a)
+check_contract('replacement cache stays independent',new_model.span_cache is not a.span_cache
+    and ('probe',0,False) not in a.span_cache)
+
+def spans(fragments,target,**options):
+    return list(fragment_spans.matching_fragment_spans(fragment_spans.index_fragment_spans(fragments,**options),target))
+check_contract('empty fragments contain no nonempty match',spans([],'A')==[])
+check_contract('empty target produces no matches',spans(['A',''],'')==[])
+check_contract('complete adjacent fragments match',spans(['AB','CD'],'ABCD')==[(0,1)])
+check_contract('partial initial fragment is rejected',spans(['AB','CD'],'BCD')==[])
+check_contract('partial terminal fragment is rejected',spans(['AB','CD'],'ABC')==[])
+check_contract('repeated occurrences remain distinct',spans(['AB','AB'],'AB')==[(0,0),(1,1)])
+check_contract('overlapping complete occurrences remain eligible',spans(list('AAA'),'AA')==[(0,1),(1,2)])
+check_contract('empty fragments retain all recorded boundary alternatives',
+    spans(['','A','','B',''],'AB')==[(0,3),(0,4),(1,3),(1,4)])
+check_contract('index construction ignores Unicode whitespace',spans([' \tA\u00a0',' B\n'],'AB')==[(0,1)])
+check_contract('target normalization remains the caller choice',spans(['A','B'],'A B')==[])
+check_contract('default matching remains case sensitive',spans(['A'],'a')==[])
+check_contract('optional casefold preserves expanded fragment boundaries',spans(['Stra','ße'],'strasse',casefold=True)==[(0,1)])
+check_contract('casefold does not silently normalize the target',spans(['Stra','ße'],'Straße',casefold=True)==[])
+check_contract('combining text remains literal',spans(['a','\u0301','b'],'a\u0301')==[(0,1)])
+check_contract('literal matching introduces no Unicode composition',spans(['a','\u0301'],'á')==[])
+check_contract('long captions have no span length cap',spans(['A'*4096,'B'*4096],'A'*4096+'B'*4096)==[(0,1)])
+source=[' A ','B'];saved=source.copy();seen=[]
+def fragments_once():
+    for fragment in source:
+        seen.append(fragment)
+        yield fragment
+index=fragment_spans.index_fragment_spans(fragments_once());saved_index=deepcopy(index)
+check_contract('index consumes a single-pass iterable once',seen==source)
+check_contract('index construction borrows source strings',source==saved)
+check_contract('matching is repeatable without changing the borrowed index',
+    list(fragment_spans.matching_fragment_spans(index,'AB'))==[(0,1)]
+    and list(fragment_spans.matching_fragment_spans(index,'AB'))==[(0,1)] and index==saved_index)
+other=fragment_spans.index_fragment_spans(source)
+check_contract('index boundary maps are independently owned',index[1] is not other[1] and index[2] is not other[2])
+with tempfile.TemporaryDirectory() as directory:
+    code=("import sys;sys.path.insert(0,"+repr(str(ROOT))+");"
+          "from _simplify_ass import fragment_spans;"
+          "assert '_simplify_ass.event_model' not in sys.modules;"
+          "from _simplify_ass import translated_phases;"
+          "assert not any(n.split('.')[0] in {'simplify_ass','PIL','fontTools','uharfbuzz'} for n in sys.modules)")
+    subprocess.run([sys.executable,'-I','-c',code],cwd=directory,check=True)
+check_contract('standalone imports need no engine or optional font backends',True)
+
 report = dict(reference='v123',comparisons=len(checks),cache_assertions=8,
-    helpers_exercised=covered,checks=checks)
+    helpers_exercised=covered,checks=checks,contract_checks=contract_checks)
 (ROOT/'validation').mkdir(exist_ok=True)
 (ROOT/'validation/translated-phase-checks.json').write_text(json.dumps(report,indent=2)+'\n')
-print(f"{len(checks)} translated-phase comparisons; all 14 helpers exercised; 8 cache assertions")
+print(f"{len(checks)} translated-phase comparisons; all 14 helpers exercised; 8 cache assertions; {len(contract_checks)} boundary/module checks")
