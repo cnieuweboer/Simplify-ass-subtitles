@@ -134,14 +134,14 @@ from _simplify_ass.static_objects import (
 )
 from _simplify_ass.caption_geometry import (
     NUM, POS_RE, caption_bounds, get_pos, inline_layout_key, set_pos,
-    text_height, placement_key, text_layout_key, compatible_text_layout,
+    text_height, placement_key, text_layout_key, compatible_text_layout, near_coincident_glyph_planes,
 )
 from _simplify_ass.text_freezing import (
     FrozenBlock, SAFE_SIMPLE_TAGS, _freeze_inputs, freeze_block, safe_override,
     simplify_text, simplify_visual_text,
 )
 from _simplify_ass.caption_clearance import (
-    _caption_implicit_anchor, _glyph_replacement_row_is_clear,
+    _caption_implicit_anchor, _glyph_replacement_row_is_clear, _caption_order_is_unchanged,
 )
 from _simplify_ass.caption_rendering import (
     MAX_PROVED_CAPTION_BORDER, CAPTION_PAINT_TAGS, SourceCaptionPaint, _source_caption_paint,
@@ -273,7 +273,7 @@ from _simplify_ass.shrinking_rows import (
     collapse_shrinking_glyph_rows,
 )
 
-__version__ = "2026.10.23.250"
+__version__ = "2026.10.23.251"
 
 
 class _FontTimestampFilter(logging.Filter):
@@ -647,6 +647,8 @@ class StackedTextContext:
     matched_backing_fades: dict[frozenset[int],MatchedBackingFade] = field(default_factory=dict)
     # Producer-owned unequal-lifetime stacks, consumed without repeating proof.
     contained_paint: dict[frozenset[int],tuple] = field(default_factory=dict)
+    # Original planes plus accepted correspondence; never rewrite source layout.
+    near_backing_planes: dict[frozenset[int],tuple[BackingFadePhase,str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -2414,10 +2416,105 @@ def _prepare_stacked_text_copies(events: list[Event], visible_map: dict[int,str]
                e.margin_v, pos, visible)
         groups.setdefault(key, []).append(e)
     context = StackedTextContext(groups,kept,collision_peers,paint,animated_sources,source_events,font_metrics)
+    _group_near_stacked_backings(context,events)
     _group_contained_stacked_paint(context,events)
     context.matched_backing_fades.update(_index_matched_backing_fades(context,events))
     context.glow_paint.update(_index_glow_pulse_paint(context))
     return context,echo_removed
+
+
+def _stacked_backing_geometry(context: StackedTextContext, foreground: Event,
+                              backing: Event) -> bool:
+    profiles = [static_text_paint_geometry(e,context.paint) for e in (foreground,backing)]
+    if any(p is None for p in profiles):
+        return False
+    if profiles[0][0] == profiles[1][0]:
+        return True
+    # A frozen pose cannot retrospectively prove original masked/moving geometry.
+    # Retain uniform source layout and measure its working geometry handoff.
+    sources = []
+    tokens = []
+    for e in (foreground,backing):
+        source = (context.source_events or {}).get(e.source_index,e)
+        evaluated = event_evaluation(source)
+        source = dataclass_replace(source,state=evaluated.formatting,continuation=evaluated.continuation)
+        source_tokens = event_override_tokens(source)
+        if ((source.start,source.end) != (e.start,e.end) or
+                OVERRIDE_RE.sub('',source.text) != OVERRIDE_RE.sub('',e.text) or
+                inline_layout_key(source) or any(k in source.state for k in ('clip','iclip')) or
+                any(tag == 'move' or tag == 't' and any(k not in context.paint
+                    for k,v in tokenize_override(value[1:-1]))
+                    for tag,value in source_tokens)):
+            return False
+        sources.append(source)
+        tokens.append(source_tokens)
+    if not (sources[0].state.get('1a',0) == sources[1].state.get('1a',0) == sources[1].state.get('3a',0)):
+        return False
+    if any(tag == 't' and any(k in {'alpha','1a','3a'} for k,v in tokenize_override(value[1:-1]))
+           for stream in tokens for tag,value in stream):
+        settled = [_settled_stacked_contour_source(source) for source in sources]
+        if any(p is None for p in settled) or settled[0][1] != settled[1][1]:
+            return False
+    if any(tag in {'fad','fade'} for stream in tokens for tag,value in stream):
+        fades = [_parse_simple_source_fade(stream) for stream in tokens]
+        if any(f is None for f in fades) or fades[0] != fades[1]:
+            return False
+    # The freezer serializes positions with bounded decimal precision. Prove
+    # both original correspondence and its working handoff instead of demanding
+    # identical spelling or trusting a rounded replacement as new source proof.
+    return (near_coincident_glyph_planes(foreground,backing,context.font_metrics) and
+            near_coincident_glyph_planes(*sources,context.font_metrics) and
+            all(near_coincident_glyph_planes(e,source,context.font_metrics)
+                for e,source in zip((foreground,backing),sources)))
+
+
+def _stacked_backing_output_layer(phase: BackingFadePhase, events: list[Event],
+                                  context: StackedTextContext) -> str | None:
+    """Keep original foreground order at the retained slot, or prove clearance."""
+    family = [phase.foreground,phase.backing]
+    members = {e.source_index for e in family}
+    order = {e.source_index:(int(e.layer),i) if e.layer.lstrip('-').isdigit() else None
+             for i,e in enumerate(events)}
+    slot = min(order[e.source_index][1] for e in family)
+    core = phase.foreground.start_s,phase.foreground.end_s
+    peers = [e for e in events if e.kind == 'Dialogue' and e.source_index not in members and
+             e.start_s < core[1] and e.end_s > core[0]]
+    for layer in dict.fromkeys(('0',phase.foreground.layer)):
+        rank = int(layer),slot
+        probe = dataclass_replace(phase.foreground,layer=layer)
+        if all(_caption_order_is_unchanged(family,e,order,rank) or
+               context.font_metrics is not None and _glyph_replacement_row_is_clear(
+                   dataclass_replace(probe,layer=e.layer),core,members,
+                   int(e.layer) if e.layer.lstrip('-').isdigit() else int(layer),
+                   {e.source_index:e},context.font_metrics,family)
+               for e in peers):
+            return layer
+    return None
+
+
+def _group_near_stacked_backings(context: StackedTextContext, events: list[Event]) -> None:
+    """Join uniquely corresponding same-interval planes before frame reduction."""
+    if context.font_metrics is None:
+        return
+    buckets = {}
+    for key,group in context.groups.items():
+        buckets.setdefault(key[:7]+key[8:],[]).append((key,group))
+    for entries in buckets.values():
+        peers = [e for _,group in entries for e in group]
+        if len(peers) != 2 or (get_pos(peers[0].text) == get_pos(peers[1].text) and
+                             text_layout_key(peers[0]) == text_layout_key(peers[1])):
+            continue
+        phase = _matched_backing_fade_phase(context,peers)
+        if phase is None:
+            continue
+        layer = _stacked_backing_output_layer(phase,events,context)
+        if layer is None:
+            continue
+        for key,_ in entries:
+            del context.groups[key]
+        key = entries[0][0]
+        context.groups[key] = peers
+        context.near_backing_planes[frozenset(e.source_index for e in peers)] = phase,layer
 
 
 def _group_contained_stacked_paint(context: StackedTextContext, events: list[Event]) -> None:
@@ -2487,8 +2584,7 @@ def _matched_backing_fade_phase(context: StackedTextContext, peers: list[Event])
             not e.layer.lstrip('-').isdigit() for e in peers)):
         return None
     backing,foreground=sorted(peers,key=lambda e:(int(e.layer),e.source_index))
-    profiles=[static_text_paint_geometry(e,context.paint) for e in (foreground,backing)]
-    if any(p is None for p in profiles) or profiles[0][0]!=profiles[1][0]:
+    if not _stacked_backing_geometry(context,foreground,backing):
         return None
     for e in peers:
         original=(context.source_events or {}).get(e.source_index,e)
@@ -2512,7 +2608,9 @@ def _matched_backing_fade_phase(context: StackedTextContext, peers: list[Event])
         # Establish a candidate resting contour; the family must still supply
         # an actual opaque hold before this can authorize any replacement.
         front={**front,'1a':0,'3a':0};back={**back,'1a':0,'3a':0}
-        proof=_source_caption_paint(front,[front,back])
+        # Geometry correspondence is already proved. This is a paint-only view
+        # for the canonical contour policy, not a replacement source/event pose.
+        proof=_source_caption_paint(front,[front,{**back,'frz':front.get('frz',0)}])
         if proof is None:return None
         paints.extend([proof]*len(fragment));alphas.add(alpha)
         surface.extend([tuple(s.get(k,0) for s in states for k in ('blur','be'))]*len(fragment))
@@ -3357,6 +3455,17 @@ def _flatten_stacked_text_group(context: StackedTextContext, key: tuple,
     fade=context.matched_backing_fades.get(frozenset(e.source_index for e in group))
     if fade is not None:
         return compact_static_overrides([_render_matched_backing_fade(fade,context.paint)],0),1,None
+    near = context.near_backing_planes.get(frozenset(e.source_index for e in group))
+    if near is not None:
+        phase,layer = near
+        if phase.alpha != 0:
+            return group,0,None  # Only the shared fade-family proof can remove these.
+        chosen = phase.foreground
+        text = render_simplified_caption(chosen.state,OVERRIDE_RE.sub('',chosen.text),
+            measurement=chosen.measurement,source_paint=phase.paint[0])
+        caption = replace_event(chosen,text=text,layer=layer,effect='',
+            source_index=min(e.source_index for e in group))
+        return [_preserve_frame_pose_support(chosen,caption)],1,None
     if key[-2] is None or any(inline_layout_key(e) for e in group):
         captions,count = _flatten_inline_stacked_text(context,key,group)
         return captions,count,None

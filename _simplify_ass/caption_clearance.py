@@ -104,3 +104,30 @@ def _glyph_replacement_row_is_clear(caption: Event, core: tuple[float,float],
                                      peer_box[3] < box[1] or box[3] < peer_box[1])):
             return False
     return True
+
+
+def _caption_order_is_unchanged(family: list[Event], other: Event, order,
+                            replacement_rank: tuple[int,int] | None) -> bool:
+    """Compare foreground coverage against original planes, over the peer's life.
+
+    A lower redundant plane is harmless when existing upper planes already cover
+    the whole interval above independent ink. Do not mistake that backing plane
+    for evidence that the replacement crosses visible content.
+    """
+    rank = order[other.source_index]
+    ranks = [order[e.source_index] for e in family]
+    if replacement_rank is None or rank is None or any(r is None for r in ranks):
+        return False
+    start = max(other.start_s,min(e.start_s for e in family))
+    end = min(other.end_s,max(e.end_s for e in family))
+    above = [(max(start,e.start_s),min(end,e.end_s))
+             for e,r in zip(family,ranks) if r > rank and
+             e.end_s > start and e.start_s < end]
+    if replacement_rank < rank:
+        return not above
+    covered = start
+    for left,right in sorted(above):
+        if left > covered:
+            return False
+        covered = max(covered,right)
+    return covered >= end

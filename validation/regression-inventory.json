@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.22.248",
+  "version": "2026.10.23.251",
   "current": [
     {
       "script": "tests/check_caption_spans.py",
@@ -595,6 +595,16 @@
       "script": "tests/check_full_lyric_copies_module.py",
       "status": "current",
       "category": "general"
+    },
+    {
+      "script": "tests/check_near_stacked_backings.py",
+      "status": "current",
+      "category": "general"
+    },
+    {
+      "script": "tests/check_near_stacked_backings_render.py",
+      "status": "current",
+      "category": "render"
     }
   ],
   "historical": [

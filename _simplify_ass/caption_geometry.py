@@ -1,6 +1,7 @@
 """Explicit caption anchors and conservative bounds using caller-owned metrics."""
 from __future__ import annotations
 
+from dataclasses import replace as dataclass_replace
 import math
 import re
 
@@ -177,6 +178,49 @@ def compatible_text_layout(a: Event, b: Event) -> bool:
         if abs(x-y)>.05*max(abs(x),abs(y),1e-6):
             return False
     return True
+
+
+def near_coincident_glyph_planes(front: Event, back: Event, metric) -> bool:
+    """Bound uniform 2D glyph displacement, without changing either source pose.
+
+    Quarter-unit allowance at 1080 script height applies to the whole caption,
+    not separately to its tags. Unknown/masked/projective extents stay unknown.
+    Callers still own text, paint, timing and compositing correspondence.
+    """
+    if metric is None or inline_layout_key(front) or inline_layout_key(back):
+        return False
+    for e in (front,back):
+        header = re.match(r'(?:\{[^}]*\})*',e.text).end()
+        if OVERRIDE_RE.search(e.text[header:]):
+            # Even an inert trailing reset can make the cached final state
+            # describe a different font/scale from the visible glyphs.
+            return False
+    a,b = dict(text_layout_key(front)),dict(text_layout_key(back))
+    if any(a[k] != b[k] for k in a.keys()-{'fscx','fscy','frz'}):
+        return False
+    if any(any(e.state.get(k,0) for k in ('frx','fry','fax','fay')) or
+           any(k in e.state for k in ('org','clip','iclip')) for e in (front,back)):
+        return False
+    pos,q = get_pos(front.text),get_pos(back.text)
+    if pos is None or q is None:
+        return False
+    values = (*pos,*q,*(e.state.get(k,100) for e in (front,back) for k in ('fscx','fscy')),
+              front.state.get('frz',0),back.state.get('frz',0))
+    if not all(isinstance(v,(int,float)) and math.isfinite(v) for v in values) or any(
+            e.state.get(k,100)<=0 for e in (front,back) for k in ('fscx','fscy')):
+        return False
+    state = {**front.state,**dict.fromkeys(('frz','bord','xbord','ybord','shad',
+                                          'xshad','yshad','blur','be'),0)}
+    box = caption_bounds(dataclass_replace(front,state=state),metric)
+    if box is None:
+        return False
+    radius = max(math.dist(pos,p) for p in ((box[0],box[1]),(box[0],box[3]),
+                                          (box[2],box[1]),(box[2],box[3])))
+    sx,sy = (back.state.get(k,100)/front.state.get(k,100) for k in ('fscx','fscy'))
+    angle = math.radians(back.state.get('frz',0)-front.state.get('frz',0))
+    displacement = (math.dist(pos,q)+radius*max(abs(sx-1),abs(sy-1))+
+                    2*radius*max(1,abs(sx),abs(sy))*abs(math.sin(angle/2)))
+    return displacement <= .25*min(front.unit,back.unit)
 
 
 def rectangle_clip(e: Event):

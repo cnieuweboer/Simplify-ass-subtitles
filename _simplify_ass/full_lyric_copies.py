@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from dataclasses import replace as dataclass_replace
 from .event_model import Event
-from .caption_clearance import _caption_implicit_anchor, _glyph_replacement_row_is_clear
+from .caption_clearance import (
+    _caption_implicit_anchor, _glyph_replacement_row_is_clear,
+    _caption_order_is_unchanged as _copy_order_is_unchanged,
+)
 from .caption_geometry import caption_bounds, get_pos, placement_key
 from .static_selection import select_static_state
 from .caption_rendering import render_simplified_caption, _source_caption_paint
@@ -66,33 +69,6 @@ def _copy_peer_is_clear(family: list[Event], other: Event, visible_map,
     return _glyph_replacement_row_is_clear(probe,core,
         {e.source_index for e in family},layer,{other.source_index:other},
         font_metrics,family+[probe])
-
-
-def _copy_order_is_unchanged(family: list[Event], other: Event, order,
-                            replacement_rank: tuple[int,int] | None) -> bool:
-    """Compare foreground coverage against original planes, over the peer's life.
-
-    A lower redundant plane is harmless when existing upper planes already cover
-    the whole interval above independent ink. Do not mistake that backing plane
-    for evidence that the replacement crosses visible content.
-    """
-    rank = order[other.source_index]
-    ranks = [order[e.source_index] for e in family]
-    if replacement_rank is None or rank is None or any(r is None for r in ranks):
-        return False
-    start = max(other.start_s,min(e.start_s for e in family))
-    end = min(other.end_s,max(e.end_s for e in family))
-    above = [(max(start,e.start_s),min(end,e.end_s))
-             for e,r in zip(family,ranks) if r > rank and
-             e.end_s > start and e.start_s < end]
-    if replacement_rank < rank:
-        return not above
-    covered = start
-    for left,right in sorted(above):
-        if left > covered:
-            return False
-        covered = max(covered,right)
-    return covered >= end
 
 
 def _copy_output_layer(family: list[Event], events: list[Event], visible_map,

@@ -160,6 +160,13 @@ owners. Shared measured clearance and implicit anchor resolution live in
 metrics and inputs; keep geometry query buffers local. The shared caption-paint
 vocabulary belongs to caption rendering. Clearance grants no family/removal
 ownership. Test observers target the defining consumer without production forwarding.
+The shared original-foreground order primitive also lives in caption clearance;
+full-copy cleanup retains its direct alias. Nearly coincident stroked-backing
+admission stays with stack preparation, using measured uniform displacement from
+caption geometry and pass-local original-plane/paint/layer evidence. Keep original
+and working correspondence separate, preserve source geometry and exposure, and
+require existing shared-fade proof for translucent candidates. Do not rewrite
+source geometry to satisfy an exact matcher or globally relax layout identity.
 Complete shrinking glyph-row source admission, held-caption/anchor proofs, unique
 ownership and terminal-fade handoffs live in `_simplify_ass/shrinking_rows.py`,
 with direct engine aliases for nine functions and three frozen records. Borrow
@@ -284,7 +291,7 @@ measurement/parser-continuation contracts. Avoid mutable global parser caches.
 Run checks from the repository root with Pillow, fontTools and real uharfbuzz.
 Use `python validation/run_backend_check.py --backend windows tests/check_NAME.py` for
 focused checks and `python validation/run_review_checks.py` for the current
-119-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
+121-script suite. This exercises Pillow BASIC plus HarfBuzz on Linux; it does not
 validate Windows filesystem or PowerShell behavior. RAQM is optional unless the
 change affects that backend. Missing fixtures/fonts are prerequisites, not passes.
 If a required font is missing, identify its family and variant and request it

@@ -464,6 +464,6 @@ See [CAPTION_COLOR_PHASES.md](CAPTION_COLOR_PHASES.md) for v209's source timelin
 bounded sequential emission, engine/batch controls and shared wrapper reporting.
 
 See [MOVING_STROKE_BACKING_ASSESSMENT.md](MOVING_STROKE_BACKING_ASSESSMENT.md)
-for the v250 South Group investigation and proposed v251 producer-level
-foreground/backing correspondence and compositing handoff. This is an assessment;
-production behavior remains unchanged.
+for the v250 South Group investigation. The implementation and validation of
+v251's producer-level foreground/backing correspondence and compositing handoff
+are documented in [NEAR_STROKED_BACKINGS.md](NEAR_STROKED_BACKINGS.md).
