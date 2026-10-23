@@ -87,6 +87,10 @@ Reconstructed caption rendering and its source-paint resolver/record live in
 `_simplify_ass/caption_rendering.py`, with direct engine aliases. Callers retain
 source-family, timing, geometry and compositing proofs; the module borrows those
 inputs and preserves the established contrast, contour and shadow-transfer policy.
+Merged-row and literal-span serialization also live there. Preserve exact versus
+whitespace-insensitive correspondence, override continuation and border/shadow
+axis resets. Callers retain row fitting, paint-family proofs and event edits;
+test interpreter observers follow the defining rendering consumer.
 Explicit caption anchors and conservative measured bounds live in
 `_simplify_ass/caption_geometry.py`, with direct engine aliases
 for its anchor/bounds functions and shared position patterns. Geometry borrows event inputs and the

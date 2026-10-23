@@ -4,7 +4,11 @@ import test_paths  # Resolve the repository for direct test execution.
 from pathlib import Path
 import json
 import tempfile
+import subprocess
+import sys
+from typing import get_type_hints
 import simplify_ass as s
+from _simplify_ass import caption_rendering
 
 ROOT = Path(__file__).resolve().parents[1]
 header = (ROOT/'test-data/Overlord-22m06-source.ass').read_text(
@@ -14,6 +18,18 @@ checks = []
 def ok(name,condition):
     assert condition,name
     checks.append(name)
+
+for name in ('render_caption_spans','render_merged_caption'):
+    function = getattr(caption_rendering,name)
+    ok(name+' has one canonical owner',getattr(s,name) is function)
+    ok(name+' resolves the canonical Event annotation',
+       get_type_hints(function).get('chosen',get_type_hints(function).get('ordered'))
+       == (s.Event if name=='render_caption_spans' else list[s.Event]))
+subprocess.run([sys.executable,'-S','-c',
+    'import sys; from _simplify_ass import caption_rendering; '
+    'assert not any(name in sys.modules for name in '
+    '("simplify_ass", "PIL", "fontTools", "uharfbuzz"))'],cwd=ROOT,check=True)
+ok('independent renderer import needs neither engine nor font backends',True)
 
 def load(tags):
     lines = [f'Dialogue: 0,0:00:01.00,0:00:03.00,ED-R,,0,0,0,,{{\\an5\\pos({100+30*i},78){tag}}}{c}'

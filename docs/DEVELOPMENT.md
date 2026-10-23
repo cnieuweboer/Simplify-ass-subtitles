@@ -467,3 +467,7 @@ See [MOVING_STROKE_BACKING_ASSESSMENT.md](MOVING_STROKE_BACKING_ASSESSMENT.md)
 for the v250 South Group investigation. The implementation and validation of
 v251's producer-level foreground/backing correspondence and compositing handoff
 are documented in [NEAR_STROKED_BACKINGS.md](NEAR_STROKED_BACKINGS.md).
+
+See [MERGED_CAPTION_RENDERING_EXTRACTION.md](MERGED_CAPTION_RENDERING_EXTRACTION.md)
+for v252's unchanged merged-row and literal-span serialization in the existing
+caption-rendering owner, with caller-owned matching, geometry and event edits.
