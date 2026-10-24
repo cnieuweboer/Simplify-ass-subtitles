@@ -6,7 +6,7 @@ from event_evidence_test_helpers import contour_independent_contract as contract
 from collections.abc import Mapping
 from contextlib import contextmanager, redirect_stdout
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import replace, FrozenInstanceError
 from pathlib import Path
 from types import MappingProxyType
 from unittest.mock import patch
@@ -16,6 +16,10 @@ import json
 import random
 import sys
 import tempfile
+import pickle
+import subprocess
+from typing import get_type_hints
+from _simplify_ass import caption_fragment_copies as copies
 
 import simplify_ass as current
 from font_geometry_test_helpers import font_test_report, measurement_fonts, row_test_call, adapt_reference_font_api, install_row_test_doubles
@@ -173,9 +177,9 @@ for c in f['CASES']:
                     full = next(e.source_index for e in events if module.OVERRIDE_RE.sub('',e.text).startswith('Colorful row'))
                     fragment = min(e.source_index for e in events if e.source_index != full)
                     owned = {'full':full,'fragment':fragment,'external':999999}[c['preowned']]
-                    patches.append(patch.object(module,'match_nested_glyph_copies',return_value={owned}))
+                    patches.append(patch.object(copies if module is current else module,'match_nested_glyph_copies',return_value={owned}))
                 if c.get('render_failure'):
-                    patches.append(patch.object(module,'render_merged_caption',return_value=None))
+                    patches.append(patch.object(copies if module is current else module,'render_merged_caption',return_value=None))
                 from contextlib import ExitStack
                 with ExitStack() as stack:
                     for item in patches:
@@ -253,7 +257,7 @@ check('pipeline cache/row application parity',contract(pipeline_compared[0]) == 
 # Failure after resolving sources must not leave borrowed caches half-installed.
 events,visible,sources = lyric_inputs(current,cached=False,shared=True,invalid='none',reset='',alias=True)
 before = snapshot((events,visible,sources))
-with patch.object(current,'render_simplified_caption',side_effect=RuntimeError('injected row render failure')):
+with patch.object(copies,'render_simplified_caption',side_effect=RuntimeError('injected row render failure')):
     try:
         current.remove_letters_over_full_lines(events,visible,sources,collect_rows=True)
     except RuntimeError as error:
@@ -284,6 +288,53 @@ for name in ('Full-line-scaffold-source.ass','Full-line-shadow-source.ass','Full
     check('focused source handoff '+name,contract(compared[0]) == contract(compared[1]))
     check('source preparation observed '+name,len(compared[1])==1)
     focused.append(name)
+
+# Extraction boundary and source deltas retain their existing ownership contract.
+for name in ('AuthoredLyricRowsResult','FullLineCopyResult','FullLineCopyProof',
+             'match_authored_lyric_rows','match_nested_glyph_copies',
+             'match_staggered_full_line_copies','_prove_full_line_fragment_copies',
+             '_render_proven_full_line_caption','remove_letters_over_full_lines'):
+    check(name+' canonical engine alias',getattr(current,name) is getattr(copies,name))
+    get_type_hints(getattr(copies,name))
+for name in ('AuthoredLyricRowsResult','FullLineCopyResult','FullLineCopyProof'):
+    check(name+' historical record lookup',pickle.loads(('csimplify_ass\n'+name+'\n.').encode()) is getattr(copies,name))
+copy_events,copy_visible,copy_sources=lyric_inputs(current,cached=False,shared=True,
+    invalid='incomplete',reset='',alias=True)
+copy_before=snapshot((copy_events,copy_visible,copy_sources))
+result_a=copies.remove_letters_over_full_lines(copy_events,MappingProxyType(copy_visible),
+    MappingProxyType(copy_sources),collect_rows=True)
+result_b=copies.remove_letters_over_full_lines(copy_events,MappingProxyType(copy_visible),
+    MappingProxyType(copy_sources),collect_rows=True)
+check('no removals still return resolved source updates',result_a.removed_count==0
+      and result_a.row_additions==[] and bool(result_a.source_updates))
+check('zero-removal source aliases share one successor',
+      result_a.source_updates[999999] is result_a.source_updates[copy_events[0].source_index])
+check('zero-removal working aliases adopt exact successors',
+      result_a.events[0] is result_a.source_updates[copy_events[0].source_index]
+      and result_a.events[0] is not copy_events[0])
+check('invocations own independent source views and result containers',
+      result_a.events is not result_b.events and result_a.row_additions is not result_b.row_additions
+      and result_a.source_updates is not result_b.source_updates
+      and result_a.events[0] is not result_b.events[0])
+check('zero-removal source resolution leaves input caches unchanged',
+      copy_before==snapshot((copy_events,copy_visible,copy_sources)))
+check('source successors retain historical evidence identity',
+      result_a.events[0].evidence is copy_events[0].evidence)
+try:result_a.removed_count=1
+except FrozenInstanceError:check('result bindings remain frozen',True)
+else:raise AssertionError('mutable result binding')
+with tempfile.TemporaryDirectory() as directory:
+    code=f'''import sys,typing
+sys.path.insert(0,{str(ROOT)!r})
+from _simplify_ass import caption_fragment_copies as c
+assert not any(n.split('.')[0] in {{'simplify_ass','PIL','fontTools','uharfbuzz'}} for n in sys.modules)
+for name in ('AuthoredLyricRowsResult','FullLineCopyResult','FullLineCopyProof','match_authored_lyric_rows','match_nested_glyph_copies','match_staggered_full_line_copies','_prove_full_line_fragment_copies','_render_proven_full_line_caption','remove_letters_over_full_lines'):typing.get_type_hints(getattr(c,name))
+result=c.remove_letters_over_full_lines([],{{}},{{}},collect_rows=True)
+assert result.events==[] and result.removed_count==0 and result.row_additions==[] and result.source_updates=={{}}
+'''
+    child=subprocess.run([sys.executable,'-I','-c',code],cwd=directory,capture_output=True,text=True)
+    assert child.returncode==0,child.stderr
+    check('independent import and empty processing need no engine or optional fonts',True)
 
 report = dict(version=current.__version__,reference_version=previous.__version__,checks_passed=len(checks),
     differential_cases=cases,focused_conversions=focused,borrowed_event_field_writes_rejected=True,

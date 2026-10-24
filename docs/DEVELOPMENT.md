@@ -529,3 +529,8 @@ complete pre-freezing source-fragment effect proofs and row/paint-family handoff
 Shared static-span geometry and source visibility grouping live in existing
 neutral owners; source preparation, measurements and reporting retain their
 established responsibilities.
+
+See [CAPTION_FRAGMENT_COPY_EXTRACTION.md](CAPTION_FRAGMENT_COPY_EXTRACTION.md) for
+v265's complete caption ownership proof/removal for glyph and word copies.
+Its source-cache deltas, row evidence and scaffold paint preserve existing
+contracts; the caller retains timing/source adoption and reporting.

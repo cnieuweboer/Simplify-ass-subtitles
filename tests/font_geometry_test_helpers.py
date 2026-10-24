@@ -148,6 +148,12 @@ def install_row_test_doubles(module, *, historical_fade_timing=False):
         for name in ('recover_font_row','fit_fragment_anchor'):
             patch.object(owner,name,getattr(module,name)).start()
 
+    # Caption fragment-copy ownership imports exact glyph proofs directly.
+    owner=inspect.getmodule(getattr(module,'remove_letters_over_full_lines',None))
+    if owner is not None and owner is not module:
+        for name in ('fit_fragment_anchor','matches_authored_glyph_positions'):
+            patch.object(owner,name,getattr(module,name)).start()
+
 def adapt_reference_font_api(module):
     """Bridge API shape only on an immutable reference, preserving its engine."""
     if not hasattr(module,'FontSpacing') or getattr(module,'_font_reference_adapted',False):return

@@ -138,6 +138,20 @@ their existing invocation points; covered-fragment matching retains its own
 cross-candidate pose cache. Selection/freezing keep their existing owners. No
 font resources, diagnostics or counters move into this module. Interpreter
 observers follow the defining consumer without production forwarding.
+Caption ownership of nested/staggered glyph copies, authored entrance/exit row
+proof, scaffold foreground rendering and ordered replacement live in
+`_simplify_ass/caption_fragment_copies.py`, with direct engine aliases for six
+functions and three existing frozen records. Borrow working events, visibility,
+original sources and optional metrics; keep indexes, collision sets, proposals,
+private source successors and removal/replacement buffers call-local. Preserve
+exact source-object alias rebinding, existing cached Event identity, canonical
+replacement/evidence invalidation and row-collection opt-ins. Return source
+updates even when no content is removed; the caller retains source/timing-map
+adoption before reconstruction, row handoffs and aggregate reporting. Preserve
+retained caption text/timing/geometry and proved scaffold foreground paint.
+Rendering, geometry and font resources retain their existing owners. Test spies,
+interpreter observers, fitting doubles and failure injection follow the defining
+consumer, without production forwarding or private imports of the engine.
 Original-source layered highlight, translucent particle and repeated flash proofs,
 private source resolution, confirmation and paint-family handoffs live in
 `_simplify_ass/source_fragments.py`, with direct engine aliases for fourteen
