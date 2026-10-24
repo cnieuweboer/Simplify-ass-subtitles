@@ -14,6 +14,7 @@ from typing import get_type_hints
 import unittest
 from unittest.mock import patch
 
+from _simplify_ass import source_fragments
 import simplify_ass as engine
 from _simplify_ass import backed_glyph_pulses as pulses
 from check_windows_installer import ROOT,load_installer
@@ -58,6 +59,7 @@ assert count==8 and len(result)==4 and all(0<e.state['3a']<255 for e in result)
 assert len({(e.state['1c'],e.state['3c'],e.state['3a']) for e in result})==1
 assert ([vars(e) for e in events],words,positions)==before
 assert 'simplify_ass' not in sys.modules
+from _simplify_ass import source_fragments
 import simplify_ass as engine
 assert engine.collapse_backed_glyph_pulses is p.collapse_backed_glyph_pulses
 assert engine.BackedPulseContext is p.BackedPulseContext
@@ -189,8 +191,8 @@ class BackedGlyphPulseModuleChecks(unittest.TestCase):
             result = pulses.collapse_backed_glyph_pulses(*args,**kwargs)
             captured.append(result)
             return result
-        with patch.object(engine,'collapse_backed_glyph_pulses',side_effect=collect), \
-                patch.object(engine,'collapse_sliced_text_sequences',wraps=engine.collapse_sliced_text_sequences) as sliced:
+        with patch.object(source_fragments,'collapse_backed_glyph_pulses',side_effect=collect), \
+                patch.object(source_fragments,'collapse_sliced_text_sequences',wraps=engine.collapse_sliced_text_sequences) as sliced:
             result = engine.remove_source_fragment_effects(events,[],words,positions,set())
         self.assertEqual(len(captured),1)
         self.assertIs(sliced.call_args.args[0],captured[0][0])

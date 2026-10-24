@@ -12,6 +12,7 @@ from typing import get_type_hints
 import unittest
 from unittest.mock import patch
 
+from _simplify_ass import source_fragments
 import simplify_ass as engine
 from _simplify_ass import sliced_text as sliced, caption_geometry
 from check_windows_installer import ROOT,load_installer
@@ -50,6 +51,7 @@ for options in ({},{'partial':True},{'pulse':True},{'authored':True},{'unresolve
 assert s.rectangle_clip is g.rectangle_clip
 assert 'simplify_ass' not in sys.modules
 assert not any(n.split('.')[0] in {'PIL','fontTools','uharfbuzz'} for n in sys.modules)
+from _simplify_ass import source_fragments
 import simplify_ass as engine
 assert engine.collapse_sliced_text_sequences is s.collapse_sliced_text_sequences
 assert engine.SlicedTextIndex is s.SlicedTextIndex
@@ -167,8 +169,8 @@ class SlicedTextModuleChecks(unittest.TestCase):
         def backing(*args,**kwargs):
             output=engine_backing(*args,**kwargs);captured.append(output);return output
         engine_backing=engine.collapse_backed_glyph_pulses
-        with patch.object(engine,'collapse_backed_glyph_pulses',side_effect=backing), \
-                patch.object(engine,'collapse_sliced_text_sequences',wraps=sliced.collapse_sliced_text_sequences) as call:
+        with patch.object(source_fragments,'collapse_backed_glyph_pulses',side_effect=backing), \
+                patch.object(source_fragments,'collapse_sliced_text_sequences',wraps=sliced.collapse_sliced_text_sequences) as call:
             result=engine.remove_source_fragment_effects(events,[],words,positions,set())
         self.assertEqual(len(captured),1)
         self.assertIs(call.call_args.args[0],captured[0][0])

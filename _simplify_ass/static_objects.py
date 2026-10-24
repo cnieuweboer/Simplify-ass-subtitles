@@ -4,7 +4,7 @@ Callers retain stage roles, source-evidence boundaries and report aggregation.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 import re
 
 from .ass_overrides import (
@@ -13,7 +13,7 @@ from .ass_overrides import (
 )
 from .caption_geometry import caption_bounds, get_pos
 from .event_model import Event
-from .event_operations import replace_event
+from .event_operations import replace_event, state_key
 from .font_metrics import FontMetrics
 from .frame_pose import _preserve_frame_pose_support
 
@@ -209,3 +209,20 @@ def merge_static_timed_copies(
         removed += count
         if not count:
             return events, removed
+
+
+def static_text_paint_geometry(e: Event, paint: set[str]):
+    """Resolve literal spans, coalescing boundaries that change only paint."""
+    obj = static_object_key(e,e.styles,allow_unpositioned=True)
+    geometry = []
+    if obj is not None:
+        for signature,drawing,payload in obj[-1]:
+            state = dict(signature.formatting)
+            if drawing or state.get("borderstyle",1) != 1:
+                return None
+            layout = state_key(dataclass_replace(e,state=state,continuation=signature.continuation),paint | {"clip","iclip"})
+            if geometry and geometry[-1][0] == layout:
+                geometry[-1] = (layout,geometry[-1][1]+payload)
+            else:
+                geometry.append((layout,payload))
+    return (tuple(geometry),obj[-1]) if geometry else None

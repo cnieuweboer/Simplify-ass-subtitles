@@ -5,6 +5,14 @@ from copy import deepcopy
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 import json
+import pickle
+import subprocess
+import sys
+import tempfile
+from types import MappingProxyType
+from typing import get_type_hints
+from unittest.mock import patch
+from _simplify_ass import source_fragments as fragments, row_evidence, static_objects
 import simplify_ass as s
 from event_evidence_test_helpers import event_comparison_fields
 
@@ -113,15 +121,69 @@ else:raise AssertionError('mutable result binding')
 # formatting on a caller's source snapshot.
 args = fixture(unresolved=True)
 before = snapshot(args)
-original = s.collapse_backed_glyph_pulses
+original = fragments.collapse_backed_glyph_pulses
 def fail(*unused):raise RuntimeError('injected matching failure')
-s.collapse_backed_glyph_pulses=fail
+fragments.collapse_backed_glyph_pulses=fail
 try:
     s.remove_source_fragment_effects(*args)
 except RuntimeError:
     check('failed pass leaves input evidence untouched',snapshot(args)==before)
 else:raise AssertionError('expected injected failure')
-finally:s.collapse_backed_glyph_pulses=original
+finally:fragments.collapse_backed_glyph_pulses=original
+
+# Canonical boundaries retain record identity, borrowing and local cache ownership.
+for name in ('SourceFragmentRowContext','SourceFragmentCandidate','SourceFragmentEvidence',
+             'SourceFragmentRemoval','match_translucent_glyph_particles','match_repeated_glyph_flashes',
+             '_index_source_fragment_events','_prove_source_fragment_visibility',
+             '_prepare_source_fragment_row','_profile_source_fragment_candidate',
+             '_source_fragment_syllable_matches','_match_source_fragment_highlight',
+             '_source_fragment_nearby_anchors','_source_fragment_layout_matches',
+             '_source_fragment_delayed_particle_is_safe','_collect_source_fragment_candidates',
+             '_select_source_fragment_foreground','remove_source_fragment_effects'):
+    check(name+' canonical engine alias',getattr(s,name) is getattr(fragments,name))
+    get_type_hints(getattr(fragments,name))
+for name in ('SourceFragmentRowContext','SourceFragmentCandidate','SourceFragmentEvidence','SourceFragmentRemoval'):
+    check(name+' historical record lookup',pickle.loads(('csimplify_ass\n'+name+'\n.').encode()) is getattr(fragments,name))
+check('static span geometry has one canonical owner',
+      s.static_text_paint_geometry is static_objects.static_text_paint_geometry
+      and fragments.static_text_paint_geometry is static_objects.static_text_paint_geometry)
+check('source visibility grouping has one canonical owner',
+      s._index_source_fragment_visibility is row_evidence._index_source_fragment_visibility
+      and fragments._index_source_fragment_visibility is row_evidence._index_source_fragment_visibility)
+args=fixture(unresolved=True);before=snapshot(args)
+readonly=(args[0],args[1],MappingProxyType(args[2]),MappingProxyType(args[3]),frozenset(args[4]))
+result=fragments.remove_source_fragment_effects(*readonly)
+check('read-only maps and animation set accepted',result.removed_effects==16 and snapshot(args)==before)
+report=s.FontProcessingReport()
+with patch.object(fragments,'match_repeated_glyph_flashes',wraps=fragments.match_repeated_glyph_flashes) as flashes:
+    fragments.remove_source_fragment_effects(*readonly,font_report=report)
+check('font report remains caller selected',flashes.call_args.kwargs['font_report'] is report)
+args=fixture();row=args[1][0];before=snapshot(args)
+a=fragments._prepare_source_fragment_row(row);b=fragments._prepare_source_fragment_row(row)
+check('row context borrows historical row and anchors',a.row is row and a.first is row.base and a.anchors is row.source_anchors)
+a.syllables['probe']=[]
+check('syllable cache fresh for each context',not b.syllables and a.syllables is not b.syllables)
+try:a.height=0
+except FrozenInstanceError:check('context bindings remain frozen',True)
+else:raise AssertionError('mutable context binding')
+phases=row_evidence._index_source_fragment_visibility(row)
+check('visibility groups borrow paint rows in order',all(a is b for a,b in zip(next(iter(phases.values())),row.paint_rows)))
+check('shared readers leave source and row evidence unchanged',
+      static_objects.static_text_paint_geometry(row.base,{'1c'}) is not None and snapshot(args)==before)
+with tempfile.TemporaryDirectory() as directory:
+    code=f'''import sys,typing
+sys.path.insert(0,{str(ROOT)!r})
+from _simplify_ass import source_fragments as f,row_evidence as r,static_objects as o
+assert not any(n.split('.')[0] in {{'simplify_ass','PIL','fontTools','uharfbuzz'}} for n in sys.modules)
+assert f.static_text_paint_geometry is o.static_text_paint_geometry
+assert f._index_source_fragment_visibility is r._index_source_fragment_visibility
+for name in ('SourceFragmentRowContext','SourceFragmentCandidate','SourceFragmentEvidence','SourceFragmentRemoval','remove_source_fragment_effects'):typing.get_type_hints(getattr(f,name))
+result=f.remove_source_fragment_effects([],[],{{}},{{}},set())
+assert result.events==[] and result.rows==[] and result.removed_effects==0 and result.paint_families==[]
+'''
+    child=subprocess.run([sys.executable,'-I','-c',code],cwd=directory,capture_output=True,text=True)
+    assert child.returncode==0,child.stderr
+    check('independent import and empty processing need no engine or optional fonts',True)
 
 (ROOT/'validation/source-fragment-ownership-checks.json').write_text(json.dumps(
     dict(version=s.__version__,count=len(checks),checks=checks),indent=2)+'\n')

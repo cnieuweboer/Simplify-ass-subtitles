@@ -138,6 +138,24 @@ their existing invocation points; covered-fragment matching retains its own
 cross-candidate pose cache. Selection/freezing keep their existing owners. No
 font resources, diagnostics or counters move into this module. Interpreter
 observers follow the defining consumer without production forwarding.
+Original-source layered highlight, translucent particle and repeated flash proofs,
+private source resolution, confirmation and paint-family handoffs live in
+`_simplify_ass/source_fragments.py`, with direct engine aliases for fourteen
+functions and four existing frozen records. Borrow source events, rows, word/
+position maps, animation evidence, metrics and reports; retain exact-object
+successor rebinding for unresolved Events and independent row containers. Keep
+indexes, per-row syllable caches, candidates and removal state local. Preserve
+backed-pulse then sliced-text sequencing, historical paint/visibility evidence,
+paint-family identity and aggregate counts. The caller retains source preparation,
+timing snapshots, row/timeline adoption and reporting. Shared
+`static_text_paint_geometry()` lives in `static_objects`: preserve span continuation,
+caller-selected paint exclusions and geometry coalescing without editing Events.
+Shared `_index_source_fragment_visibility()` lives in `row_evidence`: preserve
+borrowed paint-row identity/order, empty profiles and the absent-profile fallback.
+Producers retain visibility admission, coverage and paint/timing selection.
+Font caches and selective diagnostics keep their existing owners; interpreter
+observers, fit doubles, failure injection and handoff spies follow the defining
+consumer without production forwarding.
 Complete recorded-row covered-fragment proofs, departing/staggered glyph matching,
 shadow timing selection and ordered removal live in
 `_simplify_ass/covered_fragments.py`, with direct engine aliases for eighteen

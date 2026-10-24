@@ -523,3 +523,9 @@ See [WORD_ECHO_EXTRACTION.md](WORD_ECHO_EXTRACTION.md) for v263's complete
 source-owned word fade/jitter cleanup. Exact accepted-caption identity, original
 source evidence, metric ownership and caller-owned adoption/reporting remain
 unchanged; the existing shared result stays in `row_evidence`.
+
+See [SOURCE_FRAGMENT_EXTRACTION.md](SOURCE_FRAGMENT_EXTRACTION.md) for v264's
+complete pre-freezing source-fragment effect proofs and row/paint-family handoff.
+Shared static-span geometry and source visibility grouping live in existing
+neutral owners; source preparation, measurements and reporting retain their
+established responsibilities.

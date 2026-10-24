@@ -58,3 +58,15 @@ class CoveredFragmentRemoval:
     events: list[Event]
     rows: list[TextRow]
     removed_effects: int
+
+
+def _index_source_fragment_visibility(row: TextRow) -> dict:
+    """Group layered source paint rows by their existing opaque-span profile."""
+    first = row.base
+    phases = {}
+    for paint_row in row.paint_rows:
+        profile = paint_row[0].evidence.opaque_spans
+        if profile is None:
+            profile = ((first.start_s,first.end_s),)
+        phases.setdefault(profile,[]).append(paint_row)
+    return phases
