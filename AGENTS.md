@@ -26,6 +26,17 @@ events, visibility and styles; keep buckets and replacement buffers call-local.
 Preserve accepted-caption object identity for the subsequent word-echo proof.
 The caller retains pass order, original-source selection and aggregate frame/stack
 counts; rendering, paint policy and source-pose support keep their existing owners.
+Frame-sequence freezing and its private visible-paint/near-static admission helpers
+live in `_simplify_ass/frame_sequences.py`, with direct engine aliases for all
+three functions. Borrow Events, inline-paint source proofs and lyric boundaries;
+keep grouping, timing components, run buffers and paint lookups call-local.
+Preserve independent source-pose and output-paint selection, overlap refusal,
+fixed-anchor jitter bounds, source exposure evidence and source-index ordering.
+Text-frame merging retains inline-paint normalization and boundary capture;
+supporting-drawing reduction retains its pose/contour restrictions. Callers retain
+stage order, configuration and aggregate counts. No font resources, persistent
+caches or diagnostic owners move here; do not introduce engine imports or test
+forwarding in the private module.
 Source-owned word fade/jitter family proof, exact-font ownership and atomic
 removal live in `_simplify_ass/word_echoes.py`, with direct engine aliases for
 all five functions. Borrow working events, visibility, the exact accepted-caption

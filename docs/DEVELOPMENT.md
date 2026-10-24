@@ -534,3 +534,8 @@ See [CAPTION_FRAGMENT_COPY_EXTRACTION.md](CAPTION_FRAGMENT_COPY_EXTRACTION.md) f
 v265's complete caption ownership proof/removal for glyph and word copies.
 Its source-cache deltas, row evidence and scaffold paint preserve existing
 contracts; the caller retains timing/source adoption and reporting.
+
+See [FRAME_SEQUENCE_EXTRACTION.md](FRAME_SEQUENCE_EXTRACTION.md) for v266's
+frame-sequence freezing boundary. Source-pose and visible-paint selection remain
+independent; callers retain inline-paint proofs, lyric-boundary capture,
+supporting-drawing admission and reporting.

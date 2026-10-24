@@ -10,11 +10,13 @@ import tempfile
 import unittest
 
 import simplify_ass as engine
-from _simplify_ass import event_operations, frame_pose as policy
+from _simplify_ass import event_operations, frame_pose as policy, frame_sequences as sequences
 from check_windows_installer import load_installer, ROOT
 
 NAMES = ('_frame_paint_alphas', '_frame_pose_intervals', '_visible_pose_support',
          '_preserve_frame_pose_support', '_representative_frame_pose')
+SEQUENCE_NAMES = ('_frame_sequence_paint_owner', '_near_static_frame_fits',
+                  'freeze_vector_sequences')
 SPECS = ((1., 1.2, 100, 64), (1.2, 1.3, 110, 0), (1.3, 1.4, 120, 0))
 
 
@@ -47,6 +49,34 @@ class FramePoseModuleChecks(unittest.TestCase):
         self.assertIs(policy._frame_pose_key, event_operations._frame_pose_key)
         self.assertIs(engine._frame_pose_key, event_operations._frame_pose_key)
         self.assertIs(get_type_hints(policy._preserve_frame_pose_support)['return'], engine.Event)
+        for name in SEQUENCE_NAMES:
+            self.assertIs(getattr(engine, name), getattr(sequences, name))
+            get_type_hints(getattr(sequences, name))
+        self.assertIs(sequences.Event, engine.Event)
+        self.assertIs(sequences._representative_frame_pose, policy._representative_frame_pose)
+        self.assertIs(sequences.replace_event, event_operations.replace_event)
+
+    def test_sequence_replacement_preserves_source_evidence_and_borrowed_inputs(self):
+        items = capture(events()); before = [deepcopy(vars(e)) for e in items]
+        for _ in range(2):
+            output, removed = sequences.freeze_vector_sequences(items)
+            self.assertEqual(removed, 2)
+            self.assertEqual(len(output), 1)
+            held = output[0]
+            self.assertEqual((held.start_s, held.end_s), (1., 1.4))
+            self.assertEqual(held.state['pos'], (100., 100.))
+            self.assertEqual(held.state['1a'], 0)
+            self.assertEqual(held.evidence.frame_pose_intervals,
+                             items[0].evidence.frame_pose_intervals)
+            self.assertIs(held.styles, items[0].styles)
+            again, count = sequences.freeze_vector_sequences(output)
+            self.assertEqual(count, 0)
+            self.assertIs(again[0], held)
+            self.assertEqual([vars(e) for e in items], before)
+        overlapping = [items[0], replace(items[1], start_s=1.1), items[2]]
+        retained, removed = sequences.freeze_vector_sequences(overlapping)
+        self.assertEqual(removed, 0)
+        self.assertTrue(all(a is b for a, b in zip(retained, overlapping)))
 
     def test_alphas_use_actual_visible_channels(self):
         event = events()[0]; before = deepcopy(vars(event))
@@ -123,11 +153,15 @@ class FramePoseModuleChecks(unittest.TestCase):
 from pathlib import Path
 from copy import deepcopy
 from dataclasses import replace
-from _simplify_ass import frame_pose as p, event_operations as o, subtitle_document as d
+from _simplify_ass import frame_pose as p, frame_sequences as f, event_operations as o, subtitle_document as d
 from _simplify_ass.event_model import EventEvidence
 assert 'simplify_ass' not in sys.modules
 assert not any(n.split('.')[0] in {'PIL','fontTools','uharfbuzz'} for n in sys.modules)
 assert p._frame_pose_key is o._frame_pose_key
+from typing import get_type_hints
+for name in ('_frame_sequence_paint_owner','_near_static_frame_fits','freeze_vector_sequences'):
+    get_type_hints(getattr(f,name))
+assert f.freeze_vector_sequences([])==([],0)
 raw='[Events]\n'+r'Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,{\pos(100,100)\bord0\shad0}A'+'\n'
 event=next(iter(d._resolve_document_state(d.parse_subtitle_document(raw)).events.values()))
 event=replace(event,evidence=EventEvidence(frame_pose_intervals=p._frame_pose_intervals(event)))
@@ -140,14 +174,19 @@ assert kept.evidence.opaque_spans==((9.,10.),) and p._frame_pose_intervals(kept)
 assert kept.state is expanded.state and kept.continuation is expanded.continuation
 assert p._visible_pose_support([*intervals,*intervals],0)==[(1.,2.,255)]
 assert vars(event)==before
+output,count=f.freeze_vector_sequences([event])
+assert count==0 and output[0] is event and vars(event)==before
 assert 'simplify_ass' not in sys.modules
 assert not any(n.split('.')[0] in {'PIL','fontTools','uharfbuzz'} for n in sys.modules)
 import simplify_ass as e
 assert Path(p.__file__).resolve()==Path(e.__file__).resolve().parent/'_simplify_ass/frame_pose.py'
 for name in ('_frame_paint_alphas','_frame_pose_intervals','_visible_pose_support','_preserve_frame_pose_support','_representative_frame_pose'):assert getattr(e,name) is getattr(p,name)
+assert Path(f.__file__).resolve()==Path(e.__file__).resolve().parent/'_simplify_ass/frame_sequences.py'
+for name in ('_frame_sequence_paint_owner','_near_static_frame_fits','freeze_vector_sequences'):assert getattr(e,name) is getattr(f,name)
 assert e._frame_pose_key is o._frame_pose_key
 import py_compile
 py_compile.compile(p.__file__,doraise=True)
+py_compile.compile(f.__file__,doraise=True)
 '''
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder); unrelated = root/'unrelated'; unrelated.mkdir()
@@ -162,6 +201,8 @@ py_compile.compile(p.__file__,doraise=True)
             self.assertEqual(user.read_text(), '# user\n')
             self.assertFalse((tools/'_simplify_ass/frame_pose.py').exists())
             self.assertFalse(any((tools/'_simplify_ass').rglob('frame_pose*.pyc')))
+            self.assertFalse((tools/'_simplify_ass/frame_sequences.py').exists())
+            self.assertFalse(any((tools/'_simplify_ass').rglob('frame_sequences*.pyc')))
 
 
 if __name__ == '__main__':
