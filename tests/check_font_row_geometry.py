@@ -129,7 +129,7 @@ check('vector diagnostic preserves untrimmed family',local.missing_families=={' 
 conversion_cases=[]
 with tempfile.TemporaryDirectory() as directory, patch.object(
         current,'derive_staggered_fade_cores',lambda events,rows,sources: rows), patch.object(
-        current,'synchronize_faded_cue_handoffs',lambda context,pairs,proven: {}), historical_static_phase_policy(current):
+        inspect.getmodule(current.synchronize_faded_cue_handoffs),'synchronize_faded_cue_handoffs',lambda context,pairs,proven: {}), historical_static_phase_policy(current):
     # This release-equivalence audit retains pre-v180 fade timing. Real
     # staggered timing is covered by check_staggered_fade_cores instead.
     # Final v185 phase joins are independently checked by the unmodified

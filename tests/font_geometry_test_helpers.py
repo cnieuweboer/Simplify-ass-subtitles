@@ -82,11 +82,15 @@ def install_row_test_doubles(module, *, historical_fade_timing=False):
         # v185 final phase joins are outside these old whole-file oracles;
         # check_late_static_phases_render exercises the unmodified pipeline.
         simplify = module.simplify_ass
+        # Resolve before conversion observers wrap the trimming entry point.
+        synchronization_owner = inspect.getmodule(getattr(
+            module,'synchronize_faded_cue_handoffs',module.derive_staggered_fade_cores))
         @functools.wraps(simplify)
         def historical_conversion(*args,**kwargs):
             with patch.object(module,'derive_staggered_fade_cores',
                               lambda events,rows,sources: rows), patch.object(
-                    module,'synchronize_faded_cue_handoffs',lambda context,pairs,proven: {},create=True), historical_static_phase_policy(module):
+                    synchronization_owner,'synchronize_faded_cue_handoffs',
+                    lambda context,pairs,proven: {},create=True), historical_static_phase_policy(module):
                 return simplify(*args,**kwargs)
         module.simplify_ass = historical_conversion
     if getattr(module,'_row_test_doubles_installed',False):return

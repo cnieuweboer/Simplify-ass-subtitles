@@ -1,16 +1,20 @@
 """Static override/text freezing; callers retain event and reporting ownership."""
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Iterable
 
 from .ass_overrides import (
     DEFAULT_STATE, NUMBER, OVERRIDE_RE, OverrideContinuation, OverrideEvaluation,
-    apply_override, resolve_event_style, tokenize_override,
+    apply_override, effective_state, resolve_event_style, tokenize_override,
 )
 from .static_selection import StaticPoseEvidence, StaticStateSelection, select_static_state
 from .caption_rendering import render_tag
+from .caption_geometry import NUM
+from .event_model import Event
+from .event_operations import replace_event
 
 # Static tag whitelist for simplify_text(); visual freezing handles more tags.
 # Static alpha is resolved alongside transforms; hidden layers are never
@@ -232,3 +236,23 @@ def simplify_visual_text(text: str, max_blur: float, duration: float | None = No
                 visible.append(part)
     vis = "".join(visible).replace(r"\N"," ").replace(r"\n"," ").replace(r"\h"," ")
     return "".join(output), re.sub(r"\s+"," ",vis).strip(), drawing_chars
+
+
+def without_inert_spacing_tail(e: Event) -> Event:
+    """Ignore a tracking reset after the last literal glyph, with no ink.
+
+    Generated punctuation can reset tracking after its sole character. The
+    reset cannot move that character, but a final-state layout key mistakes
+    it for the character's tracking. Keep all painted inline changes intact.
+    """
+    tail = re.search(r'(?:\{[^}]*\})+$',e.text)
+    if tail is None or not simplify_text(e.text[:tail.start()],visible_only=True)[1]:
+        return e
+    tokens = [token for block in OVERRIDE_RE.findall(tail.group())
+              for token in tokenize_override(block)]
+    if not tokens or any(k != 'fsp' or not re.fullmatch(NUM,v) or
+                         not math.isfinite(float(v)) for k,v in tokens):
+        return e
+    text = e.text[:tail.start()]
+    tracking = effective_state(text,e.defaults,e.styles).get('fsp',0)
+    return replace_event(e,text=text,state={**e.state,'fsp':tracking})

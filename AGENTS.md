@@ -108,10 +108,13 @@ call-local votes/samples, borrows input evidence and preserves the unchanged-sta
 identity contract. Source-family admission and pipeline/report
 decisions remain in the engine; preserve the explicit continuation contracts.
 Text freezing lives in `_simplify_ass/text_freezing.py`, with direct engine aliases
-for its frozen result, shared output whitelist and five functions. It owns local
+for its frozen result, shared output whitelist and functions. It owns local
 stream state and serialization; selectors retain their sampling/evidence work.
 Preserve borrowed inputs, canonical continuation/selection identity, the visible-only
 bypass and post-selection blur clamping with pre-clamp settled snapshots.
+The shared `without_inert_spacing_tail()` normalizer also lives there. Preserve
+its unchanged-event identity on refusal, painted tracking, source immutability
+and canonical event-replacement invalidation; other trailing tags remain intact.
 Complete sliced-text strip/hold/exit admission, coverage and paint proof,
 proposal arbitration and authored timing live in `_simplify_ass/sliced_text.py`,
 with direct engine aliases for sixteen functions and two frozen records. Borrow
@@ -227,6 +230,18 @@ change diagnostic lifetimes during extraction. Shared `_faded_cue_is_scrolling()
 is a raw event read in event operations: retain the legacy effect-prefix test,
 borrowed formatting and existing caller decisions. Interpreter observers and
 fitting doubles follow the defining lifecycle consumer, without production forwarding.
+Complete source-backed fade-core derivation, cue-family proof, collision discovery,
+cross-lane synchronization and owned-backing timing trims live in
+`_simplify_ass/cue_fades.py`, with direct engine aliases for sixteen functions and
+three frozen records. Borrow events, row provenance and original source maps;
+keep successful/refused source proofs, indexes, groups and replacement buffers
+call-local. Preserve protected cores, centisecond-safe cutoffs, original list
+ordering, untouched identity and timing-only edits that never extend lifetimes.
+The shared readable-core cutoff selector remains canonical for whole-caption
+color phases too. Callers retain both pipeline placements, evidence adoption and
+aggregate handoff counts. No font resources or diagnostics move into this pass.
+Interpreter observers and historical synchronization mocks follow the defining
+consumer; pipeline spies retain the engine entry alias without production forwarding.
 Complete shared-interval row discovery, exact-font/paint/compositing proof,
 proposal arbitration, tail retention and ordered application live in
 `_simplify_ass/shared_interval_rows.py`, with direct engine aliases for sixteen

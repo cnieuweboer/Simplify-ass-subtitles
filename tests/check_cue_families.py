@@ -3,6 +3,10 @@
 import test_paths  # Resolve the repository for direct test execution.
 from pathlib import Path
 import tempfile,json
+import subprocess,sys,typing
+from copy import deepcopy
+from dataclasses import FrozenInstanceError
+from _simplify_ass import cue_fades, text_freezing
 import simplify_ass as s
 ROOT=Path(__file__).resolve().parents[1]
 HEADER=(ROOT/'test-data/Overlord-opening-fades-source.ass').read_text(encoding='utf-8-sig').split('Dialogue:',1)[0]
@@ -104,5 +108,85 @@ for style in ('OP-R','OP-E'):
     following=[e for e in out if e.style==style and e.end_s>129 and e.start_s>128]
     ok('actual '+style+' has a clean boundary',max(e.end_s for e in prior)==min(e.start_s for e in following))
 ok('actual fragment lifetimes only shrink',all(b.start_s<=e.start_s<e.end_s<=b.end_s for e,b in zip(out,current)))
+
+# The extracted owner retains the public engine names and borrowed records.
+for name in (
+    'FadedCueContext','FadedCueEvidence','CueFadeFamily','shadow_lyric_fade_core',
+    'text_cue_lane','derive_staggered_fade_cores','collect_faded_cue_families',
+    '_faded_cue_slot','_apply_faded_cue_families','_find_faded_cue_collisions',
+    '_parse_faded_source_evidence','_collect_faded_cue_evidence',
+    '_prove_faded_source_core','_prove_faded_cue_core','_select_readable_core_handoff',
+    '_select_faded_cue_handoff','synchronize_faded_cue_handoffs',
+    '_trim_owned_cue_backing','trim_faded_cue_overlaps',
+):
+    value=getattr(cue_fades,name)
+    ok(name+' has a direct engine alias',getattr(s,name) is value)
+    typing.get_type_hints(value)
+ok('shared text normalization has one owner',
+   s.without_inert_spacing_tail is cue_fades.without_inert_spacing_tail is
+   text_freezing.without_inert_spacing_tail)
+
+provenance={};groups={};proofs={};slots={};shadows=set()
+context=s.FadedCueContext(provenance,groups,proofs)
+evidence=s.FadedCueEvidence(slots,shadows)
+members=tuple(current);core=(1.,2.);extent=(200.,300.)
+family=s.CueFadeFamily(members,core,extent)
+ok('context borrows caller containers',context.provenance is provenance and
+   context.groups is groups and context.family_proofs is proofs)
+ok('boundary evidence borrows caller containers',
+   evidence.phase_slots is slots and evidence.shadow_phases is shadows)
+ok('family borrows its immutable payloads',family.members is members and
+   family.core is core and family.xspan is extent)
+for record,field in ((context,'groups'),(evidence,'phase_slots'),(family,'core')):
+    try:
+        setattr(record,field,None)
+    except FrozenInstanceError:
+        ok(type(record).__name__+' retains frozen bindings',True)
+    else:
+        raise AssertionError(type(record).__name__+' must remain frozen')
+
+# Normalizing a non-painted tail must not normalize a live inline change.
+seed=current[0]
+for label,text,accepted in (
+    ('trailing tracking reset',r'{\fsp4}word{\fsp0}',True),
+    ('several trailing tracking resets',r'{\fsp4}word{\fsp1}{\fsp0}',True),
+    ('live inline tracking',r'wo{\fsp4}rd',False),
+    ('another trailing tag',r'word{\fsp0\bord2}',False),
+    ('invalid tracking',r'word{\fspnan}',False),
+    ('overflowing tracking',r'word{\fsp1e999}',False),
+    ('no visible literal',r'{\fsp4}{\fsp0}',False),
+    ('ordinary caption',r'word',False),
+):
+    event=s.replace_event(seed,text=text)
+    before=deepcopy(vars(event))
+    result=s.without_inert_spacing_tail(event)
+    ok(label+' keeps the expected identity', (result is not event)==accepted)
+    ok(label+' leaves source caches and evidence unchanged',vars(event)==before)
+    if accepted:
+        ok(label+' keeps the painted tracking',result.text==r'{\fsp4}word' and
+           result.state['fsp']==4 and event.state['fsp']==0)
+
+source=load(lines());events=fixed(source);source_map={e.source_index:e for e in source}
+borrowed=deepcopy((events,source_map))
+families=s.collect_faded_cue_families(events,[],source_map)
+out,n=s.trim_faded_cue_overlaps(events,[],source_map,cue_families=families)
+ok('family discovery and trimming preserve every borrowed source',
+   [vars(e) for e in events]==[vars(e) for e in borrowed[0]] and
+   {k:vars(e) for k,e in source_map.items()}=={k:vars(e) for k,e in borrowed[1].items()})
+isolated=events[:4]
+unchanged,n=s.trim_faded_cue_overlaps(isolated,[],source_map)
+ok('no collision returns the original list and no handoffs',unchanged is isolated and n==0)
+
+with tempfile.TemporaryDirectory() as folder:
+    code=f'''import sys
+sys.path.insert(0,{str(ROOT)!r})
+from _simplify_ass import cue_fades, text_freezing
+assert cue_fades.without_inert_spacing_tail is text_freezing.without_inert_spacing_tail
+assert not any(n.split('.')[0] in {{'simplify_ass','PIL','fontTools','uharfbuzz'}} for n in sys.modules)
+'''
+    probe=subprocess.run([sys.executable,'-I','-c',code],cwd=folder,
+                         capture_output=True,text=True)
+    ok('independent import needs no engine or optional font backends',probe.returncode==0)
+    assert not probe.stderr,probe.stderr
 (ROOT/'validation/cue-family-checks.json').write_text(json.dumps({'version':s.__version__,'checks_passed':len(checks),'checks':checks},indent=2)+'\n')
 print(len(checks),'cue-family checks passed')

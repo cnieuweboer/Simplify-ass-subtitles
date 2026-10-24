@@ -499,3 +499,8 @@ See [GLYPH_LIFECYCLE_EXTRACTION.md](GLYPH_LIFECYCLE_EXTRACTION.md) for v258's
 complete source letter/syllable lifecycle proofs, representative paint and atomic
 row ownership. The shared legacy-scrolling metadata read lives in event operations;
 source-history, pipeline adoption and aggregate reporting remain with the engine.
+
+See [CUE_FADE_EXTRACTION.md](CUE_FADE_EXTRACTION.md) for v259's complete source-backed
+fade cores, cue-family proofs, synchronized handoffs and owned-backing timing trims.
+The shared readable-core cutoff policy also serves whole-caption color phases;
+the trailing-spacing normalizer lives in the existing text-freezing owner.
