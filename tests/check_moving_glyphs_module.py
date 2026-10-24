@@ -178,23 +178,32 @@ class MovingGlyphModuleChecks(unittest.TestCase):
         self.assertEqual(count,0)
 
     def test_caller_retains_normalization_exact_pass_and_aggregate_reporting(self):
+        from _simplify_ass import text_effect_sequences as sequences
         events,words,sources = moving_inputs()
-        context = engine.TextEffectSequenceContext(words,{},set(),True,sources,self.metric)
+        boundaries=engine._index_lyric_boundaries(events,words)
+        report=engine.FontProcessingReport(missing_families={'prior finding'})
+        context = engine.TextEffectSequenceContext(words,{},set(),True,sources,self.metric,
+            font_report=report,lyric_boundaries=boundaries)
         trace = []
         def collapse(*args):
             trace.append('movement');return movement.collapse_moving_glyph_sequences(*args)
         def normalize(result,*args):
             trace.append('karaoke');return result
         def exact(result,*args,**kwargs):
-            trace.append('exact');self.assertFalse(args[3]);return result,3
-        with patch.object(engine,'collapse_moving_glyph_sequences',side_effect=collapse) as moving, \
-                patch.object(engine,'normalize_karaoke_completion_paint',side_effect=normalize), \
-                patch.object(engine,'flatten_text_effect_sequences',side_effect=exact):
+            trace.append('exact');self.assertFalse(args[3])
+            self.assertIs(kwargs['lyric_boundaries'],boundaries)
+            self.assertIs(kwargs['font_report'],report)
+            self.assertNotIn('font_metrics',kwargs)
+            return result,3
+        with patch.object(sequences,'collapse_moving_glyph_sequences',side_effect=collapse) as moving, \
+                patch.object(sequences,'normalize_karaoke_completion_paint',side_effect=normalize), \
+                patch.object(sequences,'flatten_text_effect_sequences',side_effect=exact):
             output,count = engine._finish_text_effect_sequences(context,events,4)
         self.assertEqual(trace,['movement','karaoke','exact'])
         self.assertEqual((len(output),count),(2,9))
         self.assertIs(moving.call_args.args[2],sources)
         self.assertIs(moving.call_args.args[3],self.metric)
+        self.assertEqual(report.missing_families,{'prior finding'})
 
     def test_cold_source_installed_processing_and_owned_uninstall(self):
         with tempfile.TemporaryDirectory() as folder:

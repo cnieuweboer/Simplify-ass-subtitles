@@ -504,3 +504,8 @@ See [CUE_FADE_EXTRACTION.md](CUE_FADE_EXTRACTION.md) for v259's complete source-
 fade cores, cue-family proofs, synchronized handoffs and owned-backing timing trims.
 The shared readable-core cutoff policy also serves whole-caption color phases;
 the trailing-spacing normalizer lives in the existing text-freezing owner.
+
+See [TEXT_EFFECT_SEQUENCE_EXTRACTION.md](TEXT_EFFECT_SEQUENCE_EXTRACTION.md) for
+v260's complete exact-position/scale-trail sequence processing and its existing
+movement/karaoke handoffs. Shared surrounding-lyric boundary evidence lives in
+`lyric_boundaries`; the engine retains capture timing, adoption and reporting.

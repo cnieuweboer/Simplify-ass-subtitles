@@ -242,6 +242,23 @@ color phases too. Callers retain both pipeline placements, evidence adoption and
 aggregate handoff counts. No font resources or diagnostics move into this pass.
 Interpreter observers and historical synchronization mocks follow the defining
 consumer; pipeline spies retain the engine entry alias without production forwarding.
+Complete text-effect sequence grouping, exact-position and scale-trail admission,
+representative geometry/paint selection, caption construction and movement/karaoke
+handoffs live in `_simplify_ass/text_effect_sequences.py`, with direct engine
+aliases for fourteen functions and three frozen records. Borrow events, visibility,
+styles, animation/source maps and supplied metrics/report; keep geometry caches,
+components, profiles and output buffers call-local. Preserve the existing exact/
+scale recursion order, source-index sorting, untouched Event identity and removal
+counts. Exact-position recursive calls retain their existing lack of font metrics;
+font caches, report lifetime, stage invocation and aggregate counts keep their owners.
+Shared `LyricBoundaryIndex`, `_index_lyric_boundaries()` and
+`_crosses_lyric_boundary()` live in `_simplify_ass/lyric_boundaries.py`. Capture
+surrounding-row evidence before glyph reduction, retaining the same borrowed index
+through coalescing, frame/vector merging and both sequence recursion routes.
+Construction owns fresh signatures; consumers do not edit or recapture supplied
+proofs. Preserve complete-caption versus glyph-boundary decisions and fallback
+capture for standalone callers. Interpreter observers and handoff mocks follow
+the defining consumer; no production forwarding is needed.
 Complete shared-interval row discovery, exact-font/paint/compositing proof,
 proposal arbitration, tail retention and ordered application live in
 `_simplify_ass/shared_interval_rows.py`, with direct engine aliases for sixteen

@@ -31,7 +31,7 @@ def patch_interpreter_bindings(engine, name, *args, **kwargs):
                       'recover_vector_text_cues', 'merge_shared_interval_rows',
                       'collapse_fragment_phase_rows', 'collapse_translated_phase_rows',
                       'reconstruct_glyph_lifecycles', 'shadow_lyric_fade_core',
-                      'without_inert_spacing_tail'))]
+                      'without_inert_spacing_tail', 'upright_text_holds'))]
     for consumer in consumers:
         if (consumer is not None and consumer not in bindings and
                 getattr(consumer, name, None) is original):

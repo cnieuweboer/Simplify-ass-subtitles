@@ -3,6 +3,10 @@ import test_paths
 from copy import deepcopy
 from pathlib import Path
 import contextlib, hashlib, json, tempfile
+import subprocess, sys, typing
+from dataclasses import FrozenInstanceError
+from unittest.mock import patch
+from _simplify_ass import lyric_boundaries, text_effect_sequences as sequences
 import simplify_ass as s
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -215,13 +219,78 @@ for same_caption in [False,True]:
         before=deepcopy(events);index=s._index_lyric_boundaries(events,words)
         joined,_=s.coalesce_lyric_phases(events,words,lyric_boundaries=index)
         for mode in [False,True]:
-            out,count=s.flatten_text_effect_sequences(joined,words,events[0].styles,set(words),mode,
-                source_events={e.source_index:e for e in events},lyric_boundaries=index)
+            contexts=[]
+            prepare=sequences._prepare_text_effect_sequence_pass
+            def observe(inputs,context):
+                contexts.append(context)
+                return prepare(inputs,context)
+            with patch.object(sequences,'_prepare_text_effect_sequence_pass',side_effect=observe), \
+                    patch.object(sequences,'_index_lyric_boundaries',side_effect=AssertionError('supplied proof must survive')):
+                out,count=s.flatten_text_effect_sequences(joined,words,events[0].styles,set(words),mode,
+                    source_events={e.source_index:e for e in events},lyric_boundaries=index)
+            check('all recursive routes borrow the original boundary proof',
+                  len(contexts)==(3 if mode else 1) and
+                  all(context.lyric_boundaries is index for context in contexts))
             repeated=[e for e in out if words[e.source_index]=='B']
             check(f'boundary same={same_caption} overlap={overlap} mode={mode}',
                   len(repeated)==(1 if same_caption else 2) and
                   (same_caption or [(e.start_s,e.end_s) for e in repeated]==[(1,3),(3-overlap,5)]))
         check('boundary passes preserve inputs',vars_snapshot({i:e for i,e in enumerate(events)})==vars_snapshot({i:e for i,e in enumerate(before)}))
+
+# Module boundaries retain canonical engine aliases and shallow record contracts.
+for owner,names in (
+    (lyric_boundaries,('LyricBoundaryIndex','_index_lyric_boundaries','_crosses_lyric_boundary')),
+    (sequences,('TextEffectSequenceContext','TextEffectSequenceGeometry','TextEffectSequenceProfile',
+        'match_scale_trail','upright_text_holds','_prepare_text_effect_sequence_pass',
+        '_group_text_effect_sequences','_index_text_effect_sequence_geometry',
+        '_text_effect_sequence_neighbor','_cluster_text_effect_sequences','_prove_text_effect_sequence',
+        '_select_text_effect_sequence_geometry','_select_text_effect_sequence_paint',
+        '_construct_text_effect_sequence_caption','_flatten_text_effect_sequence_bucket',
+        '_finish_text_effect_sequences','flatten_text_effect_sequences')),
+):
+    for name in names:
+        value=getattr(owner,name)
+        check(name+' retains a direct engine alias',getattr(s,name) is value)
+        typing.get_type_hints(value)
+check('sequence consumer uses the shared boundary owner',
+      sequences.LyricBoundaryIndex is s.LyricBoundaryIndex and
+      sequences._index_lyric_boundaries is s._index_lyric_boundaries and
+      sequences._crosses_lyric_boundary is s._crosses_lyric_boundary)
+
+starts={};ends={};touching=frozenset();handoffs=frozenset()
+proof=s.LyricBoundaryIndex(starts,ends,touching,handoffs)
+check('boundary record keeps shallow payload sharing',proof.starts is starts and proof.ends is ends and
+      proof.touching is touching and proof.caption_handoffs is handoffs)
+sources={e.source_index:e for e in events};animated=set(words);styles=events[0].styles
+report=s.FontProcessingReport(missing_families={'prior finding'})
+context=s.TextEffectSequenceContext(words,styles,animated,True,sources,METRIC,report,proof)
+check('sequence context borrows all caller-owned inputs',context.visible_map is words and
+      context.styles is styles and context.animated_sources is animated and context.source_events is sources and
+      context.font_metrics is METRIC and context.font_report is report and context.lyric_boundaries is proof)
+positions={};heights={};layouts={}
+geometry=s.TextEffectSequenceGeometry(positions,heights,layouts)
+check('geometry record keeps the producer-owned dictionaries',geometry.positions is positions and
+      geometry.heights is heights and geometry.layouts is layouts)
+visible=events[:1];profile=s.TextEffectSequenceProfile(events,visible,False,False,1,5)
+check('sequence profile borrows its member lists',profile.members is events and profile.visible_candidates is visible)
+for record_value,field in ((proof,'starts'),(context,'visible_map'),(geometry,'positions'),(profile,'members')):
+    try:
+        setattr(record_value,field,None)
+    except FrozenInstanceError:
+        check(type(record_value).__name__+' preserves frozen bindings',True)
+    else:
+        raise AssertionError(type(record_value).__name__+' must remain frozen')
+
+with tempfile.TemporaryDirectory() as directory:
+    code=f'''import sys
+sys.path.insert(0,{str(ROOT)!r})
+from _simplify_ass import lyric_boundaries, text_effect_sequences
+assert text_effect_sequences.LyricBoundaryIndex is lyric_boundaries.LyricBoundaryIndex
+assert not any(n.split('.')[0] in {{'simplify_ass','PIL','fontTools','uharfbuzz'}} for n in sys.modules)
+'''
+    result=subprocess.run([sys.executable,'-I','-c',code],cwd=directory,capture_output=True,text=True)
+    check('independent importing needs no engine or optional font backends',result.returncode==0)
+    assert not result.stderr,result.stderr
 
 (ROOT/'validation/source-caption-alternation-checks.json').write_text(json.dumps(dict(
     version=s.__version__,engine_sha256=hashlib.sha256((ROOT/'simplify_ass.py').read_bytes()).hexdigest(),
