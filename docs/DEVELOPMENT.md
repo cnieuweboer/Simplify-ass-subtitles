@@ -539,3 +539,9 @@ See [FRAME_SEQUENCE_EXTRACTION.md](FRAME_SEQUENCE_EXTRACTION.md) for v266's
 frame-sequence freezing boundary. Source-pose and visible-paint selection remain
 independent; callers retain inline-paint proofs, lyric-boundary capture,
 supporting-drawing admission and reporting.
+
+See [SUPPORTING_DRAWING_EXTRACTION.md](SUPPORTING_DRAWING_EXTRACTION.md) for
+v267's complete supporting-drawing admission/reduction boundary. Candidate,
+coverage, paint, contour evidence and count ownership remain together; shared
+clip-strip geometry lives in `drawing_geometry`. Caption association, budgets,
+layering and reporting remain with their callers.

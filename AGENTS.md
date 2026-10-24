@@ -37,6 +37,18 @@ supporting-drawing reduction retains its pose/contour restrictions. Callers reta
 stage order, configuration and aggregate counts. No font resources, persistent
 caches or diagnostic owners move here; do not introduce engine imports or test
 forwarding in the private module.
+Supporting-drawing normalization, motion admission, strip coverage, paint
+composition, exact opaque-vector deduplication and sequence reduction live in
+`_simplify_ass/supporting_drawings.py`, with direct engine aliases for fifteen
+functions and three existing frozen records. Borrow sources; keep candidate
+groups, contour maps, paint tags and counters local to one invocation. Preserve
+source ordering, original-contour evidence, movement refusal, union clips and the
+existing `(events, counts)` result. Callers retain caption association, budgets,
+layering and aggregate reporting. Shared `merge_tiled_clips()` lives in
+`drawing_geometry`; preserve its mask, gap/overlap bounds and borrowed rectangle
+inputs for both drawing reduction and text-outline recovery. No font resources,
+persistent caches, report owners or private imports of the engine are introduced.
+Interpreter observers follow the defining supporting-drawing consumer.
 Source-owned word fade/jitter family proof, exact-font ownership and atomic
 removal live in `_simplify_ass/word_echoes.py`, with direct engine aliases for
 all five functions. Borrow working events, visibility, the exact accepted-caption

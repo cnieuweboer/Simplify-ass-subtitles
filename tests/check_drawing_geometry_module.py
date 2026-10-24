@@ -11,13 +11,22 @@ from pathlib import Path
 import unittest
 
 import simplify_ass as engine
-from _simplify_ass import drawing_geometry as geometry
+from _simplify_ass import drawing_geometry as geometry, supporting_drawings as supports
 from check_windows_installer import ROOT, load_installer
 
 NAMES = ('coverage_geometry', 'polygon_covers_box', 'drawing_polygon',
          'fit_rectangular_contour', 'normalize_drawing_alignment',
          'flatten_rectangular_border', 'detach_drawing_edge_slivers',
-         'simplify_drawing_contour')
+         'simplify_drawing_contour', 'merge_tiled_clips')
+SUPPORT_NAMES = ('SupportingDrawingContext', 'SupportingDrawingCandidate',
+    'SupportingDrawingCoverage', 'reduce_vector_layers', 'drawing_paint',
+    'compose_drawing_paint', 'recover_held_drawing_scale',
+    '_normalize_supporting_drawing_candidate', '_profile_supporting_drawing_motion',
+    '_admit_supporting_drawing_candidate', '_index_supporting_drawing_candidates',
+    '_prove_supporting_drawing_strip_coverage', '_compose_supporting_drawing_group_paint',
+    '_render_supporting_drawing_group', '_reduce_supporting_drawing_groups',
+    '_reduce_supporting_drawing_sequences', '_finalize_supporting_drawings',
+    'reduce_supporting_drawings')
 RECTANGLE = 'm 0 0 l 100 0 100 50 0 50'
 SUBDIVIDED = 'm 0 0 l 25 0 50 0 75 0 100 0 100 25 100 50 50 50 0 50 0 25'
 
@@ -33,7 +42,8 @@ def drawing(path=RECTANGLE, tags='', *, alignment=7):
 COLD_CODE = r'''
 from pathlib import Path
 from copy import deepcopy
-from _simplify_ass import drawing_geometry as g, subtitle_document as d
+from _simplify_ass import drawing_geometry as g, supporting_drawings as s, subtitle_document as d
+from typing import get_type_hints
 assert 'simplify_ass' not in sys.modules
 assert not any(n.split('.')[0] in {'PIL','fontTools','uharfbuzz'} for n in sys.modules)
 raw='[Script Info]\n[Events]\nDialogue: 0,0:00:01.00,0:00:04.00,Default,,0,0,0,,'
@@ -46,6 +56,13 @@ assert box==(98.,98.,202.,152.) and opaque
 assert g.polygon_covers_box(points,(110,110,190,140))
 assert not g.polygon_covers_box(points,(100,110,190,140))
 assert g.normalize_drawing_alignment(event) is event
+out,counts=s.reduce_supporting_drawings([event])
+assert len(out)==1 and counts['drawing_candidates']==1
+assert out[0] is not event and out[0].styles is event.styles
+assert s.merge_tiled_clips is g.merge_tiled_clips
+assert g.merge_tiled_clips([(0,0,5,10),(5,0,10,10)],1)==(0,0,10,10)
+for name in ('SupportingDrawingContext','SupportingDrawingCandidate','SupportingDrawingCoverage','reduce_supporting_drawings'):
+ get_type_hints(getattr(s,name))
 assert vars(event)==before
 assert 'simplify_ass' not in sys.modules
 assert not any(n.split('.')[0] in {'PIL','fontTools','uharfbuzz'} for n in sys.modules)
@@ -53,14 +70,58 @@ import simplify_ass as e
 assert Path(g.__file__).resolve()==Path(e.__file__).resolve().parent/'_simplify_ass/drawing_geometry.py'
 for name in ('coverage_geometry','polygon_covers_box','drawing_polygon',
              'fit_rectangular_contour','normalize_drawing_alignment',
-             'flatten_rectangular_border','detach_drawing_edge_slivers','simplify_drawing_contour'):
+             'flatten_rectangular_border','detach_drawing_edge_slivers','simplify_drawing_contour','merge_tiled_clips'):
  assert getattr(e,name) is getattr(g,name)
+assert Path(s.__file__).resolve()==Path(e.__file__).resolve().parent/'_simplify_ass/supporting_drawings.py'
+for name in ('SupportingDrawingContext','SupportingDrawingCandidate','SupportingDrawingCoverage','reduce_supporting_drawings','reduce_vector_layers'):
+ assert getattr(e,name) is getattr(s,name)
 import py_compile
 py_compile.compile(g.__file__,doraise=True)
+py_compile.compile(s.__file__,doraise=True)
 '''
 
 
 class DrawingGeometryModuleChecks(unittest.TestCase):
+    def test_supporting_aliases_annotations_and_historical_record_lookup(self):
+        for name in SUPPORT_NAMES:
+            self.assertIs(getattr(engine, name), getattr(supports, name))
+            get_type_hints(getattr(supports, name))
+        self.assertIs(supports.Event, engine.Event)
+        self.assertIs(supports.merge_tiled_clips, geometry.merge_tiled_clips)
+        for name in ('SupportingDrawingContext', 'SupportingDrawingCandidate',
+                     'SupportingDrawingCoverage'):
+            self.assertTrue(getattr(supports, name).__dataclass_params__.frozen)
+            self.assertIs(pickle.loads(('csimplify_ass\n'+name+'\n.').encode()),
+                          getattr(supports, name))
+
+    def test_shared_strip_union_retains_mask_and_refuses_holes(self):
+        strips = [(100, 100, 150, 150), (150, 100, 200, 150)]
+        before = deepcopy(strips)
+        self.assertEqual(geometry.merge_tiled_clips(strips, 1), (100, 100, 200, 150))
+        self.assertEqual(geometry.merge_tiled_clips(list(reversed(strips)), 1),
+                         (100, 100, 200, 150))
+        self.assertIsNone(geometry.merge_tiled_clips([(100,100,149,150), strips[1]], 1))
+        self.assertIsNone(geometry.merge_tiled_clips([(100,100,170,150), strips[1]], 1))
+        self.assertEqual(strips, before)
+
+    def test_supporting_strip_paint_counters_and_repeat_calls(self):
+        sources = [replace(drawing(tags=r'\clip(100,100,150,150)\1c&H0000FF&'), source_index=31),
+                   replace(drawing(tags=r'\clip(150,100,200,150)\1c&HFF0000&'), source_index=32)]
+        before = [deepcopy(vars(e)) for e in sources]
+        output, counts = supports.reduce_supporting_drawings(iter(sources))
+        self.assertEqual(len(output), 1)
+        self.assertEqual(output[0].state['1c'], '800080')
+        self.assertEqual(engine.rectangle_clip(output[0]), (100,100,200,150))
+        self.assertEqual(output[0].source_index, 31)
+        self.assertIs(output[0].styles, sources[0].styles)
+        self.assertEqual(counts['drawing_strips_collapsed'], 1)
+        repeated, new_counts = supports.reduce_supporting_drawings(sources)
+        self.assertEqual([e.fields() for e in repeated], [e.fields() for e in output])
+        self.assertEqual(new_counts, counts)
+        self.assertIsNot(new_counts, counts)
+        self.assertIsNot(repeated, output)
+        self.assertEqual([vars(e) for e in sources], before)
+
     def test_canonical_aliases_types_defaults_and_old_root_lookup(self):
         for name in NAMES:
             self.assertIs(getattr(engine, name), getattr(geometry, name))
@@ -183,6 +244,8 @@ class DrawingGeometryModuleChecks(unittest.TestCase):
             self.assertEqual(user.read_text(), '# user\n')
             self.assertFalse((installed/'_simplify_ass/drawing_geometry.py').exists())
             self.assertFalse(any((installed/'_simplify_ass').rglob('drawing_geometry*.pyc')))
+            self.assertFalse((installed/'_simplify_ass/supporting_drawings.py').exists())
+            self.assertFalse(any((installed/'_simplify_ass').rglob('supporting_drawings*.pyc')))
 
 
 if __name__ == '__main__':

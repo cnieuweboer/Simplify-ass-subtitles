@@ -350,3 +350,31 @@ def simplify_drawing_contour(event):
                 f'{x:g} {y:g}' for x, y in reduced[1:])
             return raw, info[0]
     return None
+
+
+def merge_tiled_clips(rectangles, unit):
+    """Accept a gapless, non-overlapping strip partition of one rectangle.
+
+    Preserve the union clip. Removing it would expose unseen parts of paths.
+    General tiled artwork and overlapping clips are not approximated here.
+    """
+    if not rectangles:
+        return None
+    eps = 1e-5 * unit
+    for axis in (0, 1):
+        other = 1-axis
+        reference = rectangles[0]
+        if any(abs(r[other]-reference[other]) > eps or
+               abs(r[other+2]-reference[other+2]) > eps for r in rectangles):
+            continue
+        ordered = sorted(rectangles, key=lambda r: r[axis])
+        # Tiny overlaps from decimal rounding are harmless for the union;
+        # actual holes and substantial overlapping layers stay unsupported.
+        if any(b[axis]-a[axis+2] > eps or a[axis+2]-b[axis] >
+               min(.25*unit, .05*min(a[axis+2]-a[axis], b[axis+2]-b[axis]))+eps
+               for a, b in zip(ordered, ordered[1:])):
+            continue
+        box = list(reference)
+        box[axis], box[axis+2] = ordered[0][axis], ordered[-1][axis+2]
+        return tuple(box)
+    return None
