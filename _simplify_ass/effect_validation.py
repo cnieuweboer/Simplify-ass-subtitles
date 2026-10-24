@@ -2,7 +2,12 @@
 from __future__ import annotations
 
 import math
-from .ass_overrides import tokenize_override
+import re
+from dataclasses import replace as dataclass_replace
+from .ass_overrides import tokenize_override, evaluate_effective_state
+from .event_model import Event
+from .event_operations import event_override_tokens
+from .caption_geometry import get_pos, inline_layout_key
 
 # Subtracting cue timestamps can lose sub-nanosecond precision. This absolute
 # allowance only absorbs arithmetic rounding; authored timing stays unchanged.
@@ -75,3 +80,23 @@ def _parse_simple_source_fade(tokens: list):
     if len(fade) != 2 or not all(math.isfinite(v) and v >= 0 for v in fade):
         return None
     return fade
+
+
+def animated_shadow_painted_source(e: Event, sources: dict[int,Event] | None,
+                                   animated: set[int]) -> bool:
+    """Recognize source text painted exclusively by an animated shadow."""
+    original = (sources or {}).get(e.source_index)
+    if original is None or original.kind != 'Dialogue' or e.source_index not in animated:
+        return False
+    evaluated = evaluate_effective_state(original.text,original.defaults,original.styles)
+    state = evaluated.formatting
+    if (state.get('1a',0) < 254 or state.get('3a',0) < 254 or
+            state.get('borderstyle',1) != 1 or
+            state.get('p',0) or any(k in state for k in ('clip','iclip','org')) or
+            get_pos(original.text) is None or re.search(r'\\move\s*\(',original.text,re.I) or
+            inline_layout_key(dataclass_replace(original,state=state,continuation=evaluated.continuation)) or
+            not any(abs(state.get(k,state.get('shad',0))) > 0 for k in ('xshad','yshad'))):
+        return False
+    return not any(tag in {'alpha','1a','3a','r'}
+                   for name,value in event_override_tokens(original) if name == 't'
+                   for tag,_ in tokenize_override(value.strip('()')))

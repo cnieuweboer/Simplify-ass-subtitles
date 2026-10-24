@@ -6,6 +6,12 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import MappingProxyType
 import json
+import pickle
+import subprocess
+import sys
+import tempfile
+from typing import get_type_hints
+from _simplify_ass import covered_fragments as covered, row_evidence, effect_validation
 import simplify_ass as s
 from event_evidence_test_helpers import event_comparison_fields
 
@@ -118,14 +124,59 @@ check('trimmed events leave row bases and fragments historical',
     result.rows[0].base.end_s==4. and result.rows[1].base.start_s==3.8 and
     all(piece.end_s==4. for piece,word,pos in result.rows[0].pieces))
 
-args=fixture();before=snapshot(args);original=s._remove_covered_shadow_fragments
+args=fixture();before=snapshot(args);original=covered._remove_covered_shadow_fragments
 def fail(*unused):raise RuntimeError('injected removal failure after timing proof')
-s._remove_covered_shadow_fragments=fail
+covered._remove_covered_shadow_fragments=fail
 try:s.remove_covered_fragment_effects(*args)
 except RuntimeError as error:check('failure exercised after selection',str(error).startswith('injected'))
 else:raise AssertionError('expected injected failure')
-finally:s._remove_covered_shadow_fragments=original
+finally:covered._remove_covered_shadow_fragments=original
 check('failed pass leaves caller evidence unchanged',snapshot(args)==before)
+
+# Public engine aliases and shared records preserve canonical identity.
+for name in ('CoveredFragmentContext','remove_covered_fragment_effects',
+             'match_departing_glyph_effects','match_staggered_row_effects'):
+    check(name+' canonical engine alias',getattr(s,name) is getattr(covered,name))
+    get_type_hints(getattr(covered,name))
+check('shared result has neutral row owner',s.CoveredFragmentRemoval is row_evidence.CoveredFragmentRemoval
+      and covered.CoveredFragmentRemoval is row_evidence.CoveredFragmentRemoval)
+check('shared source validator has one owner',s.animated_shadow_painted_source is effect_validation.animated_shadow_painted_source
+      and covered.animated_shadow_painted_source is effect_validation.animated_shadow_painted_source)
+for name in ('CoveredFragmentContext','CoveredFragmentRemoval'):
+    check(name+' historical pickle lookup',pickle.loads(('csimplify_ass\n'+name+'\n.').encode()) is getattr(s,name))
+    get_type_hints(getattr(s,name))
+
+args=fixture();events,visible,rows,animated,sources=args
+first=covered._prepare_covered_fragments(visible,rows,animated,sources,None)
+second=covered._prepare_covered_fragments(visible,rows,animated,sources,None)
+check('context borrows source inputs',first.visible is visible and first.animated is animated and first.sources is sources)
+check('context borrows recorded rows',all(first.models[row.base.source_index] is row for row in rows))
+cache_names=('span_indexes','shadow_sources','shadow_rows','shadow_layers','shadow_poses')
+check('proof caches fresh per invocation',all(getattr(first,name) is not getattr(second,name) for name in cache_names))
+check('shadow source proof cached including refusal',
+      covered._covered_animated_shadow_source(first,events[0]) is True
+      and first.shadow_sources[events[0].source_index] is True
+      and covered._covered_animated_shadow_source(first,s.dataclass_replace(events[0],source_index=-1)) is False
+      and first.shadow_sources[-1] is False and not second.shadow_sources)
+try:first.visible={}
+except FrozenInstanceError:check('context bindings immutable',True)
+else:raise AssertionError('context bindings should be immutable')
+
+with tempfile.TemporaryDirectory() as directory:
+    code=f'''import sys,typing
+sys.path.insert(0,{str(ROOT)!r})
+from _simplify_ass import covered_fragments as c, row_evidence as r, effect_validation as e
+assert 'simplify_ass' not in sys.modules
+assert not any(n.split('.')[0] in {{'PIL','fontTools','uharfbuzz'}} for n in sys.modules)
+assert c.CoveredFragmentRemoval is r.CoveredFragmentRemoval
+assert c.animated_shadow_painted_source is e.animated_shadow_painted_source
+for value in (c.CoveredFragmentContext,c.remove_covered_fragment_effects,r.CoveredFragmentRemoval,e.animated_shadow_painted_source):typing.get_type_hints(value)
+result=c.remove_covered_fragment_effects([],{{}},[])
+assert result.events==[] and result.rows==[] and result.removed_effects==0
+'''
+    result=subprocess.run([sys.executable,'-I','-c',code],cwd=directory,capture_output=True,text=True)
+    check('independent import and processing need no engine or optional backends',result.returncode==0)
+    assert result.returncode==0,result.stderr
 
 (ROOT/'validation/covered-fragment-ownership-checks.json').write_text(json.dumps(
     dict(version=s.__version__,count=len(checks),checks=checks),indent=2)+'\n')

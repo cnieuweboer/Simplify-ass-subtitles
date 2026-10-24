@@ -9,6 +9,7 @@ from pathlib import Path
 import ast
 import contextlib
 import importlib.util
+import inspect
 import json
 import math
 import sys
@@ -239,10 +240,11 @@ for fixture in ('Overlord-22m06-source.ass','Overlord-opening-fades-source.ass')
 
 audit=json.loads((ROOT/'validation/covered-fragment-helper-list.json').read_text())
 helper_names=set(audit['helpers'])
+owner=inspect.getmodule(current._prepare_covered_fragments)
 lines={line for (filename,line),count in tracer.results().counts.items()
-       if Path(filename).resolve()==Path(current.__file__).resolve() and count}
+       if Path(filename).resolve()==Path(owner.__file__).resolve() and count}
 covered={}
-for node in ast.parse(Path(current.__file__).read_text()).body:
+for node in ast.parse(Path(owner.__file__).read_text()).body:
     if isinstance(node,ast.FunctionDef) and node.name in helper_names:
         statement_lines={n.lineno for n in ast.walk(node) if isinstance(n,ast.stmt)
                          and not isinstance(n,ast.FunctionDef) and n.lineno>node.lineno+1}

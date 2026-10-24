@@ -44,3 +44,17 @@ class TextPhaseRowsResult:
     removed_count: int
     rows: list[TextRow]
     visibility_updates: dict[int,str]
+
+
+@dataclass(frozen=True)
+class CoveredFragmentRemoval:
+    """Retained events, independent row successors and the removed-effect count.
+
+    Callers adopt rows for both fade-family collection and overlap trimming.
+    Existing phase cores survive unchanged; a new core is added only when
+    complete source glyph timing proves an authored cue or one shared fade.
+    Event references remain borrowed; row containers belong to this result.
+    """
+    events: list[Event]
+    rows: list[TextRow]
+    removed_effects: int

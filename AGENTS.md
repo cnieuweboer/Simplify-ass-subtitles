@@ -126,6 +126,20 @@ their existing invocation points; covered-fragment matching retains its own
 cross-candidate pose cache. Selection/freezing keep their existing owners. No
 font resources, diagnostics or counters move into this module. Interpreter
 observers follow the defining consumer without production forwarding.
+Complete recorded-row covered-fragment proofs, departing/staggered glyph matching,
+shadow timing selection and ordered removal live in
+`_simplify_ass/covered_fragments.py`, with direct engine aliases for eighteen
+functions and the frozen `CoveredFragmentContext`. Borrow events, visibility,
+source maps, rows and metrics; keep timing/span indexes, positive/negative shadow
+proofs and recovered-pose caches local to one pass. Preserve source-ID removal,
+untouched Event identity, row-identity timing proofs and independent successor
+containers even with zero removals. The frozen `CoveredFragmentRemoval` belongs
+to neutral `row_evidence`, shared with word-echo cleanup. The unchanged
+`animated_shadow_painted_source()` validator belongs to `effect_validation`;
+covered-fragment and row-reconstruction producers retain family admission and
+cache lifetimes. Callers retain stage order, row adoption and aggregate reporting.
+Test interpreter observers, exact-fit doubles and failure injection follow the
+defining consumer; no production forwarding or engine imports in private modules.
 Complete sliced-text strip/hold/exit admission, coverage and paint proof,
 proposal arbitration and authored timing live in `_simplify_ass/sliced_text.py`,
 with direct engine aliases for sixteen functions and two frozen records. Borrow

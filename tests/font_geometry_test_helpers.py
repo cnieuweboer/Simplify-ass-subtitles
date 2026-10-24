@@ -137,6 +137,11 @@ def install_row_test_doubles(module, *, historical_fade_timing=False):
         for name in ('recover_font_row','authored_glyph_positions','matches_authored_glyph_positions'):
             patch.object(owner,name,getattr(module,name)).start()
 
+    # Covered-fragment entrance/exit proofs consume exact glyph fitting directly.
+    owner=inspect.getmodule(getattr(module,'remove_covered_fragment_effects',None))
+    if owner is not None and owner is not module:
+        patch.object(owner,'fit_fragment_anchor',module.fit_fragment_anchor).start()
+
 def adapt_reference_font_api(module):
     """Bridge API shape only on an immutable reference, preserving its engine."""
     if not hasattr(module,'FontSpacing') or getattr(module,'_font_reference_adapted',False):return

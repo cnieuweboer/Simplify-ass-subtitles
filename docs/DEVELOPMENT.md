@@ -513,3 +513,8 @@ movement/karaoke handoffs. Shared surrounding-lyric boundary evidence lives in
 See [SOURCE_POSE_EXTRACTION.md](SOURCE_POSE_EXTRACTION.md) for v261's shared
 source-backed rotation normalization, touching-hold geometry proof and surviving
 upright-pose recovery. Callers retain stage timing and covered-fragment pose caches.
+
+See [COVERED_FRAGMENT_EXTRACTION.md](COVERED_FRAGMENT_EXTRACTION.md) for v262's
+complete recorded-row covered-fragment proof/removal subsystem. Shared result
+and source-shadow validation retain neutral existing owners; source inputs,
+measurement caches, row adoption and reporting keep their established lifetimes.
