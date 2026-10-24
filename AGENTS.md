@@ -115,6 +115,17 @@ bypass and post-selection blur clamping with pre-clamp settled snapshots.
 The shared `without_inert_spacing_tail()` normalizer also lives there. Preserve
 its unchanged-event identity on refusal, painted tracking, source immutability
 and canonical event-replacement invalidation; other trailing tags remain intact.
+Source-backed early rotation normalization, adjacent sustained-layout proof and
+late upright-pose recovery live in `_simplify_ass/source_poses.py`, with direct
+engine aliases for all three functions. Borrow source maps, Events, formatting
+and styles; keep hold indexes, candidate layouts and lazy geometry proofs local
+to each call. Preserve the early shallow map copy, map order, untouched Event
+identity, late no-target list identity, selected paint/timing and canonical
+replacement/evidence invalidation. Source preparation and final layout retain
+their existing invocation points; covered-fragment matching retains its own
+cross-candidate pose cache. Selection/freezing keep their existing owners. No
+font resources, diagnostics or counters move into this module. Interpreter
+observers follow the defining consumer without production forwarding.
 Complete sliced-text strip/hold/exit admission, coverage and paint proof,
 proposal arbitration and authored timing live in `_simplify_ass/sliced_text.py`,
 with direct engine aliases for sixteen functions and two frozen records. Borrow

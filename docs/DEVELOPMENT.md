@@ -509,3 +509,7 @@ See [TEXT_EFFECT_SEQUENCE_EXTRACTION.md](TEXT_EFFECT_SEQUENCE_EXTRACTION.md) for
 v260's complete exact-position/scale-trail sequence processing and its existing
 movement/karaoke handoffs. Shared surrounding-lyric boundary evidence lives in
 `lyric_boundaries`; the engine retains capture timing, adoption and reporting.
+
+See [SOURCE_POSE_EXTRACTION.md](SOURCE_POSE_EXTRACTION.md) for v261's shared
+source-backed rotation normalization, touching-hold geometry proof and surviving
+upright-pose recovery. Callers retain stage timing and covered-fragment pose caches.

@@ -3,6 +3,9 @@
 import test_paths  # Resolve the repository for direct test execution.
 from pathlib import Path
 import tempfile,json,math
+import subprocess,sys,typing
+from copy import deepcopy
+from _simplify_ass import source_poses
 import simplify_ass as s
 ROOT=Path(__file__).resolve().parents[1]
 header=(ROOT/'test-data/Overlord-22m06-source.ass').read_text(encoding='utf-8-sig').split('Dialogue:',1)[0]
@@ -117,5 +120,63 @@ for e in after:
     word=s.simplify_text(e.text,visible_only=True)[1]
     ok('actual '+word+' y78 '+str(e.source_index),near(s.get_pos(e.text)[1],78))
     ok('actual '+word+' upright '+str(e.source_index),s.unrotated_text_state(e.state))
+
+# The policy owner retains the engine entry names and their resolved annotations.
+for name in ('normalize_animated_rotations','adjacent_sustained_geometry','prefer_surviving_upright_poses'):
+    function=getattr(source_poses,name)
+    ok(name+' retains a direct engine alias',getattr(s,name) is function)
+    typing.get_type_hints(function)
+
+oscillation=(r'\pos(100,100)\org(120,120)\frz0'
+             r'\t(0,100,\frz-20)\t(100,1000,\frz20)\t(200,300,\1c&H123456&)')
+input_events=load([event(oscillation,1,2,word='word'),event(r'\pos(200,100)',2,3,word='other')])
+sources={e.source_index:e for e in reversed(input_events)}
+snapshot=deepcopy({k:vars(e) for k,e in sources.items()})
+normalized=s.normalize_animated_rotations(sources)
+changed=normalized[input_events[0].source_index]
+ok('early normalization returns a shallow successor map',normalized is not sources and list(normalized)==list(sources))
+ok('accepted oscillation becomes upright without an unused origin',
+   changed is not input_events[0] and s.unrotated_text_state(changed.state) and 'org' not in changed.state)
+ok('early normalization retains authored paint animation',r'\t(200,300,\1c&H123456&)' in changed.text)
+ok('early normalization retains literal timing and layer',
+   s.simplify_text(changed.text,visible_only=True)[1]=='word' and
+   (changed.start,changed.end,changed.layer)==(input_events[0].start,input_events[0].end,input_events[0].layer))
+ok('unrelated source retains Event identity',normalized[input_events[1].source_index] is input_events[1])
+ok('normalization leaves original formatting continuation and evidence unchanged',
+   {k:vars(e) for k,e in sources.items()}==snapshot)
+for label,tags in (
+    ('one-way entrance',r'\pos(100,100)\frz-20\t(0,1000,\frz0)'),
+    ('moving source',oscillation+r'\move(100,100,100,120)'),
+    ('resizing source',oscillation+r'\t(0,1000,\fs80)'),
+):
+    original_events=load([event(tags,1,2)])
+    data={e.source_index:e for e in original_events}
+    result=s.normalize_animated_rotations(data)
+    ok(label+' keeps its original source Event',result is not data and
+       all(result[k] is e for k,e in data.items()))
+
+sources_list=load([event(bounce),event(hold,1.37,3.87,layer='3')])
+sources={e.source_index:e for e in sources_list};working=early(sources_list)
+snapshot=deepcopy(({k:vars(e) for k,e in sources.items()},[vars(e) for e in working]))
+proof=s.adjacent_sustained_geometry(sources,[sources_list[0]])
+recovered=s.prefer_surviving_upright_poses(working,sources)
+ok('hold proof and late recovery borrow all source and working caches',
+   ({k:vars(e) for k,e in sources.items()},[vars(e) for e in working])==snapshot)
+ok('untouched late successor retains Event identity',recovered[1] is working[1])
+ok('missing source returns the original working list',s.prefer_surviving_upright_poses(working,{}) is working)
+# Returned proof dictionaries must not become a cache shared with later calls.
+proof[sources_list[0].source_index]['pos']=(0,0)
+retry=s.adjacent_sustained_geometry(sources,[sources_list[0]])
+ok('adjacent geometry proofs are local to each call',retry[sources_list[0].source_index]['pos']==(1175.,78.))
+
+with tempfile.TemporaryDirectory() as directory:
+    code=f'''import sys
+sys.path.insert(0,{str(ROOT)!r})
+from _simplify_ass import source_poses
+assert not any(n.split('.')[0] in {{'simplify_ass','PIL','fontTools','uharfbuzz'}} for n in sys.modules)
+'''
+    result=subprocess.run([sys.executable,'-I','-c',code],cwd=directory,capture_output=True,text=True)
+    ok('independent source-pose import needs no engine or optional fonts',result.returncode==0)
+    assert not result.stderr,result.stderr
 (ROOT/'validation/upright-priority-checks.json').write_text(json.dumps({'version':s.__version__,'checks_passed':len(checks),'checks':checks},indent=2)+'\n')
 print(len(checks),'upright-priority checks passed')
