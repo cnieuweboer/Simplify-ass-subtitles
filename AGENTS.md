@@ -26,6 +26,18 @@ events, visibility and styles; keep buckets and replacement buffers call-local.
 Preserve accepted-caption object identity for the subsequent word-echo proof.
 The caller retains pass order, original-source selection and aggregate frame/stack
 counts; rendering, paint policy and source-pose support keep their existing owners.
+Source-owned word fade/jitter family proof, exact-font ownership and atomic
+removal live in `_simplify_ass/word_echoes.py`, with direct engine aliases for
+all five functions. Borrow working events, visibility, the exact accepted-caption
+tuple, original sources and metrics; keep owner/family buckets, anchor caches
+and removal IDs call-local. Resolve empty source formatting into temporary views
+without populating caller caches. Preserve unchanged Event identity, early-return
+list identity, whole-family ambiguity refusal, bounded faint tails and unchanged
+parent paint/timing. Reuse `CoveredFragmentRemoval` from neutral `row_evidence`
+with empty rows and the existing unique-source removal count. The consolidation
+caller retains the jitter handoff, stage conditions, adoption and aggregate
+reporting. Measurement resources and diagnostics keep their existing owners;
+test stubs follow the defining consumer without production forwarding.
 Frame-exit echo admission, source-motion/paint proofs and ordered replacement live
 in `_simplify_ass/frame_echoes.py`, with direct engine aliases for all functions
 and five frozen records. Borrow working events and original source maps; keep

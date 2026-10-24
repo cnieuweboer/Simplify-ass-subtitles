@@ -518,3 +518,8 @@ See [COVERED_FRAGMENT_EXTRACTION.md](COVERED_FRAGMENT_EXTRACTION.md) for v262's
 complete recorded-row covered-fragment proof/removal subsystem. Shared result
 and source-shadow validation retain neutral existing owners; source inputs,
 measurement caches, row adoption and reporting keep their established lifetimes.
+
+See [WORD_ECHO_EXTRACTION.md](WORD_ECHO_EXTRACTION.md) for v263's complete
+source-owned word fade/jitter cleanup. Exact accepted-caption identity, original
+source evidence, metric ownership and caller-owned adoption/reporting remain
+unchanged; the existing shared result stays in `row_evidence`.

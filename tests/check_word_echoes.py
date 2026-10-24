@@ -4,6 +4,11 @@ from pathlib import Path
 from copy import deepcopy
 from dataclasses import replace
 import ast,hashlib,json,tempfile,contextlib,io
+import subprocess,sys
+from types import MappingProxyType,SimpleNamespace
+from typing import get_type_hints
+from unittest.mock import patch
+from _simplify_ass import word_echoes, row_evidence
 from executable_ast_audit import executable_ast
 import simplify_ass as s
 ROOT=Path(__file__).resolve().parents[1]
@@ -31,9 +36,10 @@ def run(echo,parents=None,owner=metric,source_change=None):
  es,v,styles=parse(line()+echo);sources={e.source_index:e for e in es};j=s.flatten_complete_line_jitter(es,v,styles,source_events=sources)
  if source_change:
   sources={k:source_change(e) if e.layer=='3' else e for k,e in sources.items()}
- before=deepcopy(j.events)
+ before=deepcopy(j.events);retained={id(e):e for e in j.events}
  r=s.remove_owned_word_echoes(j.events,v,j.captions if parents is None else parents,sources,owner)
- check('borrowed input unchanged '+str(len(checks)),j.events==before)
+ check('borrowed input unchanged '+str(len(checks)),j.events==before and
+       all(retained[id(e)] is e for e in r.events))
  return r,j,v
 r,j,v=run(echoes());check('three copies of fourteen fade frames removed',r.removed_effects==42 and r.events==j.events[:1])
 check('parent unchanged',r.events[0]==j.captions[0])
@@ -75,6 +81,43 @@ es,v,styles=parse(line('word and word'));j=s.flatten_complete_line_jitter(es,v,s
 check('repeated word has distinct anchors',len(xs)==2 and xs[1]>xs[0]+10)
 es,v,styles=parse(line('word and word')+echoes(x=xs[1]));j=s.flatten_complete_line_jitter(es,v,styles);r=s.remove_owned_word_echoes(j.events,v,j.captions,{e.source_index:e for e in es},metric);check('second word occurrence uniquely removed',r.removed_effects==42)
 r,_,_=run(echoes(),parents=(parent,parent));check('competing owners retain entire family',r.removed_effects==0)
+# Extraction boundary: canonical aliases, borrowed sources and independent results.
+for name in ('_word_echo_layout','_word_echo_families','_prove_word_echo_family',
+             '_owned_word_echo_anchors','remove_owned_word_echoes'):
+ check(name+' canonical engine alias',getattr(s,name) is getattr(word_echoes,name))
+ get_type_hints(getattr(word_echoes,name))
+check('result retains neutral canonical owner',word_echoes.CoveredFragmentRemoval is row_evidence.CoveredFragmentRemoval
+      and s.CoveredFragmentRemoval is row_evidence.CoveredFragmentRemoval)
+es,v,styles=parse(line()+echoes());sources={e.source_index:replace(e,state={}) for e in es}
+j=s.flatten_complete_line_jitter(es,v,styles)
+before=deepcopy((es,v,sources));args=(j.events,MappingProxyType(v),j.captions,MappingProxyType(sources),metric)
+a=word_echoes.remove_owned_word_echoes(*args);b=word_echoes.remove_owned_word_echoes(*args)
+check('read-only maps and unresolved sources produce the same complete removal',a.removed_effects==b.removed_effects==42)
+check('working and source inputs unchanged across calls',(es,v,sources)==before)
+check('result containers independent across calls',a.events is not b.events and a.rows is not b.rows)
+check('accepted caption remains the exact retained object',len(a.events)==1 and a.events[0] is j.captions[0])
+for label,captions,owner in [('no captions',(),metric),('no metric',j.captions,None),
+                             ('unavailable metric',j.captions,SimpleNamespace(available=False))]:
+ result=word_echoes.remove_owned_word_echoes(j.events,v,captions,sources,owner)
+ check(label+' retains original list identity',result.events is j.events and result.rows==[] and result.removed_effects==0)
+with patch.object(word_echoes,'_owned_word_echo_anchors',side_effect=RuntimeError('injected anchor failure')):
+ try:word_echoes.remove_owned_word_echoes(*args)
+ except RuntimeError as error:check('anchor failure propagated',str(error)=='injected anchor failure')
+ else:raise AssertionError('expected anchor failure')
+check('anchor failure leaves caller inputs unchanged',(es,v,sources)==before)
+with tempfile.TemporaryDirectory() as directory:
+ code=f'''import sys,typing
+sys.path.insert(0,{str(ROOT)!r})
+from _simplify_ass import word_echoes as w,row_evidence as r
+assert not any(n.split('.')[0] in {{'simplify_ass','PIL','fontTools','uharfbuzz'}} for n in sys.modules)
+for name in ('_word_echo_layout','_word_echo_families','_prove_word_echo_family','_owned_word_echo_anchors','remove_owned_word_echoes'):typing.get_type_hints(getattr(w,name))
+assert w.CoveredFragmentRemoval is r.CoveredFragmentRemoval
+events=[];result=w.remove_owned_word_echoes(events,{{}},(),{{}},None)
+assert result.events is events and result.rows==[] and result.removed_effects==0
+'''
+ child=subprocess.run([sys.executable,'-I','-c',code],cwd=directory,capture_output=True,text=True)
+ assert child.returncode==0,child.stderr
+ check('independent import and early refusal need no engine or font backends',True)
 # Real episode: exact family is bundled, source events are all original frames.
 es=s.load_subtitle_events(ROOT/'test-data/Attack-on-Titan-S02E01-ending-source.ass')[1];v={e.source_index:s.OVERRIDE_RE.sub('',e.text) if not e.state.get('p') else '' for e in es};sources={e.source_index:e for e in es};j=s.flatten_complete_line_jitter(es,v,es[0].styles,source_events=sources)
 r=s.remove_owned_word_echoes(j.events,v,j.captions,sources,metric)
