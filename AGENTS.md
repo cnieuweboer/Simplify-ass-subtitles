@@ -72,6 +72,17 @@ document sharing. Source preparation owns timing-map adoption, effect removal,
 paint-timeline capture, reconstruction and reporting. Metrics retains fonts,
 measurement caches and resource/diagnostic lifetimes. Interpreter observers follow
 the defining collector consumer without production forwarding or engine imports.
+Exact positioned-duplicate removal, strict whole-lifetime redundancy and early
+static-sign paint selection live in `_simplify_ass/text_copy_reduction.py`, with
+direct engine aliases for all eight functions. Keep these three admission rules
+and their stage roles distinct. Borrow Events, visibility, styles and formatting;
+keep parsing state, indexes, ranks, retained anchors and removal sets call-local.
+Preserve transparency/collision safeguards, full literal-span identity, wrapping
+and intervening-compositing checks, retained-anchor bounds and original order.
+Retain source-ID versus list-slot counting as currently defined. Callers retain
+lyric handoffs, stage order and aggregate reporting. No font resources, caches,
+new records or report owners move here. Interpreter observers follow the defining
+copy consumer without production forwarding or private imports of the engine.
 Source-owned word fade/jitter family proof, exact-font ownership and atomic
 removal live in `_simplify_ass/word_echoes.py`, with direct engine aliases for
 all five functions. Borrow working events, visibility, the exact accepted-caption

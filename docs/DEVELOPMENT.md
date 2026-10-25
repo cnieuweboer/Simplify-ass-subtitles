@@ -556,3 +556,8 @@ See [SOURCE_ROW_COLLECTION_EXTRACTION.md](SOURCE_ROW_COLLECTION_EXTRACTION.md) f
 v269's original-source row collection boundary. Resolved working views and sampled
 row visibility/paint remain separate; source preparation retains timing adoption,
 effect removal, timeline capture and reconstruction.
+
+See [TEXT_COPY_EXTRACTION.md](TEXT_COPY_EXTRACTION.md) for v270's exact duplicate,
+strict whole-lifetime redundancy and early static-sign paint-selection boundary.
+The shared checks and retained-anchor protections stay together; callers retain
+stage order, lyric handoffs and reporting.
