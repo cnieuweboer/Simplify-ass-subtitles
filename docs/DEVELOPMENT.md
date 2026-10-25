@@ -551,3 +551,8 @@ caption-support association, measured-ownership and unmeasured-fallback boundary
 The shared static clip-contour reader lives in `drawing_geometry`; final result
 assembly, late paint normalization, layer settling and reporting stay with their
 existing owners.
+
+See [SOURCE_ROW_COLLECTION_EXTRACTION.md](SOURCE_ROW_COLLECTION_EXTRACTION.md) for
+v269's original-source row collection boundary. Resolved working views and sampled
+row visibility/paint remain separate; source preparation retains timing adoption,
+effect removal, timeline capture and reconstruction.

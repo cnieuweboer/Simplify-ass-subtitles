@@ -8,9 +8,15 @@ import ast
 import importlib.util
 import json
 import random
+import pickle
+import subprocess
 import sys
+import tempfile
+import typing
 from event_evidence_test_helpers import resolve_test_event
 import simplify_ass as current
+from _simplify_ass import source_row_collection as collection
+from check_windows_installer import load_installer
 from event_evidence_test_helpers import event_comparison_fields, row_comparison_fields
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -81,8 +87,8 @@ CASES=[
     ('inline font',(r'\fs40',)),
 ]
 checks=[]
-def check(name,condition):
-    assert condition,name
+def check(name,condition,details=''):
+    assert condition,name+('\n'+details if details else '')
     checks.append(name)
 comparisons=[]
 for name,tags in CASES:
@@ -162,6 +168,79 @@ check('row paint cannot change returned working formatting',vars(result.events[r
 tree=ast.parse((ROOT/'simplify_ass.py').read_text())
 check('legacy visibility key removed from production',not any(
     isinstance(n,ast.Constant) and n.value=='_opaque_spans' for n in ast.walk(tree)))
+
+NAMES=('CollectedSourceText','_source_fragment_opacity_is_coupled',
+       '_matching_source_row_fragmentations','collect_source_text_rows')
+for name in NAMES:
+    check('canonical collector alias '+name,getattr(current,name) is getattr(collection,name))
+    typing.get_type_hints(getattr(collection,name))
+check('canonical collector return annotation',
+      typing.get_type_hints(collection.collect_source_text_rows)['return'] is collection.CollectedSourceText)
+check('historical mutable result record lookup',
+      pickle.loads(b'csimplify_ass\nCollectedSourceText\n.') is collection.CollectedSourceText)
+check('result record remains mutable',not collection.CollectedSourceText.__dataclass_params__.frozen)
+parsed,_=source(current,('',),'original','empty')
+before=deepcopy({k:vars(e) for k,e in parsed.items()});animated=set(parsed)
+first=collection.collect_source_text_rows(parsed,animated)
+second=collection.collect_source_text_rows(parsed,animated)
+for name in ('events','rows','words','positions'):
+    check('independent per-call '+name,getattr(first,name) is not getattr(second,name))
+check('working map retains authored keys and order',tuple(first.events)==tuple(parsed))
+check('collector leaves animation membership borrowed',animated==set(parsed))
+check('collection does not populate input formatting',before=={k:vars(e) for k,e in parsed.items()})
+check('resolved views keep borrowed style and document owners',all(
+    first.events[k] is not e and first.events[k].styles is e.styles and
+    first.events[k].defaults is e.defaults and first.events[k].measurement is e.measurement
+    for k,e in parsed.items()))
+check('repeat collection does not share row formatting',
+      first.rows[0].base.state is not second.rows[0].base.state)
+first.words={};first.events.clear();first.rows.clear();first.positions.clear()
+check('mutating result containers cannot affect another call',
+      bool(second.events and second.rows and second.words and second.positions))
+check('result edits cannot affect input events',before=={k:vars(e) for k,e in parsed.items()})
+
+COLD_CODE=r'''
+from pathlib import Path
+from typing import get_type_hints
+from copy import deepcopy
+from _simplify_ass import source_row_collection as c, subtitle_document as d
+assert 'simplify_ass' not in sys.modules
+assert not any(n.split('.')[0] in {'PIL','fontTools','uharfbuzz'} for n in sys.modules)
+for name in ('CollectedSourceText','_source_fragment_opacity_is_coupled','_matching_source_row_fragmentations','collect_source_text_rows'):
+ get_type_hints(getattr(c,name))
+raw='[Events]\n'+''.join(f'Dialogue: 0,0:00:01.00,0:00:04.00,Default,,0,0,0,,{{\\pos({100+40*i},100)}}{word}\n' for i,word in enumerate(('ab','cd','ef','gh')))
+parsed=d.parse_subtitle_document(raw).events
+before=deepcopy({k:vars(e) for k,e in parsed.items()})
+result=c.collect_source_text_rows(parsed,set())
+assert len(result.events)==4 and len(result.rows)==1 and len(result.words)==4
+assert all(e.evidence.opaque_spans is None for e in result.events.values())
+assert result.rows[0].base.evidence.opaque_spans==((1.,4.),)
+assert before=={k:vars(e) for k,e in parsed.items()}
+assert 'simplify_ass' not in sys.modules
+assert not any(n.split('.')[0] in {'PIL','fontTools','uharfbuzz'} for n in sys.modules)
+import simplify_ass as e
+assert Path(c.__file__).resolve()==Path(e.__file__).resolve().parent/'_simplify_ass/source_row_collection.py'
+for name in ('CollectedSourceText','_source_fragment_opacity_is_coupled','_matching_source_row_fragmentations','collect_source_text_rows'):
+ assert getattr(c,name) is getattr(e,name)
+import py_compile
+py_compile.compile(c.__file__,doraise=True)
+'''
+with tempfile.TemporaryDirectory() as folder:
+    root=Path(folder);unrelated=root/'unrelated';unrelated.mkdir()
+    installer=load_installer();target=root/'installed tools with spaces'
+    _,installed=installer.install(ROOT,target,individual_launchers=False)
+    for tools in (ROOT,installed):
+        child=subprocess.run([sys.executable,'-I','-c',
+            'import sys\nsys.path.insert(0,'+repr(str(tools))+')\n'+COLD_CODE],
+            cwd=unrelated,capture_output=True,text=True)
+        check('independent collector import and delivery '+str(tools),
+              child.returncode==0,child.stdout+child.stderr)
+    user=installed/'_simplify_ass/user.py';user.write_text('# user\n')
+    installer.remove(target)
+    check('uninstall preserves unrelated private file',user.read_text()=='# user\n')
+    check('uninstall removes owned collector source',not (installed/'_simplify_ass/source_row_collection.py').exists())
+    check('uninstall removes owned collector bytecode',not any((installed/'_simplify_ass').rglob('source_row_collection*.pyc')))
+
 report=dict(version=current.__version__,reference_version=previous.__version__,
     comparisons=len(comparisons),scenarios=len(CASES),collector_inputs_unchanged=True,
     resolved_working_events_identical=True,row_evidence_and_phase_selection_identical=True,

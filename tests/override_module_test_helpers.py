@@ -35,7 +35,7 @@ def patch_interpreter_bindings(engine, name, *args, **kwargs):
                       'prefer_surviving_upright_poses',
                       'remove_covered_fragment_effects', 'animated_shadow_painted_source',
                       'remove_source_fragment_effects', 'remove_letters_over_full_lines',
-                      'reduce_supporting_drawings'))]
+                      'reduce_supporting_drawings', 'collect_source_text_rows'))]
     for consumer in consumers:
         if (consumer is not None and consumer not in bindings and
                 getattr(consumer, name, None) is original):

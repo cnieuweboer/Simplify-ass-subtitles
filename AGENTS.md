@@ -61,6 +61,17 @@ Callers retain `CaptionSupportResult`, reduction, budgets, output assembly, late
 shadow normalization, final layer settling and reporting. Font caches keep their
 measurement owner. Test measurement mocks follow the defining consumer without
 production forwarding or private imports of the engine.
+Original-source row collection, opacity-coupling and exact-fragmentation proofs
+live in `_simplify_ass/source_row_collection.py`, with direct engine aliases for
+three functions and the existing mutable `CollectedSourceText` record. Borrow
+source Events, animation membership and metrics. Keep resolved-map successors,
+word/position maps, grouping, visibility profiles and anchor buffers local to
+one invocation. Preserve authored map keys/order, separate working formatting
+from sampled row paint/opacity history, and retain existing shallow style and
+document sharing. Source preparation owns timing-map adoption, effect removal,
+paint-timeline capture, reconstruction and reporting. Metrics retains fonts,
+measurement caches and resource/diagnostic lifetimes. Interpreter observers follow
+the defining collector consumer without production forwarding or engine imports.
 Source-owned word fade/jitter family proof, exact-font ownership and atomic
 removal live in `_simplify_ass/word_echoes.py`, with direct engine aliases for
 all five functions. Borrow working events, visibility, the exact accepted-caption
