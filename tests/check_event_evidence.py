@@ -6,6 +6,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 from unittest.mock import patch
 import ast
+import inspect
 import json
 import simplify_ass as s
 
@@ -115,7 +116,9 @@ for name,contour,removed in [('no history',None,True),
          patch.object(s,'select_caption_supports',return_value=([panel],{panel.source_index:[caption]})), \
          patch.object(s,'retain_unmeasured_backdrops',return_value=[]), \
          patch.object(s,'is_font_texture',side_effect=lambda e,metric:e.source_index==texture.source_index), \
-         patch.object(s,'caption_bounds',return_value=(290,140,310,160)):
+         patch.object(s,'caption_bounds',return_value=(290,140,310,160)), \
+         patch.object(inspect.getmodule(s._select_caption_supports),
+                      'caption_bounds',return_value=(290,140,310,160)):
         result=s._rebuild_caption_supports([panel],source_doc.lines,[texture,caption],
             source_doc.lines,{},s.SimplifyConfig(),None)
     check(name+' final texture removal respects original contour',

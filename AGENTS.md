@@ -49,6 +49,18 @@ layering and aggregate reporting. Shared `merge_tiled_clips()` lives in
 inputs for both drawing reduction and text-outline recovery. No font resources,
 persistent caches, report owners or private imports of the engine are introduced.
 Interpreter observers follow the defining supporting-drawing consumer.
+Caption-support selection, measured ownership and unmeasured fallback live in
+`_simplify_ass/caption_supports.py`, with direct engine aliases for nine functions
+and the existing frozen `CaptionPanelOwnership` record. Borrow candidate/caption
+Events and caller metrics; keep bounds maps, associations and proof lists local.
+Preserve the two-result selection API and internal three-result handoff, exact
+borrowed caption identity, shared-outline versus measured ownership distinctions,
+opaque contour successors and fallback equivalence. Shared `caption_clip_outline()`
+lives in `drawing_geometry`, retaining static-mask validation and scene scaling.
+Callers retain `CaptionSupportResult`, reduction, budgets, output assembly, late
+shadow normalization, final layer settling and reporting. Font caches keep their
+measurement owner. Test measurement mocks follow the defining consumer without
+production forwarding or private imports of the engine.
 Source-owned word fade/jitter family proof, exact-font ownership and atomic
 removal live in `_simplify_ass/word_echoes.py`, with direct engine aliases for
 all five functions. Borrow working events, visibility, the exact accepted-caption

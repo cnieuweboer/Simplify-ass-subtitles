@@ -545,3 +545,9 @@ v267's complete supporting-drawing admission/reduction boundary. Candidate,
 coverage, paint, contour evidence and count ownership remain together; shared
 clip-strip geometry lives in `drawing_geometry`. Caption association, budgets,
 layering and reporting remain with their callers.
+
+See [CAPTION_SUPPORT_EXTRACTION.md](CAPTION_SUPPORT_EXTRACTION.md) for v268's
+caption-support association, measured-ownership and unmeasured-fallback boundary.
+The shared static clip-contour reader lives in `drawing_geometry`; final result
+assembly, late paint normalization, layer settling and reporting stay with their
+existing owners.

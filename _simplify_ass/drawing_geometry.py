@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import re
 from .ass_overrides import NUMBER, OVERRIDE_RE
-from .caption_geometry import get_pos
+from .caption_geometry import get_pos, inline_layout_key
 from .event_model import Event
 from .event_operations import replace_event
 from .static_objects import geometry_key
@@ -378,3 +378,22 @@ def merge_tiled_clips(rectangles, unit):
         box[axis], box[axis+2] = ordered[0][axis], ordered[-1][axis+2]
         return tuple(box)
     return None
+
+
+def caption_clip_outline(event):
+    """Return one static, straight-sided scene-coordinate clip contour.
+
+    A shared authored contour can identify a panel without approximating the
+    perspective of its text. Keep the clip on that text; do not expand its ink.
+    """
+    if (event.state.get('p', 0) or 'iclip' in event.state or
+            inline_layout_key(event) or
+            re.search(r'\\(?:t|move|fad|fade)\s*\(', event.text, re.I)):
+        return None
+    mask = re.fullmatch(r'\(\s*(?:(\d+)\s*,\s*)?(m\s+.*?)\s*\)',
+                        str(event.state.get('clip', '')), re.I)
+    if mask is None or not 1 <= int(mask[1] or 1) <= 16:
+        return None
+    points = drawing_polygon(replace_event(event, text='{\\p1}'+mask[2]))
+    scale = 2**(int(mask[1] or 1)-1)
+    return tuple((x/scale, y/scale) for x, y in points) if points else None

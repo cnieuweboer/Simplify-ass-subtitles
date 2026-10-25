@@ -1,7 +1,7 @@
 """Drawing geometry retains conservative proofs and caller-owned evidence."""
 import test_paths
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import replace, FrozenInstanceError
 from typing import get_type_hints
 import pickle
 import subprocess
@@ -9,15 +9,22 @@ import sys
 import tempfile
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 import simplify_ass as engine
 from _simplify_ass import drawing_geometry as geometry, supporting_drawings as supports
+from _simplify_ass import caption_supports as selection
 from check_windows_installer import ROOT, load_installer
 
 NAMES = ('coverage_geometry', 'polygon_covers_box', 'drawing_polygon',
          'fit_rectangular_contour', 'normalize_drawing_alignment',
          'flatten_rectangular_border', 'detach_drawing_edge_slivers',
-         'simplify_drawing_contour', 'merge_tiled_clips')
+         'simplify_drawing_contour', 'merge_tiled_clips', 'caption_clip_outline')
+SELECTION_NAMES = ('CaptionPanelOwnership', 'is_fullscreen_background',
+    'drawing_matches_caption_outline', 'caption_panel_contains',
+    '_caption_panel_ownership', '_select_enclosing_caption_panels',
+    '_match_adjacent_caption_shapes', 'select_caption_supports',
+    '_select_caption_supports', 'retain_unmeasured_backdrops')
 SUPPORT_NAMES = ('SupportingDrawingContext', 'SupportingDrawingCandidate',
     'SupportingDrawingCoverage', 'reduce_vector_layers', 'drawing_paint',
     'compose_drawing_paint', 'recover_held_drawing_scale',
@@ -43,6 +50,7 @@ COLD_CODE = r'''
 from pathlib import Path
 from copy import deepcopy
 from _simplify_ass import drawing_geometry as g, supporting_drawings as s, subtitle_document as d
+from _simplify_ass import caption_supports as c
 from typing import get_type_hints
 assert 'simplify_ass' not in sys.modules
 assert not any(n.split('.')[0] in {'PIL','fontTools','uharfbuzz'} for n in sys.modules)
@@ -60,6 +68,11 @@ out,counts=s.reduce_supporting_drawings([event])
 assert len(out)==1 and counts['drawing_candidates']==1
 assert out[0] is not event and out[0].styles is event.styles
 assert s.merge_tiled_clips is g.merge_tiled_clips
+assert c.caption_clip_outline is g.caption_clip_outline
+assert c._select_caption_supports([],[],None)==([],{},[])
+assert c.retain_unmeasured_backdrops([event],[],[],None)==[event]
+for name in ('CaptionPanelOwnership','_select_caption_supports','caption_panel_contains'):
+ get_type_hints(getattr(c,name))
 assert g.merge_tiled_clips([(0,0,5,10),(5,0,10,10)],1)==(0,0,10,10)
 for name in ('SupportingDrawingContext','SupportingDrawingCandidate','SupportingDrawingCoverage','reduce_supporting_drawings'):
  get_type_hints(getattr(s,name))
@@ -70,18 +83,61 @@ import simplify_ass as e
 assert Path(g.__file__).resolve()==Path(e.__file__).resolve().parent/'_simplify_ass/drawing_geometry.py'
 for name in ('coverage_geometry','polygon_covers_box','drawing_polygon',
              'fit_rectangular_contour','normalize_drawing_alignment',
-             'flatten_rectangular_border','detach_drawing_edge_slivers','simplify_drawing_contour','merge_tiled_clips'):
+             'flatten_rectangular_border','detach_drawing_edge_slivers','simplify_drawing_contour','merge_tiled_clips','caption_clip_outline'):
  assert getattr(e,name) is getattr(g,name)
 assert Path(s.__file__).resolve()==Path(e.__file__).resolve().parent/'_simplify_ass/supporting_drawings.py'
 for name in ('SupportingDrawingContext','SupportingDrawingCandidate','SupportingDrawingCoverage','reduce_supporting_drawings','reduce_vector_layers'):
  assert getattr(e,name) is getattr(s,name)
+assert Path(c.__file__).resolve()==Path(e.__file__).resolve().parent/'_simplify_ass/caption_supports.py'
+for name in ('CaptionPanelOwnership','_select_caption_supports','select_caption_supports','retain_unmeasured_backdrops'):
+ assert getattr(e,name) is getattr(c,name)
 import py_compile
 py_compile.compile(g.__file__,doraise=True)
 py_compile.compile(s.__file__,doraise=True)
+py_compile.compile(c.__file__,doraise=True)
 '''
 
 
 class DrawingGeometryModuleChecks(unittest.TestCase):
+    def test_selection_aliases_and_borrowed_frozen_ownership(self):
+        for name in SELECTION_NAMES:
+            self.assertIs(getattr(engine, name), getattr(selection, name))
+            get_type_hints(getattr(selection, name))
+        self.assertIs(selection.caption_clip_outline, geometry.caption_clip_outline)
+        self.assertIs(pickle.loads(b'csimplify_ass\nCaptionPanelOwnership\n.'),
+                      selection.CaptionPanelOwnership)
+        panel = replace(drawing(), source_index=10)
+        caption = engine.replace_event(panel, text=r'{\pos(120,120)\bord0\shad0}AB',
+                                       source_index=20, layer='1')
+        before = [deepcopy(vars(e)) for e in (panel, caption)]
+        with patch.object(selection, 'caption_bounds', return_value=(110,110,190,140)):
+            kept, associated, owners = selection._select_caption_supports([panel],[caption],None)
+            other, links, proofs = selection._select_caption_supports([panel],[caption],None)
+            self.assertEqual(selection.select_caption_supports([panel],[caption],None),
+                             (kept, associated))
+        self.assertEqual(kept, [panel])
+        self.assertIs(kept[0], panel)
+        self.assertIs(associated[10][0], caption)
+        self.assertEqual(len(owners), 1)
+        self.assertIs(owners[0].panel, panel)
+        self.assertIs(owners[0].caption, caption)
+        with self.assertRaises(FrozenInstanceError):
+            owners[0].caption = panel
+        self.assertEqual((other, links, proofs), (kept, associated, owners))
+        for a,b in ((kept,other),(associated,links),(owners,proofs)):
+            self.assertIsNot(a,b)
+        self.assertEqual([vars(e) for e in (panel,caption)], before)
+
+    def test_shared_clip_contour_uses_scene_scale_and_preserves_sources(self):
+        caption = engine.replace_event(drawing(), text=
+            r'{\pos(120,120)\clip(2,m 200 200 l 400 200 400 300 200 300)}AB')
+        before = deepcopy(vars(caption))
+        self.assertEqual(geometry.caption_clip_outline(caption),
+                         ((100,100),(200,100),(200,150),(100,150)))
+        animated = engine.replace_event(caption, text=caption.text.replace('}',r'\fad(100,100)}'))
+        self.assertIsNone(geometry.caption_clip_outline(animated))
+        self.assertEqual(vars(caption), before)
+
     def test_supporting_aliases_annotations_and_historical_record_lookup(self):
         for name in SUPPORT_NAMES:
             self.assertIs(getattr(engine, name), getattr(supports, name))
@@ -246,6 +302,8 @@ class DrawingGeometryModuleChecks(unittest.TestCase):
             self.assertFalse(any((installed/'_simplify_ass').rglob('drawing_geometry*.pyc')))
             self.assertFalse((installed/'_simplify_ass/supporting_drawings.py').exists())
             self.assertFalse(any((installed/'_simplify_ass').rglob('supporting_drawings*.pyc')))
+            self.assertFalse((installed/'_simplify_ass/caption_supports.py').exists())
+            self.assertFalse(any((installed/'_simplify_ass').rglob('caption_supports*.pyc')))
 
 
 if __name__ == '__main__':
