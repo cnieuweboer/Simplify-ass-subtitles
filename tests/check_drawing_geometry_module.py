@@ -25,6 +25,8 @@ SELECTION_NAMES = ('CaptionPanelOwnership', 'is_fullscreen_background',
     '_caption_panel_ownership', '_select_enclosing_caption_panels',
     '_match_adjacent_caption_shapes', 'select_caption_supports',
     '_select_caption_supports', 'retain_unmeasured_backdrops')
+SETTLING_NAMES = ('CaptionSupportResult', '_rectangle_polygon', '_same_caption_panel',
+                 '_covered_caption_panels', 'settle_caption_backdrop_layers')
 SUPPORT_NAMES = ('SupportingDrawingContext', 'SupportingDrawingCandidate',
     'SupportingDrawingCoverage', 'reduce_vector_layers', 'drawing_paint',
     'compose_drawing_paint', 'recover_held_drawing_scale',
@@ -71,7 +73,13 @@ assert s.merge_tiled_clips is g.merge_tiled_clips
 assert c.caption_clip_outline is g.caption_clip_outline
 assert c._select_caption_supports([],[],None)==([],{},[])
 assert c.retain_unmeasured_backdrops([event],[],[],None)==[event]
+original=c.CaptionSupportResult([event],[event],[],{},set(),{'drawing_duplicates_removed':0})
+events=[];result=c.settle_caption_backdrop_layers(original,events,None)
+assert result is not original and result.events is events and result.kept is original.kept
+assert result.counts is original.counts and result.ownership is None
 for name in ('CaptionPanelOwnership','_select_caption_supports','caption_panel_contains'):
+ get_type_hints(getattr(c,name))
+for name in ('CaptionSupportResult','_rectangle_polygon','_same_caption_panel','_covered_caption_panels','settle_caption_backdrop_layers'):
  get_type_hints(getattr(c,name))
 assert g.merge_tiled_clips([(0,0,5,10),(5,0,10,10)],1)==(0,0,10,10)
 for name in ('SupportingDrawingContext','SupportingDrawingCandidate','SupportingDrawingCoverage','reduce_supporting_drawings'):
@@ -89,7 +97,7 @@ assert Path(s.__file__).resolve()==Path(e.__file__).resolve().parent/'_simplify_
 for name in ('SupportingDrawingContext','SupportingDrawingCandidate','SupportingDrawingCoverage','reduce_supporting_drawings','reduce_vector_layers'):
  assert getattr(e,name) is getattr(s,name)
 assert Path(c.__file__).resolve()==Path(e.__file__).resolve().parent/'_simplify_ass/caption_supports.py'
-for name in ('CaptionPanelOwnership','_select_caption_supports','select_caption_supports','retain_unmeasured_backdrops'):
+for name in ('CaptionPanelOwnership','_select_caption_supports','select_caption_supports','retain_unmeasured_backdrops','CaptionSupportResult','_rectangle_polygon','_same_caption_panel','_covered_caption_panels','settle_caption_backdrop_layers'):
  assert getattr(e,name) is getattr(c,name)
 import py_compile
 py_compile.compile(g.__file__,doraise=True)
@@ -99,6 +107,49 @@ py_compile.compile(c.__file__,doraise=True)
 
 
 class DrawingGeometryModuleChecks(unittest.TestCase):
+    def test_settling_aliases_and_mutable_result_lookup(self):
+        for name in SETTLING_NAMES:
+            self.assertIs(getattr(engine, name), getattr(selection, name))
+            get_type_hints(getattr(selection, name))
+        self.assertFalse(selection.CaptionSupportResult.__dataclass_params__.frozen)
+        self.assertIs(pickle.loads(b'csimplify_ass\nCaptionSupportResult\n.'),
+                      selection.CaptionSupportResult)
+        self.assertIs(selection.normalize_shadow_lettering, engine.normalize_shadow_lettering)
+
+    def test_unmeasured_settling_retains_borrowed_data_and_result_mutability(self):
+        panel=drawing(); events=[panel]
+        for proof in (None, []):
+            original=selection.CaptionSupportResult([panel],[panel],[],{},set(),
+                {'drawing_duplicates_removed':0},proof)
+            before=deepcopy(vars(panel))
+            result=selection.settle_caption_backdrop_layers(original,events,None)
+            self.assertIsNot(result, original)
+            self.assertIs(result.events, events)
+            for name in ('kept','fallback','associated','removed_textures','counts','ownership'):
+                self.assertIs(getattr(result,name),getattr(original,name))
+            self.assertEqual(vars(panel),before)
+            result.events=[]
+            self.assertEqual(original.events,[panel])
+            self.assertEqual(events,[panel])
+
+    def test_explicit_empty_ownership_never_reestablishes_a_claim(self):
+        panel=drawing()
+        original=selection.CaptionSupportResult([panel],[panel],[],{},set(),
+            {'drawing_duplicates_removed':0})
+        class AvailableMetrics:
+            available=True
+        metrics=AvailableMetrics()
+        with patch.object(selection,'_caption_panel_ownership',return_value=[]) as establish:
+            result=selection.settle_caption_backdrop_layers(original,original.events,metrics)
+            self.assertEqual(establish.call_count,1)
+            self.assertIsNone(original.ownership)
+            self.assertEqual(result.ownership,[])
+            repeated=selection.settle_caption_backdrop_layers(result,result.events,metrics)
+            self.assertEqual(establish.call_count,1)
+            self.assertEqual(repeated.ownership,[])
+            self.assertIsNot(result.ownership,repeated.ownership)
+            self.assertIs(repeated.counts,original.counts)
+
     def test_selection_aliases_and_borrowed_frozen_ownership(self):
         for name in SELECTION_NAMES:
             self.assertIs(getattr(engine, name), getattr(selection, name))

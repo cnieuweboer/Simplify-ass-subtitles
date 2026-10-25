@@ -49,18 +49,23 @@ layering and aggregate reporting. Shared `merge_tiled_clips()` lives in
 inputs for both drawing reduction and text-outline recovery. No font resources,
 persistent caches, report owners or private imports of the engine are introduced.
 Interpreter observers follow the defining supporting-drawing consumer.
-Caption-support selection, measured ownership and unmeasured fallback live in
-`_simplify_ass/caption_supports.py`, with direct engine aliases for nine functions
-and the existing frozen `CaptionPanelOwnership` record. Borrow candidate/caption
-Events and caller metrics; keep bounds maps, associations and proof lists local.
+Caption-support selection, measured ownership, fallback and final layer settling
+live in `_simplify_ass/caption_supports.py`, with direct engine aliases for thirteen
+functions, frozen `CaptionPanelOwnership` and mutable `CaptionSupportResult`.
+Borrow candidate/caption Events and caller metrics; keep bounds maps,
+associations and proof lists local.
 Preserve the two-result selection API and internal three-result handoff, exact
 borrowed caption identity, shared-outline versus measured ownership distinctions,
 opaque contour successors and fallback equivalence. Shared `caption_clip_outline()`
 lives in `drawing_geometry`, retaining static-mask validation and scene scaling.
-Callers retain `CaptionSupportResult`, reduction, budgets, output assembly, late
-shadow normalization, final layer settling and reporting. Font caches keep their
-measurement owner. Test measurement mocks follow the defining consumer without
-production forwarding or private imports of the engine.
+Final settling consumes carried ownership, preserves independent masks and updates
+successor associations without inventing new claims. Keep `ownership=None`
+compatibility distinct from an explicit empty proof list; preserve branch-specific
+result sharing and the existing copied duplicate count on the full proof path.
+Geometry/normalized-caption caches remain call-local. Callers retain reduction,
+budgets, output assembly, late normalization, invocation order and reporting.
+Font caches keep their measurement owner. Test measurement mocks follow the
+defining consumer without production forwarding or private imports of the engine.
 Original-source row collection, opacity-coupling and exact-fragmentation proofs
 live in `_simplify_ass/source_row_collection.py`, with direct engine aliases for
 three functions and the existing mutable `CollectedSourceText` record. Borrow

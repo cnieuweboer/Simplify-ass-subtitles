@@ -1,5 +1,8 @@
 # Caption-support selection — v268
 
+This records the v268 boundary. [v272](CAPTION_SETTLING_EXTRACTION.md) extends the
+same module with final layer settling and the existing `CaptionSupportResult`.
+
 Nine existing functions and the existing frozen `CaptionPanelOwnership` record,
 279 definition lines, live in `_simplify_ass/caption_supports.py`. The shared
 17-line `caption_clip_outline()` reader lives in `drawing_geometry`. Names,

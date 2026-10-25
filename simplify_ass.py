@@ -352,6 +352,11 @@ from _simplify_ass.supporting_drawings import (
 )
 from _simplify_ass.drawing_geometry import merge_tiled_clips
 from _simplify_ass.caption_supports import (
+    CaptionSupportResult,
+    _rectangle_polygon,
+    _same_caption_panel,
+    _covered_caption_panels,
+    settle_caption_backdrop_layers,
     CaptionPanelOwnership,
     is_fullscreen_background,
     drawing_matches_caption_outline,
@@ -537,7 +542,7 @@ from _simplify_ass.shrinking_rows import (
     collapse_shrinking_glyph_rows,
 )
 
-__version__ = "2026.10.25.271"
+__version__ = "2026.10.25.272"
 
 
 class _FontTimestampFilter(logging.Filter):
@@ -769,19 +774,6 @@ class FrozenTextEvents:
     spaces: dict
     blanks: list[Event]
     statistics: dict[str,int]
-
-
-@dataclass
-class CaptionSupportResult:
-    """Selected supports, their caption associations and output ordering."""
-    events: list[Event]
-    kept: list[Event]
-    fallback: list[Event]
-    associated: dict
-    removed_textures: set[int]
-    counts: dict[str,int]
-    # None accepts older direct constructors; production always supplies proof.
-    ownership: list[CaptionPanelOwnership] | None = None
 
 
 def x_key(e: Event) -> float:
@@ -5554,43 +5546,6 @@ def restore_masked_caption_foregrounds(sources, captions):
     return restored, count
 
 
-def _rectangle_polygon(points: list) -> bool:
-    xs, ys = {x for x,y in points}, {y for x,y in points}
-    return len(xs) == len(ys) == 2 and set(points) == {(x,y) for x in xs for y in ys}
-
-
-def _same_caption_panel(panel: Event, points: list, owner: Event, owner_points: list) -> bool:
-    """Match a panel footprint, allowing its existing stroke/rounding allowance."""
-    if panel is owner or points == owner_points:
-        return True
-    if not _rectangle_polygon(points) or not _rectangle_polygon(owner_points):
-        return False
-    tolerance = max(2., 2*min(panel.unit, owner.unit))
-    bounds = lambda ps: (min(x for x,y in ps), min(y for x,y in ps),
-                         max(x for x,y in ps), max(y for x,y in ps))
-    return all(abs(a-b) <= tolerance for a,b in zip(bounds(points), bounds(owner_points)))
-
-
-def _covered_caption_panels(panels: list) -> set[tuple]:
-    """Prove hidden rectangular fills separately from caption ownership/layering."""
-    hidden = set()
-    for lower, low_points in panels:
-        if not _rectangle_polygon(low_points) or any(lower.state.get(k, lower.state.get(base, 0)) != 0
-                for k,base in (('xbord','bord'),('ybord','bord'),('xshad','shad'),('yshad','shad'))):
-            continue
-        for upper, up_points in panels:
-            if (int(upper.layer) <= int(lower.layer) or upper.style != lower.style or upper.name != lower.name or
-                    upper.start_s > lower.start_s or upper.end_s < lower.end_s or not _rectangle_polygon(up_points)):
-                continue
-            if (min(x for x,y in up_points) <= min(x for x,y in low_points) and
-                    max(x for x,y in up_points) >= max(x for x,y in low_points) and
-                    min(y for x,y in up_points) <= min(y for x,y in low_points) and
-                    max(y for x,y in up_points) >= max(y for x,y in low_points)):
-                hidden.add(tuple(lower.fields()))
-                break
-    return hidden
-
-
 def _restore_caption_paint(
     sources: list[Event],
     events: list[Event],
@@ -5729,109 +5684,6 @@ def _reconstruct_caption_backdrops(
     supports = _rebuild_caption_supports(
         sources,source.lines,events,captions.lines,caption_counts,config,font_metrics)
     return supports,scroll_report
-
-
-def settle_caption_backdrop_layers(
-    supports: CaptionSupportResult, events: list[Event], font_metrics: FontMetrics | None,
-) -> CaptionSupportResult:
-    """Settle final opaque captions above already proved local backgrounds.
-
-    Late shadow normalization can make a caption readable after the text-stage
-    layer proof. Only retained enclosing panels, full-lifetime exact-font
-    coverage and identical style/actor authorize promotion. Adjacent decorations,
-    fullscreen fills and unmeasured supports keep their source order.
-    """
-    if font_metrics is None or not font_metrics.available:
-        return dataclass_replace(supports, events=events)
-
-    # Production carries the proof from support selection. Older direct
-    # constructors can establish it once; later reassociation never invents it.
-    ownership = (supports.ownership if supports.ownership is not None else
-                 _caption_panel_ownership(supports.kept, supports.associated, font_metrics))
-    retained = {tuple(panel.fields()): panel for panel in supports.kept}
-    panels, owners, normalized_ownership = {}, {}, []
-    geometries, captions = {}, {}
-    for relation in ownership:
-        panel = relation.panel
-        if id(panel) not in geometries:
-            geometries[id(panel)] = coverage_geometry(panel)
-        geometry = geometries[id(panel)]
-        if geometry is None:
-            continue
-        points = geometry[0]
-        if id(relation.caption) not in captions:
-            normalized,_ = normalize_shadow_lettering([relation.caption])
-            captions[id(relation.caption)] = normalized[0]
-        caption = captions[id(relation.caption)]
-        normalized_ownership.append(CaptionPanelOwnership(panel, caption))
-        owners.setdefault(tuple(caption.fields()), []).append((panel, points))
-        if tuple(panel.fields()) in retained:
-            actual = retained[tuple(panel.fields())]
-            panels[tuple(actual.fields())] = (actual, points)
-    panels = list(panels.values())
-    if not panels:
-        return dataclass_replace(supports, events=events, ownership=list(ownership))
-    families = {}
-    for panel, points in panels:
-        families.setdefault((panel.style, panel.name), []).append((panel, points))
-
-    settled = []
-    drawing_order = {tuple(event.fields()): index for index,event in enumerate(events) if event.state.get('p', 0)}
-    for index,event in enumerate(events):
-        if (event.kind != 'Dialogue' or event.state.get('p', 0) or
-                not event.layer.lstrip('-').isdigit() or event.state.get('1a', 0) != 0 or
-                (event.style, event.name) not in families or
-                tuple(event.fields()) not in owners or
-                not any(c.isalnum() for c in OVERRIDE_RE.sub('', event.text)) or
-                get_pos(event.text) is None or static_object_key(event, event.styles) is None):
-            settled.append(event)
-            continue
-        box = caption_bounds(event, font_metrics)
-        layer = int(event.layer)
-        # Preserve an independent card/mask already painted above this text.
-        # Promoting merely to its layer can also expose a later text record.
-        if box is not None and any(
-            (int(panel.layer), drawing_order.get(tuple(panel.fields()), -1)) > (layer, index) and
-            min(panel.end_s,event.end_s) > max(panel.start_s,event.start_s) and
-            (not any(_same_caption_panel(panel,points,owner,owner_points)
-                     for owner,owner_points in owners[tuple(event.fields())]) or
-             panel.start_s > event.start_s+.001 or panel.end_s < event.end_s-.001) and
-            min(x for x,y in points) < box[2] and max(x for x,y in points) > box[0] and
-            min(y for x,y in points) < box[3] and max(y for x,y in points) > box[1]
-            for panel,points in families[event.style,event.name]):
-            settled.append(event)
-            continue
-        for panel, points in families[event.style, event.name]:
-            if (panel.start_s <= event.start_s + .001 and panel.end_s >= event.end_s - .001 and
-                    any(_same_caption_panel(panel, points, owner, owner_points)
-                        for owner, owner_points in owners[tuple(event.fields())]) and
-                    caption_panel_contains(panel, points, event, box)):
-                layer = max(layer, int(panel.layer) + 1)
-        settled.append(replace_event(event, layer=str(layer)) if layer != int(event.layer) else event)
-
-    successors = {tuple(old.fields()): new for old,new in zip(events, settled)}
-    ownership = [CaptionPanelOwnership(relation.panel, successors[tuple(relation.caption.fields())])
-                 for relation in normalized_ownership if tuple(relation.caption.fields()) in successors]
-
-    # Remove a lower rectangular support only when a retained opaque rectangle
-    # covers all of its fill for its entire lifetime. Partial masks remain.
-    hidden = _covered_caption_panels(panels)
-    kept = [panel for panel in supports.kept if tuple(panel.fields()) not in hidden]
-    settled = [event for event in settled if not (event.state.get('p', 0) and tuple(event.fields()) in hidden)]
-    associated = {panel.source_index: [event for event in settled
-        if event.kind == 'Dialogue' and not event.state.get('p', 0) and
-        event.layer.lstrip('-').isdigit() and int(panel.layer) <= int(event.layer) and
-        event.style == panel.style and event.name == panel.name and
-        min(event.end_s, panel.end_s) > max(event.start_s, panel.start_s) and
-        caption_panel_contains(panel, geometry[0], event, caption_bounds(event, font_metrics))]
-        for panel in kept if (geometry := coverage_geometry(panel)) is not None}
-    # Preserve associations for non-enclosing arrows/fullscreen/fallback shapes.
-    for panel in kept:
-        if not associated.get(panel.source_index):
-            associated[panel.source_index] = list(supports.associated.get(panel.source_index, ()))
-    counts = dict(supports.counts)
-    counts['drawing_duplicates_removed'] += len(supports.kept) - len(kept)
-    return dataclass_replace(supports, events=settled, kept=kept, associated=associated, counts=counts, ownership=ownership)
 
 
 def _summarize_caption_supports(

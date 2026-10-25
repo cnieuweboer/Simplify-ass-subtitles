@@ -566,3 +566,8 @@ See [PAINT_NORMALIZATION_EXTRACTION.md](PAINT_NORMALIZATION_EXTRACTION.md) for
 v271's static-paint normalization boundary. Whole-palette bounds and static shadow
 transfer retain separate rules; source/geometry proofs, pose selection, stage
 order and reporting stay with their existing owners.
+
+See [CAPTION_SETTLING_EXTRACTION.md](CAPTION_SETTLING_EXTRACTION.md) for v272's
+extension of `caption_supports` with final layer settling and the existing result
+record. Selection/ownership proofs and their final consumer share one module;
+assembly, budgets, invocation order and reporting remain with their callers.
