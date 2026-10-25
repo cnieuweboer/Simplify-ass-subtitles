@@ -561,3 +561,8 @@ See [TEXT_COPY_EXTRACTION.md](TEXT_COPY_EXTRACTION.md) for v270's exact duplicat
 strict whole-lifetime redundancy and early static-sign paint-selection boundary.
 The shared checks and retained-anchor protections stay together; callers retain
 stage order, lyric handoffs and reporting.
+
+See [PAINT_NORMALIZATION_EXTRACTION.md](PAINT_NORMALIZATION_EXTRACTION.md) for
+v271's static-paint normalization boundary. Whole-palette bounds and static shadow
+transfer retain separate rules; source/geometry proofs, pose selection, stage
+order and reporting stay with their existing owners.

@@ -7,9 +7,14 @@ import hashlib
 import json
 import tempfile
 import subprocess
+import pickle
+import sys
+from typing import get_type_hints
 from unittest.mock import patch
 from PIL import Image, ImageChops
 import simplify_ass as s
+from _simplify_ass import paint_normalization as normalization
+from check_windows_installer import load_installer
 from executable_ast_audit import executable_ast
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -185,6 +190,72 @@ with tempfile.TemporaryDirectory() as folder:
     check('inline pipeline keeps source bytes', source.read_bytes() == source_bytes)
     s.simplify_ass(output, again, s.SimplifyConfig())
     check('inline pipeline byte-idempotent', output.read_bytes() == again.read_bytes())
+
+NAMES=('normalize_shadow_lettering','_bounded_text_color','normalize_near_text_colors')
+for name in NAMES:
+    check('canonical paint policy alias '+name,getattr(s,name) is getattr(normalization,name))
+    get_type_hints(getattr(normalization,name))
+    check('historical paint helper lookup '+name,
+          pickle.loads(('csimplify_ass\n'+name+'\n.').encode()) is getattr(normalization,name))
+check('canonical paint event and replacement owners',
+      normalization.Event is s.Event and normalization.replace_event is s.replace_event)
+votes={'000000':1.,'020202':2.};before=deepcopy(votes)
+check('bounded palette chooses an observed representative',normalization._bounded_text_color(votes)=='020202')
+check('bounded palette borrows votes',votes==before)
+check('wider palette is refused',normalization._bounded_text_color({'000000':1.,'030303':2.}) is None)
+plain=event('AB');before=deepcopy(vars(plain))
+for name in ('normalize_shadow_lettering','normalize_near_text_colors'):
+    first,count=getattr(normalization,name)([plain]);second,other=getattr(normalization,name)([plain])
+    check(name+' keeps unmodified Event identity',count==other==0 and first[0] is plain and second[0] is plain)
+    check(name+' independent result containers',first is not second)
+    check(name+' preserves borrowed formatting',vars(plain)==before)
+
+COLD_CODE=r'''
+from pathlib import Path
+from typing import get_type_hints
+from copy import deepcopy
+from _simplify_ass import paint_normalization as p, subtitle_document as d
+assert 'simplify_ass' not in sys.modules
+assert not any(n.split('.')[0] in {'PIL','fontTools','uharfbuzz'} for n in sys.modules)
+for name in ('normalize_shadow_lettering','_bounded_text_color','normalize_near_text_colors'):
+ get_type_hints(getattr(p,name))
+raw='[Events]\n'+''.join(r'Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,{\alpha&H00&\1c&H'+color+r'&}AB'+'\n' for color in ('000000','020202'))
+events=list(d._resolve_document_state(d.parse_subtitle_document(raw)).events.values())
+before=deepcopy([vars(e) for e in events])
+out,count=p.normalize_near_text_colors(events)
+assert count>0 and {e.state['1c'] for e in out}=={'000000'}
+assert p.normalize_near_text_colors(out)==(out,0)
+assert [vars(e) for e in events]==before
+raw='[Events]\n'+r'Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,{\pos(100,100)\bord0\1a&HFE&\4a&H00&\xshad-.01\yshad0\4c&H123456&}AB'+'\n'
+event=next(iter(d._resolve_document_state(d.parse_subtitle_document(raw)).events.values()))
+before=deepcopy(vars(event));out,count=p.normalize_shadow_lettering([event])
+assert count==1 and out[0].state['1c']=='123456' and out[0].state['1a']==0
+assert out[0].state['pos']==(99.99,100.) and vars(event)==before
+assert p.normalize_shadow_lettering(out)==(out,0)
+assert 'simplify_ass' not in sys.modules
+assert not any(n.split('.')[0] in {'PIL','fontTools','uharfbuzz'} for n in sys.modules)
+import simplify_ass as e
+assert Path(p.__file__).resolve()==Path(e.__file__).resolve().parent/'_simplify_ass/paint_normalization.py'
+for name in ('normalize_shadow_lettering','_bounded_text_color','normalize_near_text_colors'):
+ assert getattr(p,name) is getattr(e,name)
+import py_compile
+py_compile.compile(p.__file__,doraise=True)
+'''
+with tempfile.TemporaryDirectory() as folder:
+    parent=Path(folder);unrelated=parent/'unrelated';unrelated.mkdir()
+    installer=load_installer();target=parent/'installed tools with spaces'
+    _,installed=installer.install(ROOT,target,individual_launchers=False)
+    for tools in (ROOT,installed):
+        child=subprocess.run([sys.executable,'-I','-c',
+            'import sys\nsys.path.insert(0,'+repr(str(tools))+')\n'+COLD_CODE],
+            cwd=unrelated,capture_output=True,text=True)
+        assert child.returncode==0,child.stdout+child.stderr
+        check('independent paint policy import and delivery '+str(tools),child.returncode==0)
+    user=installed/'_simplify_ass/user.py';user.write_text('# user\n')
+    installer.remove(target)
+    check('uninstall preserves unrelated private file',user.read_text()=='# user\n')
+    check('uninstall removes paint policy source',not (installed/'_simplify_ass/paint_normalization.py').exists())
+    check('uninstall removes paint policy bytecode',not any((installed/'_simplify_ass').rglob('paint_normalization*.pyc')))
 
 def definitions(path):
     return {n.name: n for n in executable_ast(ast.parse(path.read_text())).body

@@ -83,6 +83,18 @@ Retain source-ID versus list-slot counting as currently defined. Callers retain
 lyric handoffs, stage order and aggregate reporting. No font resources, caches,
 new records or report owners move here. Interpreter observers follow the defining
 copy consumer without production forwarding or private imports of the engine.
+Static paint normalization lives in `_simplify_ass/paint_normalization.py`, with
+direct engine aliases for `normalize_near_text_colors`, `_bounded_text_color`
+and `normalize_shadow_lettering`. Keep their separate admission rules and
+invocation points. Borrow Events, styles and formatting; keep palette votes,
+blocked channels, continuations and serialization buffers call-local. Preserve
+whole-palette bounds, observed-color selection, gradient/transparency vetoes,
+reset continuation, exact shadow paint/anchor transfer and canonical replacement.
+Producers retain geometry/ownership/source evidence and pose selection; callers
+retain evidence requirements, stage order and aggregate reporting. No font
+resource, persistent cache, result record or diagnostic owner moves here.
+Interpreter observers follow the defining paint consumer without production
+forwarding or private imports of the engine.
 Source-owned word fade/jitter family proof, exact-font ownership and atomic
 removal live in `_simplify_ass/word_echoes.py`, with direct engine aliases for
 all five functions. Borrow working events, visibility, the exact accepted-caption
